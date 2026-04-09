@@ -16,13 +16,13 @@ interface Policy {
 }
 
 const POLICY_META: Record<string, { label: string; inputType: 'number' | 'boolean' | 'text'; unit?: string }> = {
-  max_consecutive_days_off:   { label: 'Max Consecutive Days Off',     inputType: 'number',  unit: 'days' },
-  min_notice_period_days:     { label: 'Minimum Notice Period',        inputType: 'number',  unit: 'days' },
-  max_staff_off_percent:      { label: 'Max Staff Off Per Day',        inputType: 'number',  unit: '%' },
-  lifeguard_coverage_floor:   { label: 'Lifeguard Coverage Floor',     inputType: 'number',  unit: 'people' },
-  headguard_overlap_needed:   { label: 'Headguard Overlap Required',   inputType: 'boolean' },
-  no_to_prime_weekends:       { label: 'No Time-Off on Prime Weekends',inputType: 'boolean' },
-  always_one_manager_on_duty: { label: 'Always One Manager On Duty',   inputType: 'boolean' },
+  max_consecutive_days_off:   { label: 'Max Consecutive Days Off',      inputType: 'number',  unit: 'days' },
+  min_notice_period_days:     { label: 'Minimum Notice Period',         inputType: 'number',  unit: 'days' },
+  max_staff_off_percent:      { label: 'Max Staff Off Per Day',         inputType: 'number',  unit: '%' },
+  lifeguard_coverage_floor:   { label: 'Lifeguard Coverage Floor',      inputType: 'number',  unit: 'people' },
+  headguard_overlap_needed:   { label: 'Headguard Overlap Required',    inputType: 'boolean' },
+  no_to_prime_weekends:       { label: 'No Time-Off on Prime Weekends', inputType: 'boolean' },
+  always_one_manager_on_duty: { label: 'Always One Manager On Duty',    inputType: 'boolean' },
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -244,14 +244,12 @@ export default function RulesPage() {
                           >
                             Edit
                           </button>
-                          {policy.policy_type === 'custom' && (
-                            <button
-                              className="btn btn-danger btn-sm"
-                              onClick={() => handleDelete(policy.id)}
-                            >
-                              Remove
-                            </button>
-                          )}
+                          <button
+                            className="btn btn-danger btn-sm"
+                            onClick={() => handleDelete(policy.id)}
+                          >
+                            Remove
+                          </button>
                         </>
                       )}
                     </div>
