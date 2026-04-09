@@ -8,29 +8,25 @@ const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 interface ActivityEntry {
   id: string
   actor: 'aegis' | 'manager' | 'soteria' | 'system'
-  action: string
-  entity_type: string | null
   summary: string
   created_at: string
 }
 
-function formatDate(dateString: string) {
-  const date = new Date(dateString)
-  const today = new Date()
-  const yesterday = new Date()
-  yesterday.setDate(today.getDate() - 1)
-
-  if (date.toDateString() === today.toDateString()) return 'Today'
-  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'
-  return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+interface TORequest {
+  id: string
+  status: string
+  employee: { name: string; primary_role: string } | null
+  start_date: string
+  end_date: string
 }
 
-function formatTime(dateString: string) {
-  return new Date(dateString).toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  })
+interface Schedule {
+  id: string
+  week_start: string
+  week_end: string
+  status: string
+  generated_by: string
+  data: { gaps: { date: string }[] }
 }
 
 function timeAgo(dateString: string) {
@@ -43,17 +39,23 @@ function timeAgo(dateString: string) {
   return `${days}d ago`
 }
 
-const ACTOR_STYLES: Record<string, { label: string; color: string; bg: string; border: string }> = {
-  aegis:   { label: 'Aegis',   color: 'var(--accent)',              bg: 'var(--accent-dim)',       border: 'var(--accent-border)' },
-  manager: { label: 'Manager', color: '#60a5fa',                    bg: 'rgba(96,165,250,0.1)',    border: 'rgba(96,165,250,0.25)' },
-  soteria: { label: 'Soteria', color: '#a78bfa',                    bg: 'rgba(167,139,250,0.1)',   border: 'rgba(167,139,250,0.25)' },
-  system:  { label: 'System',  color: 'var(--text-muted)',          bg: 'var(--bg-surface-3)',     border: 'var(--border-default)' },
+function formatDate(d: string) {
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-export default function ActivityPage() {
-  const [entries, setEntries] = useState<ActivityEntry[]>([])
+const ACTOR_STYLES: Record<string, { color: string; bg: string; border: string }> = {
+  aegis:   { color: 'var(--accent)',     bg: 'var(--accent-dim)',     border: 'var(--accent-border)' },
+  manager: { color: '#60a5fa',           bg: 'rgba(96,165,250,0.1)', border: 'rgba(96,165,250,0.25)' },
+  soteria: { color: '#a78bfa',           bg: 'rgba(167,139,250,0.1)',border: 'rgba(167,139,250,0.25)' },
+  system:  { color: 'var(--text-muted)', bg: 'var(--bg-surface-3)',  border: 'var(--border-default)' },
+}
+
+export default function HomePage() {
+  const [activity, setActivity] = useState<ActivityEntry[]>([])
+  const [pendingTO, setPendingTO] = useState<TORequest[]>([])
+  const [currentSchedule, setCurrentSchedule] = useState<Schedule | null>(null)
+  const [employeeCount, setEmployeeCount] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all' | 'aegis' | 'manager' | 'system'>('all')
 
   const supabase = createClient()
 
@@ -61,125 +63,262 @@ export default function ActivityPage() {
 
   async function fetchData() {
     setLoading(true)
-    const { data } = await supabase
-      .from('activity_log')
-      .select('*')
-      .eq('company_id', COMPANY_ID)
-      .order('created_at', { ascending: false })
-      .limit(200)
-    if (data) setEntries(data)
+    const [actRes, toRes, schedRes, empRes] = await Promise.all([
+      supabase
+        .from('activity_log')
+        .select('*')
+        .eq('company_id', COMPANY_ID)
+        .order('created_at', { ascending: false })
+        .limit(6),
+      supabase
+        .from('time_off_requests')
+        .select('*, employee:employees(name, primary_role)')
+        .eq('company_id', COMPANY_ID)
+        .eq('status', 'pending')
+        .order('requested_at', { ascending: false }),
+      supabase
+        .from('schedules')
+        .select('*')
+        .eq('company_id', COMPANY_ID)
+        .order('week_start', { ascending: false })
+        .limit(1)
+        .single(),
+      supabase
+        .from('employees')
+        .select('id', { count: 'exact' })
+        .eq('company_id', COMPANY_ID)
+        .eq('active', true),
+    ])
+
+    if (actRes.data) setActivity(actRes.data)
+    if (toRes.data) setPendingTO(toRes.data as TORequest[])
+    if (schedRes.data) setCurrentSchedule(schedRes.data)
+    if (empRes.count !== null) setEmployeeCount(empRes.count)
     setLoading(false)
   }
 
-  const filtered = entries.filter((e) => filter === 'all' || e.actor === filter)
+  const gaps = currentSchedule?.data?.gaps?.length ?? 0
+  const pendingCount = pendingTO.length
 
-  const grouped = filtered.reduce((acc, entry) => {
-    const dateKey = new Date(entry.created_at).toDateString()
-    if (!acc[dateKey]) acc[dateKey] = []
-    acc[dateKey].push(entry)
-    return acc
-  }, {} as Record<string, ActivityEntry[]>)
+  // Determine system status
+  let statusLabel = 'Ready'
+  let statusClass = 'badge-ready'
+  let statusDesc = 'All data is current. Aegis is ready to operate.'
+
+  if (pendingCount > 0 && gaps > 0) {
+    statusLabel = 'Action Required'
+    statusClass = 'badge-action'
+    statusDesc = `${pendingCount} pending time-off request${pendingCount > 1 ? 's' : ''} and ${gaps} schedule gap${gaps > 1 ? 's' : ''} need attention.`
+  } else if (pendingCount > 0) {
+    statusLabel = 'Action Required'
+    statusClass = 'badge-action'
+    statusDesc = `${pendingCount} pending time-off request${pendingCount > 1 ? 's' : ''} awaiting your decision.`
+  } else if (gaps > 0) {
+    statusLabel = 'Awaiting Review'
+    statusClass = 'badge-review'
+    statusDesc = `${gaps} schedule gap${gaps > 1 ? 's' : ''} in the current week.`
+  }
 
   if (loading) return (
     <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-      Loading activity...
+      Loading...
     </div>
   )
 
   return (
     <div className="page-content">
       <div className="page-header">
-        <div className="page-title">Activity</div>
-        <div className="page-subtitle">
-          Full audit trail of everything Aegis has done and every change made
-        </div>
+        <div className="page-title">Operations Home</div>
+        <div className="page-subtitle">Current system state and recent Aegis activity</div>
       </div>
 
-      {/* Filters */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 28 }}>
-        {(['all', 'aegis', 'manager', 'system'] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            style={{
-              padding: '5px 14px',
-              borderRadius: 'var(--radius-pill)',
-              border: '1px solid',
-              fontSize: 12,
-              fontFamily: 'var(--font-body)',
-              cursor: 'pointer',
-              background: filter === f ? 'var(--accent-dim)' : 'transparent',
-              borderColor: filter === f ? 'var(--accent-border)' : 'var(--border-default)',
-              color: filter === f ? 'var(--accent)' : 'var(--text-muted)',
-            }}
-          >
-            {f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-        <div style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)', alignSelf: 'center' }}>
-          {filtered.length} entries
-        </div>
-      </div>
-
-      {/* Empty state */}
-      {filtered.length === 0 && (
-        <div style={{
-          background: 'var(--bg-surface-1)',
-          border: '1px solid var(--border-default)',
-          borderRadius: 'var(--radius-lg)',
-        }}>
-          <div className="empty-state">
-            <div className="empty-state-title">No activity yet</div>
-            <div className="empty-state-desc">
-              Once Aegis starts operating, every action will appear here.
-            </div>
+      {/* System status strip */}
+      <div style={{
+        background: 'var(--bg-surface-1)',
+        border: '1px solid var(--border-default)',
+        borderLeft: '3px solid var(--accent)',
+        borderRadius: 'var(--radius-lg)',
+        padding: '16px 20px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 24,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span className={`badge ${statusClass}`}>
+            <span className="badge-dot" />
+            {statusLabel}
+          </span>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+            {statusDesc}
           </div>
         </div>
-      )}
+        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          Watermark Country Club
+        </div>
+      </div>
 
-      {/* Grouped timeline */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
-        {Object.entries(grouped).map(([dateKey, dayEntries]) => (
-          <div key={dateKey}>
-            {/* Date header */}
-            <div style={{
-              fontSize: 11,
-              fontFamily: 'var(--font-display)',
-              fontWeight: 700,
-              letterSpacing: '0.15em',
-              textTransform: 'uppercase',
-              color: 'var(--text-muted)',
-              marginBottom: 10,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-            }}>
-              {formatDate(dayEntries[0].created_at)}
-              <div style={{ flex: 1, height: 1, background: 'var(--border-subtle)' }} />
-            </div>
+      {/* Stats row */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(4, 1fr)',
+        gap: 12,
+        marginBottom: 32,
+      }}>
+        <div style={{
+          background: 'var(--bg-surface-1)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-lg)',
+          padding: '16px 18px',
+        }}>
+          <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8, fontFamily: 'var(--font-body)' }}>
+            Active Employees
+          </div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1, marginBottom: 6 }}>
+            {employeeCount}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>on record</div>
+        </div>
 
-            {/* Entries for this day */}
-            <div style={{
-              background: 'var(--bg-surface-1)',
-              border: '1px solid var(--border-default)',
-              borderRadius: 'var(--radius-lg)',
-              overflow: 'hidden',
-            }}>
-              {dayEntries.map((entry, i) => {
-                const style = ACTOR_STYLES[entry.actor] ?? ACTOR_STYLES.system
+        <div style={{
+          background: 'var(--bg-surface-1)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-lg)',
+          padding: '16px 18px',
+        }}>
+          <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8, fontFamily: 'var(--font-body)' }}>
+            Current Schedule
+          </div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1, marginBottom: 6 }}>
+            {currentSchedule ? `${formatDate(currentSchedule.week_start)}` : '—'}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            {currentSchedule ? `${currentSchedule.status} · by ${currentSchedule.generated_by}` : 'No schedule yet'}
+          </div>
+        </div>
 
-                return (
-                  <div key={entry.id} style={{
-                    display: 'flex',
-                    gap: 14,
+        <div style={{
+          background: 'var(--bg-surface-1)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-lg)',
+          padding: '16px 18px',
+        }}>
+          <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8, fontFamily: 'var(--font-body)' }}>
+            Pending Time-Off
+          </div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: pendingCount > 0 ? 'var(--accent)' : 'var(--text-primary)', lineHeight: 1, marginBottom: 6 }}>
+            {pendingCount}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            {pendingCount > 0 ? 'awaiting decision' : 'all clear'}
+          </div>
+        </div>
+
+        <div style={{
+          background: 'var(--bg-surface-1)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-lg)',
+          padding: '16px 18px',
+        }}>
+          <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8, fontFamily: 'var(--font-body)' }}>
+            Schedule Gaps
+          </div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: gaps > 0 ? 'var(--accent)' : 'var(--text-primary)', lineHeight: 1, marginBottom: 6 }}>
+            {gaps}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            {gaps > 0 ? 'unfilled shifts' : 'fully covered'}
+          </div>
+        </div>
+      </div>
+
+      {/* Outstanding + Activity */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 16 }}>
+
+        {/* Outstanding */}
+        <div>
+          <div className="section-label">Outstanding</div>
+          <div style={{
+            background: 'var(--bg-surface-1)',
+            border: '1px solid var(--border-default)',
+            borderRadius: 'var(--radius-lg)',
+            overflow: 'hidden',
+          }}>
+            {pendingTO.length === 0 && gaps === 0 ? (
+              <div style={{ padding: '24px 16px', textAlign: 'center' }}>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Nothing outstanding</div>
+              </div>
+            ) : (
+              <>
+                {pendingTO.map((req, i) => (
+                  <div key={req.id} style={{
                     padding: '14px 16px',
-                    borderBottom: i < dayEntries.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+                    borderBottom: '1px solid var(--border-subtle)',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 10,
+                  }}>
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--status-action-text)', marginTop: 5, flexShrink: 0 }} />
+                    <div>
+                      <div style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 }}>
+                        Time-off request pending
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+                        {req.employee?.name} · {formatDate(req.start_date)} – {formatDate(req.end_date)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {gaps > 0 && (
+                  <div style={{
+                    padding: '14px 16px',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 10,
+                  }}>
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--status-review-text)', marginTop: 5, flexShrink: 0 }} />
+                    <div>
+                      <div style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 }}>
+                        {gaps} shift gap{gaps > 1 ? 's' : ''} this week
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+                        Review the Schedule tab for details
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Recent activity */}
+        <div>
+          <div className="section-label">Recent Activity</div>
+          <div style={{
+            background: 'var(--bg-surface-1)',
+            border: '1px solid var(--border-default)',
+            borderRadius: 'var(--radius-lg)',
+            overflow: 'hidden',
+          }}>
+            {activity.length === 0 ? (
+              <div style={{ padding: '24px 16px', textAlign: 'center' }}>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No activity yet</div>
+              </div>
+            ) : (
+              activity.map((item, i) => {
+                const style = ACTOR_STYLES[item.actor] ?? ACTOR_STYLES.system
+                return (
+                  <div key={item.id} style={{
+                    display: 'flex',
+                    gap: 12,
+                    padding: '14px 16px',
+                    borderBottom: i < activity.length - 1 ? '1px solid var(--border-subtle)' : 'none',
                     alignItems: 'flex-start',
                   }}>
-                    {/* Actor icon */}
                     <div style={{
-                      width: 30,
-                      height: 30,
+                      width: 28,
+                      height: 28,
                       borderRadius: 'var(--radius-sm)',
                       background: style.bg,
                       border: `1px solid ${style.border}`,
@@ -191,50 +330,27 @@ export default function ActivityPage() {
                       fontFamily: 'var(--font-display)',
                       color: style.color,
                       flexShrink: 0,
-                      marginTop: 1,
                     }}>
-                      {style.label[0]}
+                      {item.actor[0].toUpperCase()}
                     </div>
-
-                    {/* Content */}
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                        {entry.summary}
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                        {item.summary}
                       </div>
-                      <div style={{
-                        fontSize: 10,
-                        color: 'var(--text-muted)',
-                        marginTop: 4,
-                        display: 'flex',
-                        gap: 6,
-                        alignItems: 'center',
-                      }}>
-                        <span style={{
-                          color: style.color,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.1em',
-                          fontWeight: 500,
-                        }}>
-                          {style.label}
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, display: 'flex', gap: 6 }}>
+                        <span style={{ color: style.color, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                          {item.actor}
                         </span>
                         <span>·</span>
-                        <span>{formatTime(entry.created_at)}</span>
-                        <span>·</span>
-                        <span>{timeAgo(entry.created_at)}</span>
-                        {entry.entity_type && (
-                          <>
-                            <span>·</span>
-                            <span style={{ color: 'var(--text-disabled)' }}>{entry.entity_type}</span>
-                          </>
-                        )}
+                        <span>{timeAgo(item.created_at)}</span>
                       </div>
                     </div>
                   </div>
                 )
-              })}
-            </div>
+              })
+            )}
           </div>
-        ))}
+        </div>
       </div>
     </div>
   )
