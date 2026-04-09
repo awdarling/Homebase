@@ -61,10 +61,10 @@ export default function ShiftRequirementsTab() {
   }
 
   function toggleDay(day: number) {
-    setForm(f => ({
+    setForm((f) => ({
       ...f,
       days_active: f.days_active.includes(day)
-        ? f.days_active.filter(d => d !== day)
+        ? f.days_active.filter((d) => d !== day)
         : [...f.days_active, day].sort(),
     }))
   }
@@ -98,8 +98,17 @@ export default function ShiftRequirementsTab() {
     fetchData()
   }
 
-  async function handleDelete(id: string) {
+  async function handleDeleteOne(id: string) {
     await supabase.from('shift_requirements').delete().eq('id', id)
+    fetchData()
+  }
+
+  async function handleDeleteGroup(shiftName: string) {
+    await supabase
+      .from('shift_requirements')
+      .delete()
+      .eq('company_id', COMPANY_ID)
+      .eq('shift_name', shiftName)
     fetchData()
   }
 
@@ -155,7 +164,16 @@ export default function ShiftRequirementsTab() {
                   </span>
                 ))}
               </div>
+              <div style={{ marginLeft: 'auto' }}>
+                <button
+                  className="btn btn-danger btn-sm"
+                  onClick={() => handleDeleteGroup(shiftName)}
+                >
+                  Delete Entire Shift
+                </button>
+              </div>
             </div>
+
             <table className="data-table">
               <thead>
                 <tr>
@@ -167,7 +185,7 @@ export default function ShiftRequirementsTab() {
                 </tr>
               </thead>
               <tbody>
-                {shiftRows.map(s => (
+                {shiftRows.map((s) => (
                   <tr key={s.id} onClick={() => openEdit(s)} style={{ cursor: 'pointer' }}>
                     <td style={{ color: 'var(--text-primary)' }}>{s.role}</td>
                     <td>
@@ -180,7 +198,7 @@ export default function ShiftRequirementsTab() {
                     <td>
                       <button
                         className="btn btn-danger btn-sm"
-                        onClick={e => { e.stopPropagation(); handleDelete(s.id) }}
+                        onClick={(e) => { e.stopPropagation(); handleDeleteOne(s.id) }}
                       >
                         Remove
                       </button>
@@ -214,25 +232,25 @@ export default function ShiftRequirementsTab() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div className="form-group">
                   <label className="form-label">Shift Name</label>
-                  <input className="form-input" value={form.shift_name} onChange={e => setForm(f => ({ ...f, shift_name: e.target.value }))} placeholder="AM, PM, Flex..." />
+                  <input className="form-input" value={form.shift_name} onChange={(e) => setForm((f) => ({ ...f, shift_name: e.target.value }))} placeholder="AM, PM, Flex..." />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Role</label>
-                  <input className="form-input" value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))} placeholder="Lifeguard..." />
+                  <input className="form-input" value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))} placeholder="Lifeguard..." />
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
                 <div className="form-group">
                   <label className="form-label">Slots</label>
-                  <input className="form-input" type="number" min="1" value={form.required_count} onChange={e => setForm(f => ({ ...f, required_count: e.target.value }))} />
+                  <input className="form-input" type="number" min="1" value={form.required_count} onChange={(e) => setForm((f) => ({ ...f, required_count: e.target.value }))} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Start Time</label>
-                  <input className="form-input" type="time" value={form.start_time} onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} />
+                  <input className="form-input" type="time" value={form.start_time} onChange={(e) => setForm((f) => ({ ...f, start_time: e.target.value }))} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">End Time</label>
-                  <input className="form-input" type="time" value={form.end_time} onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} />
+                  <input className="form-input" type="time" value={form.end_time} onChange={(e) => setForm((f) => ({ ...f, end_time: e.target.value }))} />
                 </div>
               </div>
               <div className="form-group">
