@@ -7,11 +7,11 @@ import type { Employee } from '@/lib/types'
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 const ROLE_COLORS: Record<string, string> = {
-  'Greeter':      '#3b82f6',
-  'Lifeguard':    '#10b981',
-  'Headguard':    '#f97316',
-  'AsstManager':  '#8b5cf6',
-  'Manager':      '#ef4444',
+  Greeter: '#3b82f6',
+  Lifeguard: '#10b981',
+  Headguard: '#f97316',
+  AsstManager: '#8b5cf6',
+  Manager: '#ef4444',
 }
 
 function RoleBadge({ role }: { role: string }) {
@@ -33,7 +33,7 @@ function RoleBadge({ role }: { role: string }) {
 }
 
 function InitialsAvatar({ name, role }: { name: string; role: string }) {
-  const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+  const initials = name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()
   const color = ROLE_COLORS[role] ?? '#666'
   return (
     <div style={{
@@ -78,9 +78,7 @@ export default function EmployeesTab() {
   const supabase = createClient()
   const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 
-  useEffect(() => {
-    fetchData()
-  }, [])
+  useEffect(() => { fetchData() }, [])
 
   async function fetchData() {
     setLoading(true)
@@ -100,9 +98,9 @@ export default function EmployeesTab() {
     setLoading(false)
   }
 
-  const roles = ['all', ...Array.from(new Set(employees.map(e => e.primary_role)))]
+  const roles = ['all', ...Array.from(new Set(employees.map((e) => e.primary_role)))]
 
-  const filtered = employees.filter(e => {
+  const filtered = employees.filter((e) => {
     const matchSearch = e.name.toLowerCase().includes(search.toLowerCase())
     const matchRole = roleFilter === 'all' || e.primary_role === roleFilter
     return matchSearch && matchRole
@@ -140,7 +138,7 @@ export default function EmployeesTab() {
       company_id: COMPANY_ID,
       name: form.name.trim(),
       primary_role: form.primary_role.trim(),
-      qualified_roles: form.qualified_roles.split(',').map(r => r.trim()).filter(Boolean),
+      qualified_roles: form.qualified_roles.split(',').map((r) => r.trim()).filter(Boolean),
       max_weekly_hours: parseInt(form.max_weekly_hours) || 40,
       contact_phone: form.contact_phone.trim() || null,
       contact_email: form.contact_email.trim() || null,
@@ -161,11 +159,13 @@ export default function EmployeesTab() {
     fetchData()
   }
 
-  if (loading) return (
-    <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-      Loading employees...
-    </div>
-  )
+  if (loading) {
+    return (
+      <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+        Loading employees...
+      </div>
+    )
+  }
 
   return (
     <div>
@@ -175,15 +175,15 @@ export default function EmployeesTab() {
           style={{ maxWidth: 240 }}
           placeholder="Search employees..."
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={(e) => setSearch(e.target.value)}
         />
         <select
           className="form-select"
           style={{ maxWidth: 180 }}
           value={roleFilter}
-          onChange={e => setRoleFilter(e.target.value)}
+          onChange={(e) => setRoleFilter(e.target.value)}
         >
-          {roles.map(r => (
+          {roles.map((r) => (
             <option key={r} value={r}>{r === 'all' ? 'All roles' : r}</option>
           ))}
         </select>
@@ -196,4 +196,158 @@ export default function EmployeesTab() {
 
       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>
         {filtered.length} employee{filtered.length !== 1 ? 's' : ''}
-        {roleFilte
+        {roleFilter !== 'all' ? ` · ${roleFilter}` : ''}
+      </div>
+
+      <div style={{
+        background: 'var(--bg-surface-1)',
+        border: '1px solid var(--border-default)',
+        borderRadius: 'var(--radius-lg)',
+        overflow: 'hidden',
+      }}>
+        <table className="data-table" style={{ tableLayout: 'fixed', width: '100%' }}>
+          <colgroup>
+            <col style={{ width: '22%' }} />
+            <col style={{ width: '13%' }} />
+            <col style={{ width: '18%' }} />
+            <col style={{ width: '28%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '9%' }} />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Employee</th>
+              <th>Role</th>
+              <th>Also Qualifies</th>
+              <th>Availability</th>
+              <th>Max Hrs</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((emp) => {
+              const avail = availability[emp.id] ?? []
+              return (
+                <tr key={emp.id} onClick={() => openEdit(emp)} style={{ cursor: 'pointer' }}>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <InitialsAvatar name={emp.name} role={emp.primary_role} />
+                      <span style={{ color: 'var(--text-primary)', fontSize: 13 }}>
+                        {emp.name}
+                      </span>
+                    </div>
+                  </td>
+                  <td><RoleBadge role={emp.primary_role} /></td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {emp.qualified_roles.filter((r) => r !== emp.primary_role).map((r) => (
+                        <RoleBadge key={r} role={r} />
+                      ))}
+                    </div>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                      {DAYS.map((d, i) => {
+                        const a = avail.find((x) => x.day === i)
+                        return (
+                          <span key={d} style={{
+                            fontSize: 10,
+                            padding: '2px 5px',
+                            borderRadius: 3,
+                            background: a ? 'var(--accent-dim)' : 'var(--bg-surface-3)',
+                            color: a ? 'var(--accent)' : 'var(--text-disabled)',
+                          }}>
+                            {d}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  </td>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                    {emp.max_weekly_hours}h
+                  </td>
+                  <td>
+                    <span
+                      className={`badge ${emp.active ? 'badge-ready' : 'badge-blocked'}`}
+                      onClick={(e) => { e.stopPropagation(); handleToggleActive(emp) }}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      {emp.active ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+
+        {filtered.length === 0 && (
+          <div className="empty-state">
+            <div className="empty-state-title">No employees found</div>
+            <div className="empty-state-desc">Try adjusting your search or filter.</div>
+          </div>
+        )}
+      </div>
+
+      {showForm && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 200,
+          background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: 'var(--bg-surface-1)',
+            border: '1px solid var(--border-default)',
+            borderRadius: 'var(--radius-xl)',
+            padding: 28,
+            width: '100%',
+            maxWidth: 480,
+          }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 20 }}>
+              {editingEmployee ? 'Edit Employee' : 'Add Employee'}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div className="form-group">
+                <label className="form-label">Name</label>
+                <input className="form-input" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Lifeguard #21" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Primary Role</label>
+                <input className="form-input" value={form.primary_role} onChange={(e) => setForm((f) => ({ ...f, primary_role: e.target.value }))} placeholder="e.g. Lifeguard" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Qualified Roles (comma separated)</label>
+                <input className="form-input" value={form.qualified_roles} onChange={(e) => setForm((f) => ({ ...f, qualified_roles: e.target.value }))} placeholder="e.g. Lifeguard, Headguard" />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-group">
+                  <label className="form-label">Max Weekly Hours</label>
+                  <input className="form-input" type="number" value={form.max_weekly_hours} onChange={(e) => setForm((f) => ({ ...f, max_weekly_hours: e.target.value }))} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Phone</label>
+                  <input className="form-input" value={form.contact_phone} onChange={(e) => setForm((f) => ({ ...f, contact_phone: e.target.value }))} placeholder="Optional" />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Email</label>
+                <input className="form-input" value={form.contact_email} onChange={(e) => setForm((f) => ({ ...f, contact_email: e.target.value }))} placeholder="Optional" />
+              </div>
+            </div>
+            {error && (
+              <div style={{ fontSize: 12, color: 'var(--status-blocked-text)', marginTop: 12 }}>
+                {error}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 20, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(false)}>Cancel</button>
+              <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving...' : 'Save Employee'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
