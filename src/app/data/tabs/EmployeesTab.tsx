@@ -56,6 +56,20 @@ function InitialsAvatar({ name, role }: { name: string; role: string }) {
   )
 }
 
+interface AvailabilityRow {
+  day: number
+  active: boolean
+  start_time: string
+  end_time: string
+}
+
+const DEFAULT_AVAILABILITY: AvailabilityRow[] = DAYS.map((_, i) => ({
+  day: i,
+  active: false,
+  start_time: '09:00',
+  end_time: '17:00',
+}))
+
 export default function EmployeesTab() {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [availability, setAvailability] = useState<Record<string, { day: number; start: string; end: string }[]>>({})
@@ -72,6 +86,7 @@ export default function EmployeesTab() {
     contact_phone: '',
     contact_email: '',
   })
+  const [availForm, setAvailForm] = useState<AvailabilityRow[]>(DEFAULT_AVAILABILITY)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -106,9 +121,23 @@ export default function EmployeesTab() {
     return matchSearch && matchRole
   })
 
+  function buildAvailForm(empId: string): AvailabilityRow[] {
+    const existing = availability[empId] ?? []
+    return DAYS.map((_, i) => {
+      const found = existing.find((x) => x.day === i)
+      return {
+        day: i,
+        active: !!found,
+        start_time: found ? found.start.slice(0, 5) : '09:00',
+        end_time: found ? found.end.slice(0, 5) : '17:00',
+      }
+    })
+  }
+
   function openAdd() {
     setEditingEmployee(null)
     setForm({ name: '', primary_role: '', qualified_roles: '', max_weekly_hours: '40', contact_phone: '', contact_email: '' })
+    setAvailForm(DEFAULT_AVAILABILITY)
     setError('')
     setShowForm(true)
   }
@@ -123,8 +152,17 @@ export default function EmployeesTab() {
       contact_phone: emp.contact_phone ?? '',
       contact_email: emp.contact_email ?? '',
     })
+    setAvailForm(buildAvailForm(emp.id))
     setError('')
     setShowForm(true)
+  }
+
+  function toggleDay(day: number) {
+    setAvailForm((prev) => prev.map((r) => r.day === day ? { ...r, active: !r.active } : r))
+  }
+
+  function updateAvailTime(day: number, field: 'start_time' | 'end_time', value: string) {
+    setAvailForm((prev) => prev.map((r) => r.day === day ? { ...r, [field]: value } : r))
   }
 
   async function handleSave() {
@@ -134,6 +172,7 @@ export default function EmployeesTab() {
     }
     setSaving(true)
     setError('')
+
     const payload = {
       company_id: COMPANY_ID,
       name: form.name.trim(),
@@ -144,11 +183,32 @@ export default function EmployeesTab() {
       contact_email: form.contact_email.trim() || null,
       active: true,
     }
+
+    let empId = editingEmployee?.id
+
     if (editingEmployee) {
       await supabase.from('employees').update(payload).eq('id', editingEmployee.id)
     } else {
-      await supabase.from('employees').insert(payload)
+      const { data } = await supabase.from('employees').insert(payload).select().single()
+      empId = data?.id
     }
+
+    if (empId) {
+      await supabase.from('availability').delete().eq('employee_id', empId)
+      const activeDays = availForm.filter((r) => r.active)
+      if (activeDays.length > 0) {
+        await supabase.from('availability').insert(
+          activeDays.map((r) => ({
+            employee_id: empId,
+            company_id: COMPANY_ID,
+            day_of_week: r.day,
+            start_time: r.start_time,
+            end_time: r.end_time,
+          }))
+        )
+      }
+    }
+
     setSaving(false)
     setShowForm(false)
     fetchData()
@@ -294,6 +354,7 @@ export default function EmployeesTab() {
           position: 'fixed', inset: 0, zIndex: 200,
           background: 'rgba(0,0,0,0.7)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '20px',
         }}>
           <div style={{
             background: 'var(--bg-surface-1)',
@@ -301,11 +362,14 @@ export default function EmployeesTab() {
             borderRadius: 'var(--radius-xl)',
             padding: 28,
             width: '100%',
-            maxWidth: 480,
+            maxWidth: 560,
+            maxHeight: '90vh',
+            overflowY: 'auto',
           }}>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 20 }}>
               {editingEmployee ? 'Edit Employee' : 'Add Employee'}
             </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div className="form-group">
                 <label className="form-label">Name</label>
@@ -333,12 +397,65 @@ export default function EmployeesTab() {
                 <label className="form-label">Email</label>
                 <input className="form-input" value={form.contact_email} onChange={(e) => setForm((f) => ({ ...f, contact_email: e.target.value }))} placeholder="Optional" />
               </div>
+
+              <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 16, marginTop: 4 }}>
+                <div className="form-label" style={{ marginBottom: 12 }}>Availability</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {availForm.map((row) => (
+                    <div key={row.day} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <button
+                        type="button"
+                        onClick={() => toggleDay(row.day)}
+                        style={{
+                          width: 44,
+                          padding: '4px 0',
+                          borderRadius: 'var(--radius-sm)',
+                          border: '1px solid',
+                          fontSize: 11,
+                          fontFamily: 'var(--font-body)',
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                          background: row.active ? 'var(--accent-dim)' : 'var(--bg-surface-3)',
+                          borderColor: row.active ? 'var(--accent-border)' : 'var(--border-default)',
+                          color: row.active ? 'var(--accent)' : 'var(--text-muted)',
+                          textAlign: 'center',
+                        }}
+                      >
+                        {DAYS[row.day]}
+                      </button>
+                      {row.active ? (
+                        <>
+                          <input
+                            type="time"
+                            className="form-input"
+                            style={{ width: 120 }}
+                            value={row.start_time}
+                            onChange={(e) => updateAvailTime(row.day, 'start_time', e.target.value)}
+                          />
+                          <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>to</span>
+                          <input
+                            type="time"
+                            className="form-input"
+                            style={{ width: 120 }}
+                            value={row.end_time}
+                            onChange={(e) => updateAvailTime(row.day, 'end_time', e.target.value)}
+                          />
+                        </>
+                      ) : (
+                        <span style={{ fontSize: 12, color: 'var(--text-disabled)' }}>Off</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
+
             {error && (
               <div style={{ fontSize: 12, color: 'var(--status-blocked-text)', marginTop: 12 }}>
                 {error}
               </div>
             )}
+
             <div style={{ display: 'flex', gap: 8, marginTop: 20, justifyContent: 'flex-end' }}>
               <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(false)}>Cancel</button>
               <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
