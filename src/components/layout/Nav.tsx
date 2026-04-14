@@ -9,6 +9,7 @@ const NAV_LINKS = [
   { href: '/rules',    label: 'Rules' },
   { href: '/schedule', label: 'Schedule' },
   { href: '/activity', label: 'Activity' },
+  { href: '/profile',  label: 'Profile' },
 ]
 
 export default function Nav() {
