@@ -14,6 +14,18 @@ const ROLE_COLORS: Record<string, string> = {
   Manager: '#ef4444',
 }
 
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </svg>
+  )
+}
+
 function RoleBadge({ role }: { role: string }) {
   const color = ROLE_COLORS[role] ?? '#666'
   return (
@@ -89,6 +101,7 @@ export default function EmployeesTab() {
   const [availForm, setAvailForm] = useState<AvailabilityRow[]>(DEFAULT_AVAILABILITY)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   const supabase = createClient()
   const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
@@ -214,6 +227,13 @@ export default function EmployeesTab() {
     fetchData()
   }
 
+  async function handleDelete(id: string) {
+    await supabase.from('availability').delete().eq('employee_id', id)
+    await supabase.from('employees').delete().eq('id', id)
+    setConfirmDeleteId(null)
+    fetchData()
+  }
+
   async function handleToggleActive(emp: Employee) {
     await supabase.from('employees').update({ active: !emp.active }).eq('id', emp.id)
     fetchData()
@@ -267,12 +287,13 @@ export default function EmployeesTab() {
       }}>
         <table className="data-table" style={{ tableLayout: 'fixed', width: '100%' }}>
           <colgroup>
-            <col style={{ width: '22%' }} />
-            <col style={{ width: '13%' }} />
-            <col style={{ width: '18%' }} />
+            <col style={{ width: '20%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '16%' }} />
             <col style={{ width: '28%' }} />
-            <col style={{ width: '10%' }} />
             <col style={{ width: '9%' }} />
+            <col style={{ width: '9%' }} />
+            <col style={{ width: '6%' }} />
           </colgroup>
           <thead>
             <tr>
@@ -282,6 +303,7 @@ export default function EmployeesTab() {
               <th>Availability</th>
               <th>Max Hrs</th>
               <th>Status</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -335,6 +357,25 @@ export default function EmployeesTab() {
                       {emp.active ? 'Active' : 'Inactive'}
                     </span>
                   </td>
+                  <td>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(emp.id) }}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: 'var(--text-muted)',
+                        padding: '4px',
+                        borderRadius: 'var(--radius-sm)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                      title="Delete employee"
+                    >
+                      <TrashIcon />
+                    </button>
+                  </td>
                 </tr>
               )
             })}
@@ -349,6 +390,46 @@ export default function EmployeesTab() {
         )}
       </div>
 
+      {/* Confirm delete modal */}
+      {confirmDeleteId && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 200,
+          background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: 'var(--bg-surface-1)',
+            border: '1px solid var(--border-default)',
+            borderRadius: 'var(--radius-xl)',
+            padding: 28,
+            width: '100%',
+            maxWidth: 380,
+          }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>
+              Delete Employee
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.6 }}>
+              This will permanently delete the employee and all their availability data. This cannot be undone.
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDeleteId(null)}>Cancel</button>
+              <button
+                className="btn btn-sm"
+                onClick={() => handleDelete(confirmDeleteId)}
+                style={{
+                  background: 'var(--status-blocked-bg)',
+                  color: 'var(--status-blocked-text)',
+                  border: '1px solid var(--status-blocked-border)',
+                }}
+              >
+                Delete Permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add/Edit Form Modal */}
       {showForm && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 200,

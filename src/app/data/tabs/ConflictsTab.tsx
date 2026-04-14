@@ -5,6 +5,18 @@ import { createClient } from '@/lib/supabase/client'
 
 const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </svg>
+  )
+}
+
 interface Conflict {
   id: string
   employee_id_1: string
@@ -165,8 +177,22 @@ export default function ConflictsTab() {
               }}>
                 {c.severity === 'never' ? 'Never' : 'Avoid'}
               </span>
-              <button className="btn btn-danger btn-sm" onClick={() => handleRemove(c.id)}>
-                Remove
+              <button
+                onClick={() => handleRemove(c.id)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: 'var(--text-muted)',
+                  padding: '4px',
+                  borderRadius: 'var(--radius-sm)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                title="Remove conflict"
+              >
+                <TrashIcon />
               </button>
             </div>
           ))
@@ -193,28 +219,28 @@ export default function ConflictsTab() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div className="form-group">
                 <label className="form-label">Employee 1</label>
-                <select className="form-select" value={form.employee_id_1} onChange={e => setForm(f => ({ ...f, employee_id_1: e.target.value }))}>
+                <select className="form-select" value={form.employee_id_1} onChange={(e) => setForm((f) => ({ ...f, employee_id_1: e.target.value }))}>
                   <option value="">Select employee...</option>
-                  {employees.map(e => <option key={e.id} value={e.id}>{e.name} ({e.primary_role})</option>)}
+                  {employees.map((e) => <option key={e.id} value={e.id}>{e.name} ({e.primary_role})</option>)}
                 </select>
               </div>
               <div className="form-group">
                 <label className="form-label">Employee 2</label>
-                <select className="form-select" value={form.employee_id_2} onChange={e => setForm(f => ({ ...f, employee_id_2: e.target.value }))}>
+                <select className="form-select" value={form.employee_id_2} onChange={(e) => setForm((f) => ({ ...f, employee_id_2: e.target.value }))}>
                   <option value="">Select employee...</option>
-                  {employees.map(e => <option key={e.id} value={e.id}>{e.name} ({e.primary_role})</option>)}
+                  {employees.map((e) => <option key={e.id} value={e.id}>{e.name} ({e.primary_role})</option>)}
                 </select>
               </div>
               <div className="form-group">
                 <label className="form-label">Severity</label>
-                <select className="form-select" value={form.severity} onChange={e => setForm(f => ({ ...f, severity: e.target.value as 'avoid' | 'never' }))}>
+                <select className="form-select" value={form.severity} onChange={(e) => setForm((f) => ({ ...f, severity: e.target.value as 'avoid' | 'never' }))}>
                   <option value="avoid">Avoid — schedule together only if necessary</option>
                   <option value="never">Never — do not schedule together under any circumstances</option>
                 </select>
               </div>
               <div className="form-group">
                 <label className="form-label">Reason (optional)</label>
-                <input className="form-input" value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} placeholder="Performance issue, personal conflict..." />
+                <input className="form-input" value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} placeholder="Performance issue, personal conflict..." />
               </div>
             </div>
             {error && <div style={{ fontSize: 12, color: 'var(--status-blocked-text)', marginTop: 12 }}>{error}</div>}

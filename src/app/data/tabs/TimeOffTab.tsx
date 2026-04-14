@@ -5,6 +5,18 @@ import { createClient } from '@/lib/supabase/client'
 
 const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </svg>
+  )
+}
+
 interface TORequest {
   id: string
   employee_id: string
@@ -63,6 +75,11 @@ export default function TimeOffTab() {
     fetchData()
   }
 
+  async function handleDelete(id: string) {
+    await supabase.from('time_off_requests').delete().eq('id', id)
+    fetchData()
+  }
+
   async function handleAdd() {
     if (!form.employee_id || !form.start_date || !form.end_date) {
       setError('Employee and dates are required.')
@@ -83,12 +100,12 @@ export default function TimeOffTab() {
     fetchData()
   }
 
-  const filtered = requests.filter(r => filter === 'all' || r.status === filter)
+  const filtered = requests.filter((r) => filter === 'all' || r.status === filter)
 
   const counts = {
-    pending:  requests.filter(r => r.status === 'pending').length,
-    approved: requests.filter(r => r.status === 'approved').length,
-    denied:   requests.filter(r => r.status === 'denied').length,
+    pending:  requests.filter((r) => r.status === 'pending').length,
+    approved: requests.filter((r) => r.status === 'approved').length,
+    denied:   requests.filter((r) => r.status === 'denied').length,
   }
 
   if (loading) return (
@@ -100,7 +117,7 @@ export default function TimeOffTab() {
   return (
     <div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
-        {(['all', 'pending', 'approved', 'denied'] as const).map(f => (
+        {(['all', 'pending', 'approved', 'denied'] as const).map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -194,6 +211,23 @@ export default function TimeOffTab() {
                     {req.status.charAt(0).toUpperCase() + req.status.slice(1)}
                   </span>
                 )}
+                <button
+                  onClick={() => handleDelete(req.id)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--text-muted)',
+                    padding: '4px',
+                    borderRadius: 'var(--radius-sm)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  title="Delete request"
+                >
+                  <TrashIcon />
+                </button>
               </div>
             </div>
           ))
@@ -220,24 +254,24 @@ export default function TimeOffTab() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div className="form-group">
                 <label className="form-label">Employee</label>
-                <select className="form-select" value={form.employee_id} onChange={e => setForm(f => ({ ...f, employee_id: e.target.value }))}>
+                <select className="form-select" value={form.employee_id} onChange={(e) => setForm((f) => ({ ...f, employee_id: e.target.value }))}>
                   <option value="">Select employee...</option>
-                  {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                  {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div className="form-group">
                   <label className="form-label">Start Date</label>
-                  <input className="form-input" type="date" value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} />
+                  <input className="form-input" type="date" value={form.start_date} onChange={(e) => setForm((f) => ({ ...f, start_date: e.target.value }))} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">End Date</label>
-                  <input className="form-input" type="date" value={form.end_date} onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))} />
+                  <input className="form-input" type="date" value={form.end_date} onChange={(e) => setForm((f) => ({ ...f, end_date: e.target.value }))} />
                 </div>
               </div>
               <div className="form-group">
                 <label className="form-label">Reason (optional)</label>
-                <input className="form-input" value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} placeholder="Personal, medical, vacation..." />
+                <input className="form-input" value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} placeholder="Personal, medical, vacation..." />
               </div>
             </div>
             {error && <div style={{ fontSize: 12, color: 'var(--status-blocked-text)', marginTop: 12 }}>{error}</div>}

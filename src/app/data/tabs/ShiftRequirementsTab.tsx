@@ -7,6 +7,18 @@ import type { ShiftRequirement } from '@/lib/types'
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </svg>
+  )
+}
+
 export default function ShiftRequirementsTab() {
   const [shifts, setShifts] = useState<ShiftRequirement[]>([])
   const [loading, setLoading] = useState(true)
@@ -166,10 +178,23 @@ export default function ShiftRequirementsTab() {
               </div>
               <div style={{ marginLeft: 'auto' }}>
                 <button
-                  className="btn btn-danger btn-sm"
                   onClick={() => handleDeleteGroup(shiftName)}
+                  style={{
+                    background: 'transparent',
+                    border: '1px solid var(--status-blocked-border)',
+                    borderRadius: 'var(--radius-sm)',
+                    cursor: 'pointer',
+                    color: 'var(--status-blocked-text)',
+                    padding: '4px 8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    fontSize: 11,
+                    fontFamily: 'var(--font-body)',
+                  }}
+                  title="Delete entire shift"
                 >
-                  Delete Entire Shift
+                  <TrashIcon /> Delete Shift
                 </button>
               </div>
             </div>
@@ -197,10 +222,21 @@ export default function ShiftRequirementsTab() {
                     <td>{s.end_time}</td>
                     <td>
                       <button
-                        className="btn btn-danger btn-sm"
                         onClick={(e) => { e.stopPropagation(); handleDeleteOne(s.id) }}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          cursor: 'pointer',
+                          color: 'var(--text-muted)',
+                          padding: '4px',
+                          borderRadius: 'var(--radius-sm)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                        title="Remove role from shift"
                       >
-                        Remove
+                        <TrashIcon />
                       </button>
                     </td>
                   </tr>
