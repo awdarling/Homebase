@@ -5,6 +5,18 @@ import { createClient } from '@/lib/supabase/client'
 
 const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    </svg>
+  )
+}
+
 interface Policy {
   id: string
   policy_key: string
@@ -74,10 +86,7 @@ export default function RulesPage() {
     setSaving(true)
     await supabase
       .from('policies')
-      .update({
-        policy_value: editValue,
-        version: policy.version + 1,
-      })
+      .update({ policy_value: editValue, version: policy.version + 1 })
       .eq('id', policy.id)
     setSaving(false)
     setEditingId(null)
@@ -245,10 +254,21 @@ export default function RulesPage() {
                             Edit
                           </button>
                           <button
-                            className="btn btn-danger btn-sm"
                             onClick={() => handleDelete(policy.id)}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              cursor: 'pointer',
+                              color: 'var(--text-muted)',
+                              padding: '4px',
+                              borderRadius: 'var(--radius-sm)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                            title="Delete rule"
                           >
-                            Remove
+                            <TrashIcon />
                           </button>
                         </>
                       )}
