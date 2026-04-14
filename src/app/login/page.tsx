@@ -9,6 +9,10 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showForgot, setShowForgot] = useState(false)
+  const [forgotEmail, setForgotEmail] = useState('')
+  const [forgotSent, setForgotSent] = useState(false)
+  const [forgotLoading, setForgotLoading] = useState(false)
 
   const supabase = createClient()
   const router = useRouter()
@@ -20,17 +24,24 @@ export default function LoginPage() {
     }
     setLoading(true)
     setError('')
-
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-
     if (error) {
       setError('Invalid email or password.')
       setLoading(false)
       return
     }
-
     router.push('/')
     router.refresh()
+  }
+
+  async function handleForgotPassword() {
+    if (!forgotEmail.trim()) return
+    setForgotLoading(true)
+    await supabase.auth.resetPasswordForEmail(forgotEmail.trim(), {
+      redirectTo: `${window.location.origin}/reset-password`,
+    })
+    setForgotLoading(false)
+    setForgotSent(true)
   }
 
   return (
@@ -67,64 +78,142 @@ export default function LoginPage() {
             Homebase
           </div>
           <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-            Sign in to your workspace
+            {showForgot ? 'Reset your password' : 'Sign in to your workspace'}
           </div>
         </div>
 
-        {/* Form */}
         <div style={{
           background: 'var(--bg-surface-1)',
           border: '1px solid var(--border-default)',
           borderRadius: 'var(--radius-xl)',
           padding: 28,
         }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div className="form-group">
-              <label className="form-label">Email</label>
-              <input
-                className="form-input"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Password</label>
-              <input
-                className="form-input"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-              />
-            </div>
-          </div>
 
-          {error && (
-            <div style={{
-              fontSize: 12,
-              color: 'var(--status-blocked-text)',
-              marginTop: 12,
-              padding: '8px 12px',
-              background: 'var(--status-blocked-bg)',
-              border: '1px solid var(--status-blocked-border)',
-              borderRadius: 'var(--radius-md)',
-            }}>
-              {error}
-            </div>
+          {!showForgot ? (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div className="form-group">
+                  <label className="form-label">Email</label>
+                  <input
+                    className="form-input"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Password</label>
+                  <input
+                    className="form-input"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                  />
+                </div>
+              </div>
+
+              {error && (
+                <div style={{
+                  fontSize: 12,
+                  color: 'var(--status-blocked-text)',
+                  marginTop: 12,
+                  padding: '8px 12px',
+                  background: 'var(--status-blocked-bg)',
+                  border: '1px solid var(--status-blocked-border)',
+                  borderRadius: 'var(--radius-md)',
+                }}>
+                  {error}
+                </div>
+              )}
+
+              <button
+                className="btn btn-primary"
+                onClick={handleLogin}
+                disabled={loading}
+                style={{ width: '100%', marginTop: 20, justifyContent: 'center' }}
+              >
+                {loading ? 'Signing in...' : 'Sign In'}
+              </button>
+
+              <button
+                onClick={() => setShowForgot(true)}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'center',
+                  marginTop: 14,
+                  fontSize: 12,
+                  color: 'var(--text-muted)',
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontFamily: 'var(--font-body)',
+                }}
+              >
+                Forgot your password?
+              </button>
+            </>
+          ) : (
+            <>
+              {!forgotSent ? (
+                <>
+                  <div className="form-group">
+                    <label className="form-label">Email Address</label>
+                    <input
+                      className="form-input"
+                      type="email"
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      onKeyDown={(e) => e.key === 'Enter' && handleForgotPassword()}
+                    />
+                  </div>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleForgotPassword}
+                    disabled={forgotLoading}
+                    style={{ width: '100%', marginTop: 20, justifyContent: 'center' }}
+                  >
+                    {forgotLoading ? 'Sending...' : 'Send Reset Link'}
+                  </button>
+                </>
+              ) : (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '12px 0',
+                }}>
+                  <div style={{ fontSize: 14, color: 'var(--status-ready-text)', fontWeight: 500, marginBottom: 8 }}>
+                    Reset link sent
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                    Check your email for a password reset link. It will expire in 1 hour.
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={() => { setShowForgot(false); setForgotSent(false); setForgotEmail('') }}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'center',
+                  marginTop: 14,
+                  fontSize: 12,
+                  color: 'var(--text-muted)',
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontFamily: 'var(--font-body)',
+                }}
+              >
+                Back to sign in
+              </button>
+            </>
           )}
-
-          <button
-            className="btn btn-primary"
-            onClick={handleLogin}
-            disabled={loading}
-            style={{ width: '100%', marginTop: 20, justifyContent: 'center' }}
-          >
-            {loading ? 'Signing in...' : 'Sign In'}
-          </button>
         </div>
 
         <div style={{ textAlign: 'center', marginTop: 20, fontSize: 11, color: 'var(--text-muted)' }}>

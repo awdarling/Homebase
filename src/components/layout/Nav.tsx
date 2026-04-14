@@ -221,6 +221,22 @@ export default function Nav() {
               Account Settings
             </Link>
 
+            <Link
+              href="/access"
+              onClick={() => setDropdownOpen(false)}
+              style={{
+                display: 'block',
+                padding: '10px 14px',
+                fontSize: 12,
+                color: 'var(--text-secondary)',
+                fontFamily: 'var(--font-body)',
+                borderBottom: '1px solid var(--border-subtle)',
+                transition: 'background 0.15s',
+              }}
+            >
+              Access Management
+            </Link>
+
             <button
               onClick={handleSignOut}
               style={{
