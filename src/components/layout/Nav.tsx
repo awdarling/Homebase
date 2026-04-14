@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { href: '/schedule', label: 'Schedule' },
   { href: '/activity', label: 'Activity' },
   { href: '/profile',  label: 'Profile' },
+  { href: '/billing',  label: 'Billing' },
 ]
 
 interface UserProfile {
