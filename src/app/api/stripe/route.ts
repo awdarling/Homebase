@@ -57,9 +57,14 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ status: 'inactive' })
         }
         const subscription = await stripe.subscriptions.retrieve(params.subscription_id)
+        
+        // Get period end from the first item's current period
+        const item = subscription.items?.data?.[0]
+        const periodEnd = (item as any)?.current_period_end ?? null
+
         return NextResponse.json({
           status: subscription.status,
-          current_period_end: subscription.current_period_end,
+          current_period_end: periodEnd,
           cancel_at_period_end: subscription.cancel_at_period_end,
         })
       }
