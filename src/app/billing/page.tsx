@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
 
@@ -42,15 +42,12 @@ const STATUS_STYLES: Record<string, { label: string; color: string; bg: string; 
   canceled: { label: 'Canceled', color: 'var(--status-blocked-text)', bg: 'var(--status-blocked-bg)', border: 'var(--status-blocked-border)' },
 }
 
-export default function BillingPage() {
+function BillingContent() {
   const [billing, setBilling] = useState<BillingInfo | null>(null)
   const [subscription, setSubscription] = useState<SubscriptionDetails | null>(null)
   const [currentUser, setCurrentUser] = useState<{ role: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
-
-  // Quria admin fields
-  const [editingNotes, setEditingNotes] = useState(false)
   const [notesValue, setNotesValue] = useState('')
   const [priceValue, setPriceValue] = useState('')
   const [billingEmailValue, setBillingEmailValue] = useState('')
@@ -170,7 +167,6 @@ export default function BillingPage() {
     }).eq('id', COMPANY_ID)
     setSavingAdmin(false)
     setAdminSaved(true)
-    setEditingNotes(false)
     setTimeout(() => setAdminSaved(false), 3000)
     fetchData()
   }
@@ -193,7 +189,6 @@ export default function BillingPage() {
         <div className="page-subtitle">Subscription and payment management</div>
       </div>
 
-      {/* Success / cancelled banners */}
       {success && (
         <div style={{
           background: 'var(--status-ready-bg)',
@@ -223,7 +218,6 @@ export default function BillingPage() {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 640 }}>
 
-        {/* Subscription status */}
         <div style={{
           background: 'var(--bg-surface-1)',
           border: '1px solid var(--border-default)',
@@ -293,7 +287,6 @@ export default function BillingPage() {
           )}
         </div>
 
-        {/* Quria admin section */}
         {isQuria && (
           <div style={{
             background: 'var(--bg-surface-1)',
@@ -340,7 +333,7 @@ export default function BillingPage() {
                   className="form-textarea"
                   value={notesValue}
                   onChange={(e) => setNotesValue(e.target.value)}
-                  placeholder="e.g. 3-month trial at $400, increases to $500 in October. Includes onboarding support."
+                  placeholder="e.g. 3-month trial at $400, increases to $500 in October."
                 />
               </div>
             </div>
@@ -370,8 +363,19 @@ export default function BillingPage() {
             )}
           </div>
         )}
-
       </div>
     </div>
+  )
+}
+
+export default function BillingPage() {
+  return (
+    <Suspense fallback={
+      <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+        Loading billing...
+      </div>
+    }>
+      <BillingContent />
+    </Suspense>
   )
 }
