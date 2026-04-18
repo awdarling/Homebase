@@ -214,8 +214,17 @@ export default function SoteriaPanel() {
     window.speechSynthesis.cancel()
     const cleaned = text.replace(/<[^>]*>/g, '').replace(/[*_#`]/g, '')
     const utterance = new SpeechSynthesisUtterance(cleaned)
-    utterance.rate = 1.05
-    utterance.pitch = 1
+    
+    const voices = window.speechSynthesis.getVoices()
+    const preferred = ['Samantha', 'Karen', 'Moira', 'Fiona', 'Victoria']
+    const picked = preferred.reduce<SpeechSynthesisVoice | null>((found, name) => {
+      if (found) return found
+      return voices.find(v => v.name === name) ?? null
+    }, null)
+    
+    if (picked) utterance.voice = picked
+    utterance.rate = 0.95
+    utterance.pitch = 1.05
     utterance.onstart = () => setSpeaking(true)
     utterance.onend = () => setSpeaking(false)
     utterance.onerror = () => setSpeaking(false)
@@ -391,27 +400,51 @@ export default function SoteriaPanel() {
               </div>
             </div>
 
-            {/* Stop voice — only shown when speaking */}
-            {speaking && (
-              <button
-                onClick={handleStopVoice}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  background: 'var(--accent-dim)',
-                  border: '1px solid var(--accent-border)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: '4px 10px',
-                  cursor: 'pointer',
-                  fontSize: 11,
-                  color: 'var(--accent)',
-                  fontFamily: 'var(--font-body)',
-                }}
-              >
-                <StopIcon /> Stop
-              </button>
-            )}
+<div style={{ display: 'flex', gap: 6 }}>
+              {speaking && (
+                <button
+                  onClick={handleStopVoice}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    background: 'var(--accent-dim)',
+                    border: '1px solid var(--accent-border)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '4px 10px',
+                    cursor: 'pointer',
+                    fontSize: 11,
+                    color: 'var(--accent)',
+                    fontFamily: 'var(--font-body)',
+                  }}
+                >
+                  <StopIcon /> Stop
+                </button>
+              )}
+              {!speaking && messages.length > 0 && (
+                <button
+                  onClick={() => {
+                    const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant')
+                    if (lastAssistant) speakText(lastAssistant.content)
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    background: 'transparent',
+                    border: '1px solid var(--border-default)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '4px 10px',
+                    cursor: 'pointer',
+                    fontSize: 11,
+                    color: 'var(--text-muted)',
+                    fontFamily: 'var(--font-body)',
+                  }}
+                >
+                  ▶ Replay
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Messages */}
