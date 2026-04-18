@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Syne, DM_Sans } from 'next/font/google'
 import './globals.css'
 import Nav from '@/components/layout/Nav'
+import SoteriaPanel from '@/components/layout/SoteriaPanel'
 
 const syne = Syne({
   subsets: ['latin'],
@@ -34,6 +35,7 @@ export default function RootLayout({
         <main style={{ paddingTop: 'var(--nav-height)' }}>
           {children}
         </main>
+        <SoteriaPanel />
       </body>
     </html>
   )
