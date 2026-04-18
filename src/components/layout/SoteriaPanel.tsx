@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
 
 const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
 
@@ -48,11 +47,10 @@ function SendIcon() {
   )
 }
 
-function SoteriaIcon() {
+function StopIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10" />
-      <path d="M12 8v4l3 3" />
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+      <rect x="4" y="4" width="16" height="16" rx="2" />
     </svg>
   )
 }
@@ -63,12 +61,13 @@ export default function SoteriaPanel() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [listening, setListening] = useState(false)
+  const [speaking, setSpeaking] = useState(false)
   const [pendingImage, setPendingImage] = useState<ImageData | null>(null)
   const [pendingImageName, setPendingImageName] = useState<string | null>(null)
+  const [showTooltip, setShowTooltip] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const recognitionRef = useRef<any>(null)
-  const supabase = createClient()
 
   useEffect(() => {
     if (open && messages.length === 0) {
@@ -80,26 +79,45 @@ export default function SoteriaPanel() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Show tooltip after 2 seconds if panel is closed
+  useEffect(() => {
+    if (!open) {
+      const timer = setTimeout(() => setShowTooltip(true), 2000)
+      return () => clearTimeout(timer)
+    } else {
+      setShowTooltip(false)
+    }
+  }, [open])
+
   async function initSoteria() {
     setLoading(true)
-    const res = await fetch('/api/soteria', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: [{ role: 'user', content: 'Hello' }],
-        companyId: COMPANY_ID,
-      }),
-    })
-    const data = await res.json()
-    const assistantMessage: Message = {
-      id: Date.now().toString(),
-      role: 'assistant',
-      content: data.message,
-      action: data.action ?? null,
-      actionStatus: data.action ? 'pending' : undefined,
+    try {
+      const res = await fetch('/api/soteria', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: 'Hello' }],
+          companyId: COMPANY_ID,
+        }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      const assistantMessage: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: data.message,
+        action: data.action ?? null,
+        actionStatus: data.action ? 'pending' : undefined,
+      }
+      setMessages([assistantMessage])
+      speakText(data.message)
+    } catch (e) {
+      setMessages([{
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: "Hi, I'm Soteria. I'm having trouble connecting right now — please try again in a moment.",
+      }])
     }
-    setMessages([assistantMessage])
-    speakText(data.message)
     setLoading(false)
   }
 
@@ -118,32 +136,38 @@ export default function SoteriaPanel() {
     setInput('')
     setLoading(true)
 
-    const apiMessages = newMessages.map((m) => ({ role: m.role, content: m.content }))
+    try {
+      const apiMessages = newMessages.map((m) => ({ role: m.role, content: m.content }))
+      const res = await fetch('/api/soteria', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: apiMessages,
+          companyId: COMPANY_ID,
+          imageData: pendingImage ?? null,
+        }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setPendingImage(null)
+      setPendingImageName(null)
 
-    const res = await fetch('/api/soteria', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: apiMessages,
-        companyId: COMPANY_ID,
-        imageData: pendingImage ?? null,
-      }),
-    })
-
-    const data = await res.json()
-    setPendingImage(null)
-    setPendingImageName(null)
-
-    const assistantMessage: Message = {
-      id: (Date.now() + 1).toString(),
-      role: 'assistant',
-      content: data.message,
-      action: data.action ?? null,
-      actionStatus: data.action ? 'pending' : undefined,
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: data.message,
+        action: data.action ?? null,
+        actionStatus: data.action ? 'pending' : undefined,
+      }
+      setMessages((prev) => [...prev, assistantMessage])
+      speakText(data.message)
+    } catch (e) {
+      setMessages((prev) => [...prev, {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: "Something went wrong. Please try again.",
+      }])
     }
-
-    setMessages((prev) => [...prev, assistantMessage])
-    speakText(data.message)
     setLoading(false)
   }
 
@@ -151,23 +175,24 @@ export default function SoteriaPanel() {
     setMessages((prev) => prev.map((m) =>
       m.id === messageId ? { ...m, actionStatus: 'confirmed' } : m
     ))
-
-    const res = await fetch('/api/soteria/execute', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, companyId: COMPANY_ID }),
-    })
-
-    const data = await res.json()
-
-    if (data.success) {
-      const confirmMessage: Message = {
-        id: Date.now().toString(),
-        role: 'assistant',
-        content: `Done — ${action.description} has been saved to Homebase.`,
+    try {
+      const res = await fetch('/api/soteria/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, companyId: COMPANY_ID }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        const confirmMessage: Message = {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: `Done — ${action.description} has been saved to Homebase.`,
+        }
+        setMessages((prev) => [...prev, confirmMessage])
+        speakText(confirmMessage.content)
       }
-      setMessages((prev) => [...prev, confirmMessage])
-      speakText(confirmMessage.content)
+    } catch (e) {
+      console.error('Execute error:', e)
     }
   }
 
@@ -191,7 +216,15 @@ export default function SoteriaPanel() {
     const utterance = new SpeechSynthesisUtterance(cleaned)
     utterance.rate = 1.05
     utterance.pitch = 1
+    utterance.onstart = () => setSpeaking(true)
+    utterance.onend = () => setSpeaking(false)
+    utterance.onerror = () => setSpeaking(false)
     window.speechSynthesis.speak(utterance)
+  }
+
+  function handleStopVoice() {
+    window.speechSynthesis?.cancel()
+    setSpeaking(false)
   }
 
   function handleMic() {
@@ -218,7 +251,6 @@ export default function SoteriaPanel() {
 
     recognition.onend = () => setListening(false)
     recognition.onerror = () => setListening(false)
-
     recognition.start()
     setListening(true)
   }
@@ -226,7 +258,6 @@ export default function SoteriaPanel() {
   function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-
     const reader = new FileReader()
     reader.onload = () => {
       const base64 = (reader.result as string).split(',')[1]
@@ -238,37 +269,84 @@ export default function SoteriaPanel() {
 
   return (
     <>
+      {/* Tooltip */}
+      {showTooltip && !open && (
+        <div style={{
+          position: 'fixed',
+          bottom: 88,
+          right: 24,
+          background: 'var(--bg-surface-1)',
+          border: '1px solid var(--border-default)',
+          borderRadius: 'var(--radius-lg)',
+          padding: '10px 14px',
+          fontSize: 12,
+          color: 'var(--text-secondary)',
+          maxWidth: 220,
+          zIndex: 299,
+          lineHeight: 1.5,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+        }}>
+          <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 3 }}>
+            Talk to Soteria
+          </div>
+          Your operational setup and feedback assistant. Ask questions, get advice, or set up your team.
+          <button
+            onClick={() => setShowTooltip(false)}
+            style={{
+              position: 'absolute',
+              top: 6,
+              right: 8,
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: 12,
+              color: 'var(--text-muted)',
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Floating button */}
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => { setOpen((o) => !o); setShowTooltip(false) }}
+        onMouseEnter={() => !open && setShowTooltip(true)}
+        onMouseLeave={() => setShowTooltip(false)}
         style={{
           position: 'fixed',
           bottom: 24,
           right: 24,
-          width: 52,
-          height: 52,
+          width: 56,
+          height: 56,
           borderRadius: '50%',
-          background: open ? 'var(--bg-surface-3)' : 'var(--bg-surface-1)',
-          border: '1px solid var(--border-default)',
+          background: 'var(--bg-base)',
+          border: 'none',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           cursor: 'pointer',
           zIndex: 300,
-          color: 'var(--text-secondary)',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
-          transition: 'background 0.15s',
+          padding: 0,
+          boxShadow: open
+            ? '0 0 0 2px var(--accent), 0 0 20px rgba(249,115,22,0.4), 0 4px 20px rgba(0,0,0,0.5)'
+            : '0 0 0 1px var(--border-default), 0 4px 20px rgba(0,0,0,0.4)',
+          transition: 'box-shadow 0.2s',
         }}
-        title="Open Soteria"
+        title="Talk to Soteria"
       >
-        <SoteriaIcon />
+        <img
+          src="/soteria-icon.png"
+          alt="Soteria"
+          style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover' }}
+        />
       </button>
 
       {/* Panel */}
       {open && (
         <div style={{
           position: 'fixed',
-          bottom: 88,
+          bottom: 92,
           right: 24,
           width: 400,
           height: 560,
@@ -279,38 +357,61 @@ export default function SoteriaPanel() {
           flexDirection: 'column',
           zIndex: 299,
           overflow: 'hidden',
-          boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+          boxShadow: '0 0 0 1px rgba(249,115,22,0.3), 0 0 30px rgba(249,115,22,0.15), 0 8px 40px rgba(0,0,0,0.6)',
         }}>
 
           {/* Header */}
           <div style={{
             padding: '14px 16px',
             borderBottom: '1px solid var(--border-subtle)',
+            background: 'var(--bg-surface-2)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
           }}>
-            <div>
-              <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
-                Soteria
-              </div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>
-                Operational setup assistant
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <img
+                src="/soteria-icon.png"
+                alt="Soteria"
+                style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }}
+              />
+              <div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+                  Soteria
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>
+                  {speaking ? (
+                    <span style={{ color: 'var(--accent)' }}>● Speaking...</span>
+                  ) : loading ? (
+                    'Thinking...'
+                  ) : (
+                    'Operational assistant'
+                  )}
+                </div>
               </div>
             </div>
-            <button
-              onClick={() => window.speechSynthesis?.cancel()}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                fontSize: 11,
-                color: 'var(--text-muted)',
-                fontFamily: 'var(--font-body)',
-              }}
-            >
-              Stop voice
-            </button>
+
+            {/* Stop voice — only shown when speaking */}
+            {speaking && (
+              <button
+                onClick={handleStopVoice}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  background: 'var(--accent-dim)',
+                  border: '1px solid var(--accent-border)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '4px 10px',
+                  cursor: 'pointer',
+                  fontSize: 11,
+                  color: 'var(--accent)',
+                  fontFamily: 'var(--font-body)',
+                }}
+              >
+                <StopIcon /> Stop
+              </button>
+            )}
           </div>
 
           {/* Messages */}
@@ -327,9 +428,18 @@ export default function SoteriaPanel() {
                 <div style={{
                   display: 'flex',
                   justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                  alignItems: 'flex-end',
+                  gap: 8,
                 }}>
+                  {msg.role === 'assistant' && (
+                    <img
+                      src="/soteria-icon.png"
+                      alt="Soteria"
+                      style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, marginBottom: 2 }}
+                    />
+                  )}
                   <div style={{
-                    maxWidth: '85%',
+                    maxWidth: '82%',
                     padding: '10px 14px',
                     borderRadius: msg.role === 'user'
                       ? '16px 16px 4px 16px'
@@ -337,7 +447,9 @@ export default function SoteriaPanel() {
                     background: msg.role === 'user'
                       ? 'var(--bg-surface-3)'
                       : 'var(--bg-surface-2)',
-                    border: '1px solid var(--border-subtle)',
+                    border: msg.role === 'assistant'
+                      ? '1px solid rgba(249,115,22,0.15)'
+                      : '1px solid var(--border-subtle)',
                     fontSize: 13,
                     color: 'var(--text-secondary)',
                     lineHeight: 1.6,
@@ -350,7 +462,7 @@ export default function SoteriaPanel() {
                 {/* Action confirmation card */}
                 {msg.action && msg.actionStatus === 'pending' && (
                   <div style={{
-                    margin: '8px 0 0 0',
+                    margin: '8px 0 0 28px',
                     background: 'var(--bg-surface-2)',
                     border: '1px solid var(--border-default)',
                     borderLeft: '3px solid var(--accent)',
@@ -400,13 +512,13 @@ export default function SoteriaPanel() {
                 )}
 
                 {msg.action && msg.actionStatus === 'confirmed' && (
-                  <div style={{ fontSize: 11, color: 'var(--status-ready-text)', marginTop: 4, paddingLeft: 4 }}>
+                  <div style={{ fontSize: 11, color: 'var(--status-ready-text)', marginTop: 4, paddingLeft: 28 }}>
                     ✓ Confirmed and saved
                   </div>
                 )}
 
                 {msg.action && msg.actionStatus === 'rejected' && (
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, paddingLeft: 4 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, paddingLeft: 28 }}>
                     — Rejected
                   </div>
                 )}
@@ -414,19 +526,21 @@ export default function SoteriaPanel() {
             ))}
 
             {loading && (
-              <div style={{
-                display: 'flex',
-                justifyContent: 'flex-start',
-              }}>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+                <img
+                  src="/soteria-icon.png"
+                  alt="Soteria"
+                  style={{ width: 20, height: 20, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                />
                 <div style={{
                   padding: '10px 14px',
                   borderRadius: '16px 16px 16px 4px',
                   background: 'var(--bg-surface-2)',
-                  border: '1px solid var(--border-subtle)',
+                  border: '1px solid rgba(249,115,22,0.15)',
                   fontSize: 13,
                   color: 'var(--text-muted)',
                 }}>
-                  Soteria is thinking...
+                  Thinking...
                 </div>
               </div>
             )}
@@ -443,6 +557,7 @@ export default function SoteriaPanel() {
               gap: 8,
               fontSize: 11,
               color: 'var(--text-muted)',
+              background: 'var(--bg-surface-2)',
             }}>
               <ImageIcon />
               {pendingImageName}
@@ -459,6 +574,7 @@ export default function SoteriaPanel() {
           <div style={{
             padding: '12px 16px',
             borderTop: '1px solid var(--border-subtle)',
+            background: 'var(--bg-surface-2)',
             display: 'flex',
             gap: 8,
             alignItems: 'flex-end',
@@ -476,7 +592,7 @@ export default function SoteriaPanel() {
               rows={1}
               style={{
                 flex: 1,
-                background: 'var(--bg-surface-2)',
+                background: 'var(--bg-surface-3)',
                 border: '1px solid var(--border-default)',
                 borderRadius: 'var(--radius-md)',
                 padding: '8px 12px',
@@ -489,7 +605,6 @@ export default function SoteriaPanel() {
               }}
             />
 
-            {/* Image upload */}
             <button
               onClick={() => fileInputRef.current?.click()}
               style={{
@@ -517,7 +632,6 @@ export default function SoteriaPanel() {
               onChange={handleImageUpload}
             />
 
-            {/* Mic */}
             <button
               onClick={handleMic}
               style={{
@@ -539,7 +653,6 @@ export default function SoteriaPanel() {
               <MicIcon active={listening} />
             </button>
 
-            {/* Send */}
             <button
               onClick={() => sendMessage()}
               disabled={loading || (!input.trim() && !pendingImage)}
