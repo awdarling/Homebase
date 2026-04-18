@@ -25,7 +25,6 @@ export async function POST(request: NextRequest) {
           active: true,
         }).select().single()
         if (error) throw error
-
         await supabase.from('activity_log').insert({
           company_id: companyId,
           actor: 'soteria',
@@ -56,7 +55,6 @@ export async function POST(request: NextRequest) {
           .select('id')
           .eq('company_id', companyId)
           .maybeSingle()
-
         if (existing.data) {
           await supabase.from('company_profiles').update({
             ...action.data,
@@ -119,7 +117,6 @@ export async function POST(request: NextRequest) {
           .eq('company_id', companyId)
           .eq('policy_key', action.data.policy_key)
           .maybeSingle()
-
         if (existing.data) {
           await supabase.from('policies').update({
             policy_value: action.data.policy_value,

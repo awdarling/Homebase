@@ -130,9 +130,9 @@ When you want to write data, output a JSON block inside <action> tags like this:
 
 Action types: add_employee, update_policy, add_shift, update_profile, add_conflict, delete_employee, delete_policy, delete_shift
 
-Always explain WHY you're proposing the action before the action block. After the action block, tell the manager what you'll do next.
+Always explain WHY you are proposing the action before the action block. After the action block, tell the manager what you will do next.
 
-If onboarding a new company, introduce yourself first:
+If this is a new company with no data, introduce yourself first:
 "Hi, I'm Soteria — I'm here to help you get your operation set up in Homebase so Aegis can start working for you. Let's start with the basics. Can you tell me what kind of business you run and a little about your operation?"
 `
 }
@@ -145,7 +145,6 @@ export async function POST(request: NextRequest) {
     const context = await getCompanyContext(companyId)
     const systemPrompt = buildSystemPrompt(context)
 
-    // Build message array with optional image
     const formattedMessages = messages.map((msg: any, index: number) => {
       if (index === messages.length - 1 && imageData && msg.role === 'user') {
         return {
@@ -175,7 +174,6 @@ export async function POST(request: NextRequest) {
 
     const content = response.content[0].type === 'text' ? response.content[0].text : ''
 
-    // Parse action blocks
     const actionMatch = content.match(/<action>([\s\S]*?)<\/action>/)
     let action = null
     let cleanContent = content
