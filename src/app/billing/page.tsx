@@ -61,9 +61,10 @@ function BillingContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
-  useEffect(() => { fetchData() }, [])
+ useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
 
   async function fetchData() {
+    if (!COMPANY_ID) return
     setLoading(true)
     const { data: { user: authUser } } = await supabase.auth.getUser()
     if (!authUser) { router.push('/login'); return }

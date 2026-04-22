@@ -40,9 +40,10 @@ export default function ShiftRequirementsTab() {
 
   const supabase = createClient()
 
-  useEffect(() => { fetchData() }, [])
+useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
 
   async function fetchData() {
+     if (!COMPANY_ID) return
     setLoading(true)
     const { data } = await supabase
       .from('shift_requirements')

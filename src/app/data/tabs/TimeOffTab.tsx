@@ -48,9 +48,10 @@ export default function TimeOffTab() {
 
   const supabase = createClient()
 
-  useEffect(() => { fetchData() }, [])
+useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
 
   async function fetchData() {
+     if (!COMPANY_ID) return
     setLoading(true)
     const [toRes, empRes] = await Promise.all([
       supabase

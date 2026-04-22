@@ -109,9 +109,10 @@ export default function EmployeesTab() {
   const supabase = createClient()
   
 
-  useEffect(() => { fetchData() }, [])
+useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
 
-  async function fetchData() {
+async function fetchData() {
+    if (!COMPANY_ID) return
     setLoading(true)
     const [empRes, avRes] = await Promise.all([
       supabase.from('employees').select('*').eq('company_id', COMPANY_ID).order('primary_role').order('name'),
