@@ -1,10 +1,11 @@
 'use client'
+import { useCompany } from '@/lib/hooks/useCompany'
 
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
-const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+
 
 interface UserProfile {
   id: string
@@ -16,6 +17,8 @@ interface UserProfile {
 }
 
 export default function AccountPage() {
+  const { company } = useCompany()
+  const COMPANY_ID = company?.id ?? ''
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [name, setName] = useState('')

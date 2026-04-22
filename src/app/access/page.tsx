@@ -1,10 +1,11 @@
 'use client'
+import { useCompany } from '@/lib/hooks/useCompany'
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
-const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+
 
 interface UserRecord {
   id: string
@@ -34,6 +35,8 @@ const ROLE_STYLES: Record<string, { color: string; bg: string; border: string }>
 }
 
 export default function AccessPage() {
+  const { company } = useCompany()
+  const COMPANY_ID = company?.id ?? ''
   const [users, setUsers] = useState<UserRecord[]>([])
   const [currentUser, setCurrentUser] = useState<UserRecord | null>(null)
   const [loading, setLoading] = useState(true)

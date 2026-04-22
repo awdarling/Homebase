@@ -1,9 +1,10 @@
 'use client'
+import { useCompany } from '@/lib/hooks/useCompany'
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
-const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+
 
 interface CompanyProfile {
   id?: string
@@ -27,6 +28,8 @@ const EMPTY_PROFILE: CompanyProfile = {
 }
 
 export default function ProfilePage() {
+  const { company } = useCompany()
+  const COMPANY_ID = company?.id ?? ''
   const [profile, setProfile] = useState<CompanyProfile>(EMPTY_PROFILE)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)

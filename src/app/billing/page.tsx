@@ -1,10 +1,11 @@
 'use client'
+import { useCompany } from '@/lib/hooks/useCompany'
 
 import { Suspense, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
 
-const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+
 
 interface BillingInfo {
   stripe_customer_id: string | null
@@ -43,6 +44,8 @@ const STATUS_STYLES: Record<string, { label: string; color: string; bg: string; 
 }
 
 function BillingContent() {
+  const { company } = useCompany()
+  const COMPANY_ID = company?.id ?? ''
   const [billing, setBilling] = useState<BillingInfo | null>(null)
   const [subscription, setSubscription] = useState<SubscriptionDetails | null>(null)
   const [currentUser, setCurrentUser] = useState<{ role: string } | null>(null)

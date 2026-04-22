@@ -1,9 +1,10 @@
 'use client'
+import { useCompany } from '@/lib/hooks/useCompany'
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
-const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+
 
 function TrashIcon() {
   return (
@@ -46,6 +47,8 @@ const TYPE_LABELS: Record<string, string> = {
 }
 
 export default function RulesPage() {
+  const { company } = useCompany()
+  const COMPANY_ID = company?.id ?? ''
   const [policies, setPolicies] = useState<Policy[]>([])
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)

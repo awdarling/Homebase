@@ -1,11 +1,12 @@
 'use client'
+import { useCompany } from '@/lib/hooks/useCompany'
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { ShiftRequirement } from '@/lib/types'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+
 
 function TrashIcon() {
   return (
@@ -20,6 +21,8 @@ function TrashIcon() {
 }
 
 export default function ShiftRequirementsTab() {
+  const { company } = useCompany()
+  const COMPANY_ID = company?.id ?? ''
   const [shifts, setShifts] = useState<ShiftRequirement[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)

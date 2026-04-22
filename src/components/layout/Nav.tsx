@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useCompany } from '@/lib/hooks/useCompany'
 
 const NAV_LINKS = [
   { href: '/',         label: 'Home' },
@@ -11,28 +12,15 @@ const NAV_LINKS = [
   { href: '/rules',    label: 'Rules' },
   { href: '/schedule', label: 'Schedule' },
   { href: '/activity', label: 'Activity' },
-  { href: '/profile',  label: 'Profile' },
-  { href: '/billing',  label: 'Billing' },
 ]
-
-interface UserProfile {
-  name: string
-  email: string
-  avatar_url: string | null
-  role: string
-}
 
 export default function Nav() {
   const pathname = usePathname()
   const router = useRouter()
-  const [user, setUser] = useState<UserProfile | null>(null)
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
-
-  useEffect(() => {
-    fetchUser()
-  }, [])
+  const { company, user } = useCompany()
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -44,17 +32,6 @@ export default function Nav() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  async function fetchUser() {
-    const { data: { user: authUser } } = await supabase.auth.getUser()
-    if (!authUser) return
-    const { data } = await supabase
-      .from('users')
-      .select('name, email, avatar_url, role')
-      .eq('id', authUser.id)
-      .single()
-    if (data) setUser(data)
-  }
-
   async function handleSignOut() {
     await supabase.auth.signOut()
     router.push('/login')
@@ -63,6 +40,8 @@ export default function Nav() {
   const initials = user?.name
     ? user.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()
     : '?'
+
+  const isOwnerOrAbove = user?.role === 'quria' || user?.role === 'owner'
 
   return (
     <nav style={{
@@ -99,7 +78,7 @@ export default function Nav() {
           letterSpacing: '0.05em',
           lineHeight: 1,
         }}>
-          Watermark Country Club's Homebase
+          {company ? `${company.name}'s Homebase` : 'Homebase'}
         </span>
       </div>
 
@@ -147,7 +126,6 @@ export default function Nav() {
             cursor: 'pointer',
           }}
         >
-          {/* Avatar */}
           <div style={{
             width: 28,
             height: 28,
@@ -176,13 +154,12 @@ export default function Nav() {
           </svg>
         </button>
 
-        {/* Dropdown menu */}
         {dropdownOpen && (
           <div style={{
             position: 'absolute',
             top: 'calc(100% + 8px)',
             right: 0,
-            width: 200,
+            width: 220,
             background: 'var(--bg-surface-1)',
             border: '1px solid var(--border-default)',
             borderRadius: 'var(--radius-lg)',
@@ -216,14 +193,13 @@ export default function Nav() {
                 color: 'var(--text-secondary)',
                 fontFamily: 'var(--font-body)',
                 borderBottom: '1px solid var(--border-subtle)',
-                transition: 'background 0.15s',
               }}
             >
               Account Settings
             </Link>
 
             <Link
-              href="/access"
+              href="/profile"
               onClick={() => setDropdownOpen(false)}
               style={{
                 display: 'block',
@@ -232,11 +208,42 @@ export default function Nav() {
                 color: 'var(--text-secondary)',
                 fontFamily: 'var(--font-body)',
                 borderBottom: '1px solid var(--border-subtle)',
-                transition: 'background 0.15s',
               }}
             >
-              Access Management
+              Company Profile
             </Link>
+
+            <Link
+              href="/billing"
+              onClick={() => setDropdownOpen(false)}
+              style={{
+                display: 'block',
+                padding: '10px 14px',
+                fontSize: 12,
+                color: 'var(--text-secondary)',
+                fontFamily: 'var(--font-body)',
+                borderBottom: '1px solid var(--border-subtle)',
+              }}
+            >
+              Billing
+            </Link>
+
+            {isOwnerOrAbove && (
+              <Link
+                href="/access"
+                onClick={() => setDropdownOpen(false)}
+                style={{
+                  display: 'block',
+                  padding: '10px 14px',
+                  fontSize: 12,
+                  color: 'var(--text-secondary)',
+                  fontFamily: 'var(--font-body)',
+                  borderBottom: '1px solid var(--border-subtle)',
+                }}
+              >
+                Access Management
+              </Link>
+            )}
 
             <button
               onClick={handleSignOut}

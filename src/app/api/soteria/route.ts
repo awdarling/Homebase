@@ -20,6 +20,7 @@ async function getCompanyContext(companyId: string) {
     { data: policies },
     { data: timeoff },
     { data: conflicts },
+    { data: memory },
   ] = await Promise.all([
     supabase.from('companies').select('*').eq('id', companyId).single(),
     supabase.from('company_profiles').select('*').eq('company_id', companyId).maybeSingle(),
@@ -28,6 +29,7 @@ async function getCompanyContext(companyId: string) {
     supabase.from('policies').select('*').eq('company_id', companyId),
     supabase.from('time_off_requests').select('*').eq('company_id', companyId).eq('status', 'pending'),
     supabase.from('employee_conflicts').select('*').eq('company_id', companyId),
+    supabase.from('soteria_memory').select('*').eq('company_id', companyId).order('created_at', { ascending: false }).limit(50),
   ])
 
   const employeeCount = employees?.length ?? 0
@@ -41,6 +43,7 @@ async function getCompanyContext(companyId: string) {
     policies,
     timeoff,
     conflicts,
+    memory,
     isNewCompany,
     summary: {
       employeeCount,
@@ -53,7 +56,7 @@ async function getCompanyContext(companyId: string) {
 }
 
 function buildSystemPrompt(context: Awaited<ReturnType<typeof getCompanyContext>>) {
-  const { company, profile, employees, shifts, policies, conflicts, isNewCompany, summary } = context
+  const { company, profile, employees, shifts, policies, conflicts, memory, isNewCompany, summary } = context
 
   const conflictWarnings = () => {
     if (!conflicts || conflicts.length === 0) return ''
@@ -64,6 +67,15 @@ function buildSystemPrompt(context: Awaited<ReturnType<typeof getCompanyContext>
     return ''
   }
 
+  const memorySection = () => {
+    if (!memory || memory.length === 0) return ''
+    return `
+MEMORY FROM PREVIOUS CONVERSATIONS:
+${memory.map((m: any) => `- [${m.memory_type}] ${m.content}`).join('\n')}
+
+Use this memory to personalize your responses. Reference past decisions and preferences naturally.`
+  }
+
   return `You are Soteria, an operational setup and advisory assistant built into Homebase by Quria Solutions.
 
 Your role is to help managers set up their business data, refine their rules, and improve their operational structure. You are knowledgeable, warm, direct, and proactive. You think like an experienced operational consultant who has seen hundreds of businesses.
@@ -72,9 +84,14 @@ CRITICAL BEHAVIOR RULES:
 - You NEVER write data to the database yourself. Instead, you propose actions as structured JSON inside <action> tags that the UI will present as confirmation cards.
 - The manager must confirm every proposed change before anything is written.
 - You proactively flag problems — staffing gaps, impossible scheduling constraints, rule conflicts — before they cause issues.
-- When onboarding a new company, start by introducing yourself and gathering business context before anything else.
 - You have full read access to the company's current data. Use it. Reference specific employees, shifts, and rules by name.
 - Keep responses concise and actionable. No fluff.
+- When you learn something important about the manager's preferences or decisions, store it using the save_memory action.
+
+RESPONSE LENGTH RULES:
+- Opening message: 1-2 sentences maximum. Warm, brief, human.
+- All other responses: concise and focused. Never more than 3-4 short paragraphs.
+- Ask one question at a time. Never stack multiple questions.
 
 COMPANY: ${company?.name ?? 'Unknown'}
 ONBOARDING NEEDED: ${isNewCompany ? 'YES — this company has no data yet' : 'NO — data exists'}
@@ -112,9 +129,12 @@ POLICIES:
 ${policies.map((p: any) => `- ${p.policy_key}: ${p.policy_value} (${p.policy_type})`).join('\n')}
 ` : 'POLICIES: None added yet'}
 
-PROPOSING ACTIONS:
-When you want to write data, output a JSON block inside <action> tags like this:
+${memorySection()}
 
+PROPOSING ACTIONS:
+When you want to write data, output a JSON block inside <action> tags.
+
+For database changes:
 <action>
 {
   "type": "add_employee",
@@ -128,15 +148,17 @@ When you want to write data, output a JSON block inside <action> tags like this:
 }
 </action>
 
+For saving memory (no confirmation needed — do this silently when you learn something important):
+<memory>
+{
+  "memory_type": "preference",
+  "content": "Manager prefers to avoid scheduling overtime even if it means gaps",
+  "source": "conversation"
+}
+</memory>
+
 Action types: add_employee, update_policy, add_shift, update_profile, add_conflict, delete_employee, delete_policy, delete_shift
-
-Always explain WHY you are proposing the action before the action block. After the action block, tell the manager what you will do next.
-
-RESPONSE LENGTH RULES:
-- Opening message: 1-2 sentences maximum. Warm, brief, human.
-- All other responses: concise and focused. Never more than 3-4 short paragraphs.
-- Never open with a wall of text. Let the conversation develop naturally.
-- Ask one question at a time. Never stack multiple questions.
+Memory types: preference, decision, context, feedback
 
 If this is a new company with no data, introduce yourself briefly:
 "Hi, I'm Soteria. I'm here to help get your operation set up. What kind of business do you run?"
@@ -183,6 +205,7 @@ export async function POST(request: NextRequest) {
 
     const content = response.content[0].type === 'text' ? response.content[0].text : ''
 
+    // Parse action blocks
     const actionMatch = content.match(/<action>([\s\S]*?)<\/action>/)
     let action = null
     let cleanContent = content
@@ -193,6 +216,23 @@ export async function POST(request: NextRequest) {
         cleanContent = content.replace(/<action>[\s\S]*?<\/action>/, '').trim()
       } catch (e) {
         console.error('Failed to parse action:', e)
+      }
+    }
+
+    // Parse and auto-save memory blocks
+    const memoryMatch = cleanContent.match(/<memory>([\s\S]*?)<\/memory>/)
+    if (memoryMatch) {
+      try {
+        const memoryData = JSON.parse(memoryMatch[1].trim())
+        await supabase.from('soteria_memory').insert({
+          company_id: companyId,
+          memory_type: memoryData.memory_type,
+          content: memoryData.content,
+          source: memoryData.source ?? 'conversation',
+        })
+        cleanContent = cleanContent.replace(/<memory>[\s\S]*?<\/memory>/, '').trim()
+      } catch (e) {
+        console.error('Failed to save memory:', e)
       }
     }
 

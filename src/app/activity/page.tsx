@@ -1,9 +1,10 @@
 'use client'
+import { useCompany } from '@/lib/hooks/useCompany'
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
-const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+
 
 interface ActivityEntry {
   id: string
@@ -51,6 +52,8 @@ const ACTOR_STYLES: Record<string, { label: string; color: string; bg: string; b
 }
 
 export default function ActivityPage() {
+  const { company } = useCompany()
+  const COMPANY_ID = company?.id ?? ''
   const [entries, setEntries] = useState<ActivityEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'aegis' | 'manager' | 'system'>('all')

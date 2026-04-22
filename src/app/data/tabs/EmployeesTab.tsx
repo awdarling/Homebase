@@ -1,4 +1,5 @@
 'use client'
+import { useCompany } from '@/lib/hooks/useCompany'
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
@@ -83,6 +84,8 @@ const DEFAULT_AVAILABILITY: AvailabilityRow[] = DAYS.map((_, i) => ({
 }))
 
 export default function EmployeesTab() {
+  const { company } = useCompany()
+  const COMPANY_ID = company?.id ?? ''
   const [employees, setEmployees] = useState<Employee[]>([])
   const [availability, setAvailability] = useState<Record<string, { day: number; start: string; end: string }[]>>({})
   const [loading, setLoading] = useState(true)
@@ -104,7 +107,7 @@ export default function EmployeesTab() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   const supabase = createClient()
-  const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+  
 
   useEffect(() => { fetchData() }, [])
 

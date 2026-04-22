@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-const COMPANY_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+import { useCompany } from '@/lib/hooks/useCompany'
 
 interface Message {
   id: string
@@ -56,6 +56,8 @@ function StopIcon() {
 }
 
 export default function SoteriaPanel() {
+  const { company } = useCompany()
+  const COMPANY_ID = company?.id ?? ''
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
