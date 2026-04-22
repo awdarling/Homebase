@@ -175,7 +175,8 @@ function BillingContent() {
     fetchData()
   }
 
-  const isQuria = currentUser?.role === 'quria'
+ const isQuria = currentUser?.role === 'quria'
+  const canSeePricing = currentUser?.role === 'quria' || currentUser?.role === 'owner'
   const statusInfo = STATUS_STYLES[billing?.subscription_status ?? 'inactive'] ?? STATUS_STYLES.inactive
   const success = searchParams.get('success')
   const cancelled = searchParams.get('cancelled')
@@ -232,12 +233,14 @@ function BillingContent() {
             Subscription
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
             <div>
-              <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1, marginBottom: 6 }}>
-                {billing?.subscription_price ? formatPrice(billing.subscription_price) : '—'}
-                <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>/month</span>
-              </div>
+              {canSeePricing && (
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1, marginBottom: 6 }}>
+                  {billing?.subscription_price ? formatPrice(billing.subscription_price) : '—'}
+                  <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>/month</span>
+                </div>
+              )}
               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                 Homebase + Aegis — {billing?.name}
               </div>
