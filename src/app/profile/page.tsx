@@ -18,7 +18,7 @@ interface CompanyProfile {
 }
 
 const EMPTY_PROFILE: CompanyProfile = {
-  company_id: COMPANY_ID,
+  company_id: '',
   business_type: '',
   description: '',
   operating_hours: '',
