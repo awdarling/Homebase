@@ -58,6 +58,7 @@ export interface TimeOffRequest {
 export interface ShiftRequirement {
   id: string
   company_id: string
+  shift_type_id?: string | null
   shift_name: string
   role: string
   required_count: number
