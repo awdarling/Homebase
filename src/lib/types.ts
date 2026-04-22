@@ -29,6 +29,7 @@ export interface Employee {
   contact_email: string | null
   active: boolean
   created_at: string
+  individual_wage?: number | null
 }
 
 export interface Availability {

@@ -100,6 +100,7 @@ export default function EmployeesTab() {
     max_weekly_hours: '40',
     contact_phone: '',
     contact_email: '',
+    individual_wage: '',
   })
   const [availForm, setAvailForm] = useState<AvailabilityRow[]>(DEFAULT_AVAILABILITY)
   const [saving, setSaving] = useState(false)
@@ -107,11 +108,10 @@ export default function EmployeesTab() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   const supabase = createClient()
-  
 
-useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
+  useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
 
-async function fetchData() {
+  async function fetchData() {
     if (!COMPANY_ID) return
     setLoading(true)
     const [empRes, avRes] = await Promise.all([
@@ -153,7 +153,15 @@ async function fetchData() {
 
   function openAdd() {
     setEditingEmployee(null)
-    setForm({ name: '', primary_role: '', qualified_roles: '', max_weekly_hours: '40', contact_phone: '', contact_email: '' })
+    setForm({
+      name: '',
+      primary_role: '',
+      qualified_roles: '',
+      max_weekly_hours: '40',
+      contact_phone: '',
+      contact_email: '',
+      individual_wage: '',
+    })
     setAvailForm(DEFAULT_AVAILABILITY)
     setError('')
     setShowForm(true)
@@ -168,6 +176,7 @@ async function fetchData() {
       max_weekly_hours: String(emp.max_weekly_hours),
       contact_phone: emp.contact_phone ?? '',
       contact_email: emp.contact_email ?? '',
+      individual_wage: emp.individual_wage != null ? String(emp.individual_wage) : '',
     })
     setAvailForm(buildAvailForm(emp.id))
     setError('')
@@ -198,6 +207,7 @@ async function fetchData() {
       max_weekly_hours: parseInt(form.max_weekly_hours) || 40,
       contact_phone: form.contact_phone.trim() || null,
       contact_email: form.contact_email.trim() || null,
+      individual_wage: form.individual_wage !== '' ? parseFloat(form.individual_wage) : null,
       active: true,
     }
 
@@ -294,9 +304,10 @@ async function fetchData() {
             <col style={{ width: '20%' }} />
             <col style={{ width: '12%' }} />
             <col style={{ width: '16%' }} />
-            <col style={{ width: '28%' }} />
+            <col style={{ width: '22%' }} />
             <col style={{ width: '9%' }} />
             <col style={{ width: '9%' }} />
+            <col style={{ width: '6%' }} />
             <col style={{ width: '6%' }} />
           </colgroup>
           <thead>
@@ -306,6 +317,7 @@ async function fetchData() {
               <th>Also Qualifies</th>
               <th>Availability</th>
               <th>Max Hrs</th>
+              <th>Wage</th>
               <th>Status</th>
               <th></th>
             </tr>
@@ -351,6 +363,12 @@ async function fetchData() {
                   </td>
                   <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
                     {emp.max_weekly_hours}h
+                  </td>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                    {emp.individual_wage != null
+                      ? <span style={{ color: 'var(--accent)', fontWeight: 500 }}>${Number(emp.individual_wage).toFixed(2)}</span>
+                      : <span style={{ color: 'var(--text-disabled)' }}>role rate</span>
+                    }
                   </td>
                   <td>
                     <span
@@ -465,7 +483,7 @@ async function fetchData() {
                 <input className="form-input" value={form.primary_role} onChange={(e) => setForm((f) => ({ ...f, primary_role: e.target.value }))} placeholder="e.g. Lifeguard" />
               </div>
               <div className="form-group">
-                <label className="form-label">Qualified Roles (comma separated)</label>
+                <label className="form-label">Qualified Roles <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(comma separated)</span></label>
                 <input className="form-input" value={form.qualified_roles} onChange={(e) => setForm((f) => ({ ...f, qualified_roles: e.target.value }))} placeholder="e.g. Lifeguard, Headguard" />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -478,9 +496,23 @@ async function fetchData() {
                   <input className="form-input" value={form.contact_phone} onChange={(e) => setForm((f) => ({ ...f, contact_phone: e.target.value }))} placeholder="Optional" />
                 </div>
               </div>
-              <div className="form-group">
-                <label className="form-label">Email</label>
-                <input className="form-input" value={form.contact_email} onChange={(e) => setForm((f) => ({ ...f, contact_email: e.target.value }))} placeholder="Optional" />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-group">
+                  <label className="form-label">Email</label>
+                  <input className="form-input" value={form.contact_email} onChange={(e) => setForm((f) => ({ ...f, contact_email: e.target.value }))} placeholder="Optional" />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Individual Wage <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>($/hr)</span></label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="Leave blank to use role rate"
+                    value={form.individual_wage}
+                    onChange={(e) => setForm((f) => ({ ...f, individual_wage: e.target.value }))}
+                  />
+                </div>
               </div>
 
               <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 16, marginTop: 4 }}>
