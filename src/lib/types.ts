@@ -134,3 +134,21 @@ export interface AegisConversation {
   thread_id: string | null
   created_at: string
 }
+
+export interface ShiftType {
+  id: string
+  company_id: string
+  name: string
+  start_time: string
+  end_time: string
+  days_active: number[]
+  active: boolean
+  created_at: string
+}
+
+export interface WageRate {
+  id: string
+  company_id: string
+  role: string
+  hourly_rate: number
+}

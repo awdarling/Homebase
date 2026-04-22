@@ -3,15 +3,13 @@
 import { useState } from 'react'
 import EmployeesTab from './tabs/EmployeesTab'
 import ShiftRequirementsTab from './tabs/ShiftRequirementsTab'
-import ShiftTypesTab from './tabs/ShiftTypesTab'
 import TimeOffTab from './tabs/TimeOffTab'
 import ConflictsTab from './tabs/ConflictsTab'
 import WageRatesTab from './tabs/WageRatesTab'
 
 const TABS = [
   { id: 'employees', label: 'Employees' },
-  { id: 'shifts',    label: 'Shift Requirements' },
-  { id: 'shifttypes', label: 'Shift Types' },
+  { id: 'shifts',    label: 'Shifts' },
   { id: 'timeoff',   label: 'Time Off' },
   { id: 'conflicts', label: 'Conflicts' },
   { id: 'wages',     label: 'Wage Rates' },
@@ -62,12 +60,11 @@ export default function DataPage() {
         ))}
       </div>
 
-      {activeTab === 'employees'  && <EmployeesTab />}
-      {activeTab === 'shifts'     && <ShiftRequirementsTab />}
-      {activeTab === 'shifttypes' && <ShiftTypesTab />}
-      {activeTab === 'timeoff'    && <TimeOffTab />}
-      {activeTab === 'conflicts'  && <ConflictsTab />}
-      {activeTab === 'wages'      && <WageRatesTab />}
+      {activeTab === 'employees' && <EmployeesTab />}
+      {activeTab === 'shifts'    && <ShiftRequirementsTab />}
+      {activeTab === 'timeoff'   && <TimeOffTab />}
+      {activeTab === 'conflicts' && <ConflictsTab />}
+      {activeTab === 'wages'     && <WageRatesTab />}
     </div>
   )
 }
