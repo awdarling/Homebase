@@ -6,6 +6,7 @@ import ShiftRequirementsTab from './tabs/ShiftRequirementsTab'
 import TimeOffTab from './tabs/TimeOffTab'
 import ConflictsTab from './tabs/ConflictsTab'
 import WageRatesTab from './tabs/WageRatesTab'
+import SpecialNotesTab from './tabs/SpecialNotesTab'
 
 const TABS = [
   { id: 'employees', label: 'Employees' },
@@ -13,6 +14,7 @@ const TABS = [
   { id: 'timeoff',   label: 'Time Off' },
   { id: 'conflicts', label: 'Conflicts' },
   { id: 'wages',     label: 'Wage Rates' },
+  { id: 'notes',     label: 'Special Notes' },
 ]
 
 export default function DataPage() {
@@ -65,6 +67,7 @@ export default function DataPage() {
       {activeTab === 'timeoff'   && <TimeOffTab />}
       {activeTab === 'conflicts' && <ConflictsTab />}
       {activeTab === 'wages'     && <WageRatesTab />}
+      {activeTab === 'notes'     && <SpecialNotesTab />}
     </div>
   )
 }
