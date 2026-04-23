@@ -195,7 +195,7 @@ export default function SchedulePage() {
         )}
       </div>
 
-      {/* Tabs: Schedule / Staffing Report */}
+      {/* Tabs */}
       <div style={{
         display: 'flex',
         gap: 2,
@@ -231,7 +231,6 @@ export default function SchedulePage() {
       {/* ── Schedule Tab ── */}
       {activeTab === 'schedule' && (
         <>
-          {/* Aegis summary */}
           {selected?.data.summary && (
             <div style={{
               background: 'var(--bg-surface-1)',
@@ -250,7 +249,6 @@ export default function SchedulePage() {
             </div>
           )}
 
-          {/* Weekly grid */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 8 }}>
             {weekDays.map((date, i) => {
               const assignments = assignmentsByDay[date] ?? []
@@ -352,7 +350,6 @@ export default function SchedulePage() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-              {/* Stats row */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
                 {[
                   { label: 'Total Hours', value: `${report.totalHours}h` },
@@ -375,7 +372,6 @@ export default function SchedulePage() {
                 ))}
               </div>
 
-              {/* Top contributors + Least hours */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 {[
                   { title: 'Top Contributors', data: report.topContributors, color: 'var(--accent)' },
@@ -404,7 +400,6 @@ export default function SchedulePage() {
                 ))}
               </div>
 
-              {/* Overtime */}
               {report.overtime.length > 0 && (
                 <div style={{
                   background: 'var(--bg-surface-1)',
@@ -426,7 +421,6 @@ export default function SchedulePage() {
                 </div>
               )}
 
-              {/* Notes from Aegis */}
               {report.notes.length > 0 && (
                 <div style={{
                   background: 'var(--bg-surface-1)',
@@ -448,7 +442,6 @@ export default function SchedulePage() {
                 </div>
               )}
 
-              {/* Wages file download */}
               {selected?.wages_file_url && (
                 <div style={{
                   background: 'var(--bg-surface-1)',
@@ -487,6 +480,7 @@ export default function SchedulePage() {
                   </a>
                 </div>
               )}
+
             </div>
           )}
         </div>
