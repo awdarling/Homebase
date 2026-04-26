@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import EmployeesTab from './tabs/EmployeesTab'
+import RolesTab from './tabs/RolesTab'
 import ShiftRequirementsTab from './tabs/ShiftRequirementsTab'
 import TimeOffTab from './tabs/TimeOffTab'
 import ConflictsTab from './tabs/ConflictsTab'
@@ -11,6 +12,7 @@ import SwapsTab from './tabs/SwapsTab'
 
 const TABS = [
   { id: 'employees', label: 'Employees' },
+  { id: 'roles',     label: 'Roles' },
   { id: 'shifts',    label: 'Shifts' },
   { id: 'timeoff',   label: 'Time Off' },
   { id: 'swaps',     label: 'Swaps' },
@@ -65,6 +67,7 @@ export default function DataPage() {
       </div>
 
       {activeTab === 'employees' && <EmployeesTab />}
+      {activeTab === 'roles'     && <RolesTab />}
       {activeTab === 'shifts'    && <ShiftRequirementsTab />}
       {activeTab === 'timeoff'   && <TimeOffTab />}
       {activeTab === 'swaps'     && <SwapsTab />}

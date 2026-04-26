@@ -7,13 +7,26 @@ import type { Employee } from '@/lib/types'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-const ROLE_COLORS: Record<string, string> = {
-  Greeter: '#3b82f6',
-  Lifeguard: '#10b981',
-  Headguard: '#f97316',
-  AsstManager: '#8b5cf6',
-  Manager: '#ef4444',
+interface Role {
+  id: string
+  name: string
+  color: string
+  description: string | null
 }
+
+interface AvailabilityRow {
+  day: number
+  active: boolean
+  start_time: string
+  end_time: string
+}
+
+const DEFAULT_AVAILABILITY: AvailabilityRow[] = DAYS.map((_, i) => ({
+  day: i,
+  active: false,
+  start_time: '09:00',
+  end_time: '17:00',
+}))
 
 function TrashIcon() {
   return (
@@ -27,8 +40,9 @@ function TrashIcon() {
   )
 }
 
-function RoleBadge({ role }: { role: string }) {
-  const color = ROLE_COLORS[role] ?? '#666'
+function RoleBadge({ role, roles }: { role: string; roles: Role[] }) {
+  const match = roles.find((r) => r.name === role)
+  const color = match?.color ?? '#6b7280'
   return (
     <span style={{
       display: 'inline-block',
@@ -45,9 +59,10 @@ function RoleBadge({ role }: { role: string }) {
   )
 }
 
-function InitialsAvatar({ name, role }: { name: string; role: string }) {
+function InitialsAvatar({ name, role, roles }: { name: string; role: string; roles: Role[] }) {
   const initials = name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()
-  const color = ROLE_COLORS[role] ?? '#666'
+  const match = roles.find((r) => r.name === role)
+  const color = match?.color ?? '#6b7280'
   return (
     <div style={{
       width: 32,
@@ -69,24 +84,11 @@ function InitialsAvatar({ name, role }: { name: string; role: string }) {
   )
 }
 
-interface AvailabilityRow {
-  day: number
-  active: boolean
-  start_time: string
-  end_time: string
-}
-
-const DEFAULT_AVAILABILITY: AvailabilityRow[] = DAYS.map((_, i) => ({
-  day: i,
-  active: false,
-  start_time: '09:00',
-  end_time: '17:00',
-}))
-
 export default function EmployeesTab() {
   const { company } = useCompany()
   const COMPANY_ID = company?.id ?? ''
   const [employees, setEmployees] = useState<Employee[]>([])
+  const [roles, setRoles] = useState<Role[]>([])
   const [availability, setAvailability] = useState<Record<string, { day: number; start: string; end: string }[]>>({})
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -96,7 +98,7 @@ export default function EmployeesTab() {
   const [form, setForm] = useState({
     name: '',
     primary_role: '',
-    qualified_roles: '',
+    qualified_roles: [] as string[],
     max_weekly_hours: '40',
     contact_phone: '',
     contact_email: '',
@@ -114,11 +116,13 @@ export default function EmployeesTab() {
   async function fetchData() {
     if (!COMPANY_ID) return
     setLoading(true)
-    const [empRes, avRes] = await Promise.all([
+    const [empRes, avRes, rolesRes] = await Promise.all([
       supabase.from('employees').select('*').eq('company_id', COMPANY_ID).order('primary_role').order('name'),
       supabase.from('availability').select('*').eq('company_id', COMPANY_ID),
+      supabase.from('roles').select('*').eq('company_id', COMPANY_ID).order('name'),
     ])
     if (empRes.data) setEmployees(empRes.data)
+    if (rolesRes.data) setRoles(rolesRes.data)
     if (avRes.data) {
       const map: Record<string, { day: number; start: string; end: string }[]> = {}
       avRes.data.forEach((a: any) => {
@@ -141,7 +145,7 @@ export default function EmployeesTab() {
     })
   }
 
-  const roles = ['all', ...Array.from(new Set(employees.map((e) => e.primary_role)))]
+  const roleNames = ['all', ...roles.map((r) => r.name)]
 
   const filtered = employees.filter((e) => {
     const matchSearch = e.name.toLowerCase().includes(search.toLowerCase())
@@ -166,8 +170,8 @@ export default function EmployeesTab() {
     setEditingEmployee(null)
     setForm({
       name: '',
-      primary_role: '',
-      qualified_roles: '',
+      primary_role: roles[0]?.name ?? '',
+      qualified_roles: [],
       max_weekly_hours: '40',
       contact_phone: '',
       contact_email: '',
@@ -183,7 +187,7 @@ export default function EmployeesTab() {
     setForm({
       name: emp.name,
       primary_role: emp.primary_role,
-      qualified_roles: emp.qualified_roles.join(', '),
+      qualified_roles: emp.qualified_roles ?? [],
       max_weekly_hours: String(emp.max_weekly_hours),
       contact_phone: emp.contact_phone ?? '',
       contact_email: emp.contact_email ?? '',
@@ -202,6 +206,15 @@ export default function EmployeesTab() {
     setAvailForm((prev) => prev.map((r) => r.day === day ? { ...r, [field]: value } : r))
   }
 
+  function toggleQualifiedRole(roleName: string) {
+    setForm((f) => ({
+      ...f,
+      qualified_roles: f.qualified_roles.includes(roleName)
+        ? f.qualified_roles.filter((r) => r !== roleName)
+        : [...f.qualified_roles, roleName],
+    }))
+  }
+
   async function handleSave() {
     if (!form.name.trim() || !form.primary_role.trim()) {
       setError('Name and role are required.')
@@ -218,11 +231,15 @@ export default function EmployeesTab() {
     setSaving(true)
     setError('')
 
+    const qualifiedRoles = form.qualified_roles.includes(form.primary_role)
+      ? form.qualified_roles
+      : [form.primary_role, ...form.qualified_roles]
+
     const payload = {
       company_id: COMPANY_ID,
       name: form.name.trim(),
-      primary_role: form.primary_role.trim(),
-      qualified_roles: form.qualified_roles.split(',').map((r) => r.trim()).filter(Boolean),
+      primary_role: form.primary_role,
+      qualified_roles: qualifiedRoles,
       max_weekly_hours: parseInt(form.max_weekly_hours) || 40,
       contact_phone: form.contact_phone.trim() || null,
       contact_email: form.contact_email.trim() || null,
@@ -305,7 +322,7 @@ export default function EmployeesTab() {
           value={roleFilter}
           onChange={(e) => setRoleFilter(e.target.value)}
         >
-          {roles.map((r) => (
+          {roleNames.map((r) => (
             <option key={r} value={r}>{r === 'all' ? 'All roles' : r}</option>
           ))}
         </select>
@@ -357,22 +374,20 @@ export default function EmployeesTab() {
                 <tr key={emp.id} onClick={() => openEdit(emp)} style={{ cursor: 'pointer' }}>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <InitialsAvatar name={emp.name} role={emp.primary_role} />
+                      <InitialsAvatar name={emp.name} role={emp.primary_role} roles={roles} />
                       <div>
-                        <div style={{ color: 'var(--text-primary)', fontSize: 13 }}>
-                          {emp.name}
-                        </div>
+                        <div style={{ color: 'var(--text-primary)', fontSize: 13 }}>{emp.name}</div>
                         <div style={{ fontSize: 10, color: emp.active ? 'var(--status-ready-text)' : 'var(--text-disabled)', marginTop: 1 }}>
                           {emp.active ? 'Active' : 'Inactive'}
                         </div>
                       </div>
                     </div>
                   </td>
-                  <td><RoleBadge role={emp.primary_role} /></td>
+                  <td><RoleBadge role={emp.primary_role} roles={roles} /></td>
                   <td>
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      {emp.qualified_roles.filter((r) => r !== emp.primary_role).map((r) => (
-                        <RoleBadge key={r} role={r} />
+                      {(emp.qualified_roles ?? []).filter((r) => r !== emp.primary_role).map((r) => (
+                        <RoleBadge key={r} role={r} roles={roles} />
                       ))}
                     </div>
                   </td>
@@ -420,7 +435,6 @@ export default function EmployeesTab() {
                         alignItems: 'center',
                         justifyContent: 'center',
                       }}
-                      title="Delete employee"
                     >
                       <TrashIcon />
                     </button>
@@ -441,19 +455,8 @@ export default function EmployeesTab() {
 
       {/* Confirm delete modal */}
       {confirmDeleteId && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 200,
-          background: 'rgba(0,0,0,0.7)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <div style={{
-            background: 'var(--bg-surface-1)',
-            border: '1px solid var(--border-default)',
-            borderRadius: 'var(--radius-xl)',
-            padding: 28,
-            width: '100%',
-            maxWidth: 380,
-          }}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'var(--bg-surface-1)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-xl)', padding: 28, width: '100%', maxWidth: 380 }}>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>
               Delete Employee
             </div>
@@ -465,11 +468,7 @@ export default function EmployeesTab() {
               <button
                 className="btn btn-sm"
                 onClick={() => handleDelete(confirmDeleteId)}
-                style={{
-                  background: 'var(--status-blocked-bg)',
-                  color: 'var(--status-blocked-text)',
-                  border: '1px solid var(--status-blocked-border)',
-                }}
+                style={{ background: 'var(--status-blocked-bg)', color: 'var(--status-blocked-text)', border: '1px solid var(--status-blocked-border)' }}
               >
                 Delete Permanently
               </button>
@@ -480,22 +479,8 @@ export default function EmployeesTab() {
 
       {/* Add/Edit Form Modal */}
       {showForm && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 200,
-          background: 'rgba(0,0,0,0.7)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          padding: '20px',
-        }}>
-          <div style={{
-            background: 'var(--bg-surface-1)',
-            border: '1px solid var(--border-default)',
-            borderRadius: 'var(--radius-xl)',
-            padding: 28,
-            width: '100%',
-            maxWidth: 560,
-            maxHeight: '90vh',
-            overflowY: 'auto',
-          }}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div style={{ background: 'var(--bg-surface-1)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-xl)', padding: 28, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 20 }}>
               {editingEmployee ? 'Edit Employee' : 'Add Employee'}
             </div>
@@ -505,14 +490,52 @@ export default function EmployeesTab() {
                 <label className="form-label">Name</label>
                 <input className="form-input" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Lifeguard #21" />
               </div>
+
               <div className="form-group">
                 <label className="form-label">Primary Role</label>
-                <input className="form-input" value={form.primary_role} onChange={(e) => setForm((f) => ({ ...f, primary_role: e.target.value }))} placeholder="e.g. Lifeguard" />
+                <select
+                  className="form-select"
+                  value={form.primary_role}
+                  onChange={(e) => setForm((f) => ({ ...f, primary_role: e.target.value }))}
+                >
+                  <option value="">Select a role...</option>
+                  {roles.map((r) => (
+                    <option key={r.id} value={r.name}>{r.name}</option>
+                  ))}
+                </select>
               </div>
+
               <div className="form-group">
-                <label className="form-label">Qualified Roles <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(comma separated)</span></label>
-                <input className="form-input" value={form.qualified_roles} onChange={(e) => setForm((f) => ({ ...f, qualified_roles: e.target.value }))} placeholder="e.g. Lifeguard, Headguard" />
+                <label className="form-label">Also Qualifies For <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(select all that apply)</span></label>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                  {roles.filter((r) => r.name !== form.primary_role).map((r) => {
+                    const selected = form.qualified_roles.includes(r.name)
+                    return (
+                      <button
+                        key={r.id}
+                        type="button"
+                        onClick={() => toggleQualifiedRole(r.name)}
+                        style={{
+                          padding: '4px 12px',
+                          borderRadius: 'var(--radius-pill)',
+                          fontSize: 12,
+                          fontWeight: 500,
+                          border: `1px solid ${selected ? r.color + '88' : 'var(--border-default)'}`,
+                          background: selected ? r.color + '22' : 'var(--bg-surface-3)',
+                          color: selected ? r.color : 'var(--text-muted)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {r.name}
+                      </button>
+                    )
+                  })}
+                  {roles.filter((r) => r.name !== form.primary_role).length === 0 && (
+                    <span style={{ fontSize: 12, color: 'var(--text-disabled)' }}>Select a primary role first</span>
+                  )}
+                </div>
               </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div className="form-group">
                   <label className="form-label">Max Weekly Hours</label>
@@ -531,6 +554,7 @@ export default function EmployeesTab() {
                   />
                 </div>
               </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div className="form-group">
                   <label className="form-label">Email <span style={{ color: 'var(--status-blocked-text)', fontWeight: 400 }}>*</span></label>
@@ -569,21 +593,9 @@ export default function EmployeesTab() {
                       </button>
                       {row.active ? (
                         <>
-                          <input
-                            type="time"
-                            className="form-input"
-                            style={{ width: 120 }}
-                            value={row.start_time}
-                            onChange={(e) => updateAvailTime(row.day, 'start_time', e.target.value)}
-                          />
+                          <input type="time" className="form-input" style={{ width: 120 }} value={row.start_time} onChange={(e) => updateAvailTime(row.day, 'start_time', e.target.value)} />
                           <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>to</span>
-                          <input
-                            type="time"
-                            className="form-input"
-                            style={{ width: 120 }}
-                            value={row.end_time}
-                            onChange={(e) => updateAvailTime(row.day, 'end_time', e.target.value)}
-                          />
+                          <input type="time" className="form-input" style={{ width: 120 }} value={row.end_time} onChange={(e) => updateAvailTime(row.day, 'end_time', e.target.value)} />
                         </>
                       ) : (
                         <span style={{ fontSize: 12, color: 'var(--text-disabled)' }}>Off</span>
