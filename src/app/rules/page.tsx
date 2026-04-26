@@ -4,8 +4,6 @@ import { useCompany } from '@/lib/hooks/useCompany'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
-
-
 function TrashIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -61,7 +59,7 @@ export default function RulesPage() {
 
   const supabase = createClient()
 
- useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
+  useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
 
   async function fetchData() {
     if (!COMPANY_ID) return
@@ -74,6 +72,17 @@ export default function RulesPage() {
       .order('policy_key')
     if (data) setPolicies(data)
     setLoading(false)
+  }
+
+  async function logActivity(action: string, summary: string, entityId?: string) {
+    await supabase.from('activity_log').insert({
+      company_id: COMPANY_ID,
+      actor: 'manager',
+      action,
+      entity_type: 'policy',
+      entity_id: entityId ?? null,
+      summary,
+    })
   }
 
   function startEdit(policy: Policy) {
@@ -92,13 +101,24 @@ export default function RulesPage() {
       .from('policies')
       .update({ policy_value: editValue, version: policy.version + 1 })
       .eq('id', policy.id)
+    const meta = POLICY_META[policy.policy_key]
+    const label = meta?.label ?? policy.policy_key.replace(/_/g, ' ')
+    await logActivity(
+      'policy_updated',
+      `Updated rule "${label}" to: ${editValue}${meta?.unit ? ' ' + meta.unit : ''} (v${policy.version + 1})`,
+      policy.id
+    )
     setSaving(false)
     setEditingId(null)
     fetchData()
   }
 
   async function handleDelete(id: string) {
+    const policy = policies.find((p) => p.id === id)
     await supabase.from('policies').delete().eq('id', id)
+    const meta = POLICY_META[policy?.policy_key ?? '']
+    const label = meta?.label ?? policy?.policy_key?.replace(/_/g, ' ') ?? id
+    await logActivity('policy_deleted', `Deleted rule: "${label}"`, id)
     fetchData()
   }
 
@@ -108,14 +128,19 @@ export default function RulesPage() {
       return
     }
     setAddSaving(true)
-    await supabase.from('policies').insert({
+    const { data } = await supabase.from('policies').insert({
       company_id: COMPANY_ID,
       policy_key: newForm.policy_key.trim().toLowerCase().replace(/\s+/g, '_'),
       policy_value: newForm.policy_value.trim(),
       policy_type: 'custom',
       description: newForm.description.trim() || null,
       version: 1,
-    })
+    }).select().single()
+    if (data) await logActivity(
+      'policy_created',
+      `Added custom rule: "${newForm.policy_key}" = ${newForm.policy_value}`,
+      data.id
+    )
     setAddSaving(false)
     setShowAddForm(false)
     setNewForm({ policy_key: '', policy_value: '', description: '' })
@@ -328,7 +353,7 @@ export default function RulesPage() {
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">Description (optional)</label>
+                <label className="form-label">Description <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
                 <textarea
                   className="form-textarea"
                   value={newForm.description}
