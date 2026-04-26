@@ -329,14 +329,14 @@ export default function EmployeesTab() {
       }}>
         <table className="data-table" style={{ tableLayout: 'fixed', width: '100%' }}>
           <colgroup>
-            <col style={{ width: '20%' }} />
-            <col style={{ width: '12%' }} />
             <col style={{ width: '16%' }} />
-            <col style={{ width: '22%' }} />
-            <col style={{ width: '9%' }} />
-            <col style={{ width: '9%' }} />
-            <col style={{ width: '6%' }} />
-            <col style={{ width: '6%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '13%' }} />
+            <col style={{ width: '17%' }} />
+            <col style={{ width: '16%' }} />
+            <col style={{ width: '13%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '7%' }} />
           </colgroup>
           <thead>
             <tr>
@@ -344,9 +344,9 @@ export default function EmployeesTab() {
               <th>Role</th>
               <th>Also Qualifies</th>
               <th>Availability</th>
-              <th>Max Hrs</th>
+              <th>Email</th>
+              <th>Phone</th>
               <th>Wage</th>
-              <th>Status</th>
               <th></th>
             </tr>
           </thead>
@@ -358,9 +358,14 @@ export default function EmployeesTab() {
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <InitialsAvatar name={emp.name} role={emp.primary_role} />
-                      <span style={{ color: 'var(--text-primary)', fontSize: 13 }}>
-                        {emp.name}
-                      </span>
+                      <div>
+                        <div style={{ color: 'var(--text-primary)', fontSize: 13 }}>
+                          {emp.name}
+                        </div>
+                        <div style={{ fontSize: 10, color: emp.active ? 'var(--status-ready-text)' : 'var(--text-disabled)', marginTop: 1 }}>
+                          {emp.active ? 'Active' : 'Inactive'}
+                        </div>
+                      </div>
                     </div>
                   </td>
                   <td><RoleBadge role={emp.primary_role} /></td>
@@ -389,23 +394,17 @@ export default function EmployeesTab() {
                       })}
                     </div>
                   </td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-                    {emp.max_weekly_hours}h
+                  <td style={{ fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {emp.contact_email ?? <span style={{ color: 'var(--text-disabled)' }}>—</span>}
+                  </td>
+                  <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    {emp.contact_phone ?? <span style={{ color: 'var(--text-disabled)' }}>—</span>}
                   </td>
                   <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
                     {emp.individual_wage != null
                       ? <span style={{ color: 'var(--accent)', fontWeight: 500 }}>${Number(emp.individual_wage).toFixed(2)}</span>
                       : <span style={{ color: 'var(--text-disabled)' }}>role rate</span>
                     }
-                  </td>
-                  <td>
-                    <span
-                      className={`badge ${emp.active ? 'badge-ready' : 'badge-blocked'}`}
-                      onClick={(e) => { e.stopPropagation(); handleToggleActive(emp) }}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      {emp.active ? 'Active' : 'Inactive'}
-                    </span>
                   </td>
                   <td>
                     <button
@@ -520,16 +519,6 @@ export default function EmployeesTab() {
                   <input className="form-input" type="number" value={form.max_weekly_hours} onChange={(e) => setForm((f) => ({ ...f, max_weekly_hours: e.target.value }))} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Phone <span style={{ color: 'var(--status-blocked-text)', fontWeight: 400 }}>*</span></label>
-                  <input className="form-input" value={form.contact_phone} onChange={(e) => setForm((f) => ({ ...f, contact_phone: e.target.value }))} placeholder="Required" />
-                </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div className="form-group">
-                  <label className="form-label">Email <span style={{ color: 'var(--status-blocked-text)', fontWeight: 400 }}>*</span></label>
-                  <input className="form-input" value={form.contact_email} onChange={(e) => setForm((f) => ({ ...f, contact_email: e.target.value }))} placeholder="Required" />
-                </div>
-                <div className="form-group">
                   <label className="form-label">Individual Wage <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>($/hr)</span></label>
                   <input
                     className="form-input"
@@ -540,6 +529,16 @@ export default function EmployeesTab() {
                     value={form.individual_wage}
                     onChange={(e) => setForm((f) => ({ ...f, individual_wage: e.target.value }))}
                   />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="form-group">
+                  <label className="form-label">Email <span style={{ color: 'var(--status-blocked-text)', fontWeight: 400 }}>*</span></label>
+                  <input className="form-input" value={form.contact_email} onChange={(e) => setForm((f) => ({ ...f, contact_email: e.target.value }))} placeholder="Required" />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Phone <span style={{ color: 'var(--status-blocked-text)', fontWeight: 400 }}>*</span></label>
+                  <input className="form-input" value={form.contact_phone} onChange={(e) => setForm((f) => ({ ...f, contact_phone: e.target.value }))} placeholder="Required" />
                 </div>
               </div>
 
