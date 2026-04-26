@@ -45,19 +45,16 @@ export default function ShiftRequirementsTab() {
   const [requirements, setRequirements] = useState<ShiftRequirement[]>([])
   const [loading, setLoading] = useState(true)
 
-  // Shift type modal state
   const [stModal, setStModal] = useState<ShiftTypeModal | null>(null)
   const [stForm, setStForm] = useState({ name: '', start_time: '', end_time: '', days_active: [] as number[], active: true })
   const [stSaving, setStSaving] = useState(false)
   const [stError, setStError] = useState('')
 
-  // Requirement modal state
   const [reqModal, setReqModal] = useState<RequirementModal | null>(null)
   const [reqForm, setReqForm] = useState({ role: '', required_count: '1' })
   const [reqSaving, setReqSaving] = useState(false)
   const [reqError, setReqError] = useState('')
 
-  // Delete confirmations
   const [confirmDeleteStId, setConfirmDeleteStId] = useState<string | null>(null)
   const [confirmDeleteReqId, setConfirmDeleteReqId] = useState<string | null>(null)
 
@@ -72,6 +69,17 @@ export default function ShiftRequirementsTab() {
     if (stRes.data) setShiftTypes(stRes.data)
     if (reqRes.data) setRequirements(reqRes.data)
     setLoading(false)
+  }
+
+  async function logActivity(action: string, summary: string, entityId?: string) {
+    await supabase.from('activity_log').insert({
+      company_id: COMPANY_ID,
+      actor: 'manager',
+      action,
+      entity_type: 'shift',
+      entity_id: entityId ?? null,
+      summary,
+    })
   }
 
   // ── Shift Type handlers ──────────────────────────────────────────────────
@@ -115,8 +123,10 @@ export default function ShiftRequirementsTab() {
 
     if (stModal?.mode === 'edit') {
       await supabase.from('shift_types').update(payload).eq('id', stModal.shiftType.id)
+      await logActivity('shift_type_updated', `Updated shift type: ${stForm.name}`, stModal.shiftType.id)
     } else {
-      await supabase.from('shift_types').insert(payload)
+      const { data } = await supabase.from('shift_types').insert(payload).select().single()
+      if (data) await logActivity('shift_type_created', `Created shift type: ${stForm.name}`, data.id)
     }
 
     setStSaving(false)
@@ -125,15 +135,21 @@ export default function ShiftRequirementsTab() {
   }
 
   async function handleDeleteShiftType(id: string) {
-    // Also remove all requirements for this shift type
+    const st = shiftTypes.find((s) => s.id === id)
     await supabase.from('shift_requirements').delete().eq('shift_type_id', id)
     await supabase.from('shift_types').delete().eq('id', id)
+    await logActivity('shift_type_deleted', `Deleted shift type: ${st?.name ?? id}`, id)
     setConfirmDeleteStId(null)
     fetchData()
   }
 
   async function handleToggleShiftTypeActive(st: ShiftType) {
     await supabase.from('shift_types').update({ active: !st.active }).eq('id', st.id)
+    await logActivity(
+      st.active ? 'shift_type_deactivated' : 'shift_type_activated',
+      `${st.active ? 'Deactivated' : 'Activated'} shift type: ${st.name}`,
+      st.id
+    )
     fetchData()
   }
 
@@ -159,22 +175,32 @@ export default function ShiftRequirementsTab() {
     setReqError('')
 
     if (reqModal?.mode === 'add') {
-      await supabase.from('shift_requirements').insert({
+      const st = shiftTypes.find((s) => s.id === reqModal.shiftTypeId)
+      const { data } = await supabase.from('shift_requirements').insert({
         company_id: COMPANY_ID,
         shift_type_id: reqModal.shiftTypeId,
-        // Keep shift_name in sync for legacy Aegis compatibility
-        shift_name: shiftTypes.find((s) => s.id === reqModal.shiftTypeId)?.name ?? '',
+        shift_name: st?.name ?? '',
         role: reqForm.role.trim(),
         required_count: count,
-        start_time: shiftTypes.find((s) => s.id === reqModal.shiftTypeId)?.start_time ?? '00:00',
-        end_time: shiftTypes.find((s) => s.id === reqModal.shiftTypeId)?.end_time ?? '00:00',
-        days_active: shiftTypes.find((s) => s.id === reqModal.shiftTypeId)?.days_active ?? [],
-      })
+        start_time: st?.start_time ?? '00:00',
+        end_time: st?.end_time ?? '00:00',
+        days_active: st?.days_active ?? [],
+      }).select().single()
+      if (data) await logActivity(
+        'shift_requirement_created',
+        `Added ${count} ${reqForm.role} slot(s) to ${st?.name ?? 'shift'}`,
+        data.id
+      )
     } else if (reqModal?.mode === 'edit') {
       await supabase.from('shift_requirements').update({
         role: reqForm.role.trim(),
         required_count: count,
       }).eq('id', reqModal.requirement.id)
+      await logActivity(
+        'shift_requirement_updated',
+        `Updated ${reqForm.role} to ${count} slot(s)`,
+        reqModal.requirement.id
+      )
     }
 
     setReqSaving(false)
@@ -183,7 +209,13 @@ export default function ShiftRequirementsTab() {
   }
 
   async function handleDeleteRequirement(id: string) {
+    const req = requirements.find((r) => r.id === id)
     await supabase.from('shift_requirements').delete().eq('id', id)
+    await logActivity(
+      'shift_requirement_deleted',
+      `Removed ${req?.role ?? 'role'} requirement from shift`,
+      id
+    )
     setConfirmDeleteReqId(null)
     fetchData()
   }
@@ -228,7 +260,6 @@ export default function ShiftRequirementsTab() {
               borderRadius: 'var(--radius-lg)',
               overflow: 'hidden',
             }}>
-              {/* Shift type header */}
               <div style={{
                 padding: '12px 16px',
                 borderBottom: '1px solid var(--border-subtle)',
@@ -302,7 +333,6 @@ export default function ShiftRequirementsTab() {
                 </div>
               </div>
 
-              {/* Role requirements */}
               <table className="data-table">
                 <thead>
                   <tr>
@@ -350,12 +380,8 @@ export default function ShiftRequirementsTab() {
                 </tbody>
               </table>
 
-              {/* Add role button */}
               <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border-subtle)' }}>
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => openAddRequirement(st.id)}
-                >
+                <button className="btn btn-secondary btn-sm" onClick={() => openAddRequirement(st.id)}>
                   + Add Role Requirement
                 </button>
               </div>
