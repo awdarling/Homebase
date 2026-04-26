@@ -130,6 +130,17 @@ export default function EmployeesTab() {
     setLoading(false)
   }
 
+  async function logActivity(action: string, summary: string, entityId?: string) {
+    await supabase.from('activity_log').insert({
+      company_id: COMPANY_ID,
+      actor: 'manager',
+      action,
+      entity_type: 'employee',
+      entity_id: entityId ?? null,
+      summary,
+    })
+  }
+
   const roles = ['all', ...Array.from(new Set(employees.map((e) => e.primary_role)))]
 
   const filtered = employees.filter((e) => {
@@ -196,6 +207,14 @@ export default function EmployeesTab() {
       setError('Name and role are required.')
       return
     }
+    if (!form.contact_email.trim()) {
+      setError('Email is required — Aegis needs this to distribute schedules.')
+      return
+    }
+    if (!form.contact_phone.trim()) {
+      setError('Phone is required — Aegis needs this to send SMS notifications.')
+      return
+    }
     setSaving(true)
     setError('')
 
@@ -215,9 +234,11 @@ export default function EmployeesTab() {
 
     if (editingEmployee) {
       await supabase.from('employees').update(payload).eq('id', editingEmployee.id)
+      await logActivity('employee_updated', `Updated employee: ${form.name}`, editingEmployee.id)
     } else {
       const { data } = await supabase.from('employees').insert(payload).select().single()
       empId = data?.id
+      if (empId) await logActivity('employee_created', `Added employee: ${form.name}`, empId)
     }
 
     if (empId) {
@@ -242,14 +263,21 @@ export default function EmployeesTab() {
   }
 
   async function handleDelete(id: string) {
+    const emp = employees.find((e) => e.id === id)
     await supabase.from('availability').delete().eq('employee_id', id)
     await supabase.from('employees').delete().eq('id', id)
+    await logActivity('employee_deleted', `Deleted employee: ${emp?.name ?? id}`, id)
     setConfirmDeleteId(null)
     fetchData()
   }
 
   async function handleToggleActive(emp: Employee) {
     await supabase.from('employees').update({ active: !emp.active }).eq('id', emp.id)
+    await logActivity(
+      emp.active ? 'employee_deactivated' : 'employee_activated',
+      `${emp.active ? 'Deactivated' : 'Activated'} employee: ${emp.name}`,
+      emp.id
+    )
     fetchData()
   }
 
@@ -492,14 +520,14 @@ export default function EmployeesTab() {
                   <input className="form-input" type="number" value={form.max_weekly_hours} onChange={(e) => setForm((f) => ({ ...f, max_weekly_hours: e.target.value }))} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Phone</label>
-                  <input className="form-input" value={form.contact_phone} onChange={(e) => setForm((f) => ({ ...f, contact_phone: e.target.value }))} placeholder="Optional" />
+                  <label className="form-label">Phone <span style={{ color: 'var(--status-blocked-text)', fontWeight: 400 }}>*</span></label>
+                  <input className="form-input" value={form.contact_phone} onChange={(e) => setForm((f) => ({ ...f, contact_phone: e.target.value }))} placeholder="Required" />
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div className="form-group">
-                  <label className="form-label">Email</label>
-                  <input className="form-input" value={form.contact_email} onChange={(e) => setForm((f) => ({ ...f, contact_email: e.target.value }))} placeholder="Optional" />
+                  <label className="form-label">Email <span style={{ color: 'var(--status-blocked-text)', fontWeight: 400 }}>*</span></label>
+                  <input className="form-input" value={form.contact_email} onChange={(e) => setForm((f) => ({ ...f, contact_email: e.target.value }))} placeholder="Required" />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Individual Wage <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>($/hr)</span></label>
