@@ -4,8 +4,6 @@ import { useCompany } from '@/lib/hooks/useCompany'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
-
-
 function TrashIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -48,10 +46,10 @@ export default function TimeOffTab() {
 
   const supabase = createClient()
 
-useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
+  useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
 
   async function fetchData() {
-     if (!COMPANY_ID) return
+    if (!COMPANY_ID) return
     setLoading(true)
     const [toRes, empRes] = await Promise.all([
       supabase
@@ -71,16 +69,37 @@ useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
     setLoading(false)
   }
 
-  async function handleDecision(id: string, decision: 'approved' | 'denied') {
+  async function logActivity(action: string, summary: string, entityId?: string) {
+    await supabase.from('activity_log').insert({
+      company_id: COMPANY_ID,
+      actor: 'manager',
+      action,
+      entity_type: 'time_off_request',
+      entity_id: entityId ?? null,
+      summary,
+    })
+  }
+
+  async function handleDecision(req: TORequest, decision: 'approved' | 'denied') {
     await supabase
       .from('time_off_requests')
       .update({ status: decision, decided_at: new Date().toISOString() })
-      .eq('id', id)
+      .eq('id', req.id)
+    await logActivity(
+      `time_off_${decision}`,
+      `${decision.charAt(0).toUpperCase() + decision.slice(1)} time-off for ${req.employee?.name ?? 'employee'}: ${formatDate(req.start_date)} – ${formatDate(req.end_date)}`,
+      req.id
+    )
     fetchData()
   }
 
-  async function handleDelete(id: string) {
-    await supabase.from('time_off_requests').delete().eq('id', id)
+  async function handleDelete(req: TORequest) {
+    await supabase.from('time_off_requests').delete().eq('id', req.id)
+    await logActivity(
+      'time_off_deleted',
+      `Deleted time-off request for ${req.employee?.name ?? 'employee'}: ${formatDate(req.start_date)} – ${formatDate(req.end_date)}`,
+      req.id
+    )
     fetchData()
   }
 
@@ -90,14 +109,20 @@ useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
       return
     }
     setSaving(true)
-    await supabase.from('time_off_requests').insert({
+    const { data } = await supabase.from('time_off_requests').insert({
       company_id: COMPANY_ID,
       employee_id: form.employee_id,
       start_date: form.start_date,
       end_date: form.end_date,
       reason: form.reason || null,
       status: 'pending',
-    })
+    }).select().single()
+    const emp = employees.find((e) => e.id === form.employee_id)
+    if (data) await logActivity(
+      'time_off_created',
+      `Logged time-off request for ${emp?.name ?? 'employee'}: ${formatDate(form.start_date)} – ${formatDate(form.end_date)}`,
+      data.id
+    )
     setSaving(false)
     setShowForm(false)
     setForm({ employee_id: '', start_date: '', end_date: '', reason: '' })
@@ -189,7 +214,7 @@ useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
                   <>
                     <button
                       className="btn btn-sm"
-                      onClick={() => handleDecision(req.id, 'approved')}
+                      onClick={() => handleDecision(req, 'approved')}
                       style={{
                         background: 'var(--status-ready-bg)',
                         color: 'var(--status-ready-text)',
@@ -200,7 +225,7 @@ useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
                     </button>
                     <button
                       className="btn btn-sm"
-                      onClick={() => handleDecision(req.id, 'denied')}
+                      onClick={() => handleDecision(req, 'denied')}
                       style={{
                         background: 'var(--status-blocked-bg)',
                         color: 'var(--status-blocked-text)',
@@ -216,7 +241,7 @@ useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
                   </span>
                 )}
                 <button
-                  onClick={() => handleDelete(req.id)}
+                  onClick={() => handleDelete(req)}
                   style={{
                     background: 'transparent',
                     border: 'none',
@@ -274,7 +299,7 @@ useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
                 </div>
               </div>
               <div className="form-group">
-                <label className="form-label">Reason (optional)</label>
+                <label className="form-label">Reason <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
                 <input className="form-input" value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} placeholder="Personal, medical, vacation..." />
               </div>
             </div>

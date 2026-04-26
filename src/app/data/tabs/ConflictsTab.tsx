@@ -4,8 +4,6 @@ import { useCompany } from '@/lib/hooks/useCompany'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
-
-
 function TrashIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -42,10 +40,10 @@ export default function ConflictsTab() {
 
   const supabase = createClient()
 
-useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
+  useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
 
   async function fetchData() {
-      if (!COMPANY_ID) return
+    if (!COMPANY_ID) return
     setLoading(true)
     const [confRes, empRes] = await Promise.all([
       supabase
@@ -69,6 +67,17 @@ useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
     setLoading(false)
   }
 
+  async function logActivity(action: string, summary: string, entityId?: string) {
+    await supabase.from('activity_log').insert({
+      company_id: COMPANY_ID,
+      actor: 'manager',
+      action,
+      entity_type: 'conflict',
+      entity_id: entityId ?? null,
+      summary,
+    })
+  }
+
   async function handleAdd() {
     if (!form.employee_id_1 || !form.employee_id_2) {
       setError('Select both employees.')
@@ -79,13 +88,20 @@ useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
       return
     }
     setSaving(true)
-    await supabase.from('employee_conflicts').insert({
+    const { data } = await supabase.from('employee_conflicts').insert({
       company_id: COMPANY_ID,
       employee_id_1: form.employee_id_1,
       employee_id_2: form.employee_id_2,
       reason: form.reason || null,
       severity: form.severity,
-    })
+    }).select().single()
+    const emp1 = employees.find((e) => e.id === form.employee_id_1)
+    const emp2 = employees.find((e) => e.id === form.employee_id_2)
+    if (data) await logActivity(
+      'conflict_created',
+      `Added ${form.severity} conflict: ${emp1?.name ?? 'employee'} ↔ ${emp2?.name ?? 'employee'}`,
+      data.id
+    )
     setSaving(false)
     setShowForm(false)
     setForm({ employee_id_1: '', employee_id_2: '', reason: '', severity: 'avoid' })
@@ -93,8 +109,13 @@ useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
     fetchData()
   }
 
-  async function handleRemove(id: string) {
-    await supabase.from('employee_conflicts').delete().eq('id', id)
+  async function handleRemove(conflict: Conflict) {
+    await supabase.from('employee_conflicts').delete().eq('id', conflict.id)
+    await logActivity(
+      'conflict_deleted',
+      `Removed conflict: ${conflict.emp1?.name ?? 'employee'} ↔ ${conflict.emp2?.name ?? 'employee'}`,
+      conflict.id
+    )
     fetchData()
   }
 
@@ -182,7 +203,7 @@ useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
                 {c.severity === 'never' ? 'Never' : 'Avoid'}
               </span>
               <button
-                onClick={() => handleRemove(c.id)}
+                onClick={() => handleRemove(c)}
                 style={{
                   background: 'transparent',
                   border: 'none',
@@ -243,7 +264,7 @@ useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
                 </select>
               </div>
               <div className="form-group">
-                <label className="form-label">Reason (optional)</label>
+                <label className="form-label">Reason <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
                 <input className="form-input" value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} placeholder="Performance issue, personal conflict..." />
               </div>
             </div>
