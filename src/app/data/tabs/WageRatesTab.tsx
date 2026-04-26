@@ -50,6 +50,17 @@ export default function WageRatesTab() {
     setLoading(false)
   }
 
+  async function logActivity(action: string, summary: string, entityId?: string) {
+    await supabase.from('activity_log').insert({
+      company_id: COMPANY_ID,
+      actor: 'manager',
+      action,
+      entity_type: 'wage_rate',
+      entity_id: entityId ?? null,
+      summary,
+    })
+  }
+
   function openAdd() {
     setEditingRate(null)
     setForm({ role: '', hourly_rate: '' })
@@ -85,8 +96,10 @@ export default function WageRatesTab() {
 
     if (editingRate) {
       await supabase.from('wage_rates').update(payload).eq('id', editingRate.id)
+      await logActivity('wage_rate_updated', `Updated wage rate for ${form.role}: $${parsed.toFixed(2)}/hr`, editingRate.id)
     } else {
-      await supabase.from('wage_rates').insert(payload)
+      const { data } = await supabase.from('wage_rates').insert(payload).select().single()
+      if (data) await logActivity('wage_rate_created', `Created wage rate for ${form.role}: $${parsed.toFixed(2)}/hr`, data.id)
     }
 
     setSaving(false)
@@ -95,7 +108,9 @@ export default function WageRatesTab() {
   }
 
   async function handleDelete(id: string) {
+    const rate = rates.find((r) => r.id === id)
     await supabase.from('wage_rates').delete().eq('id', id)
+    await logActivity('wage_rate_deleted', `Deleted wage rate for ${rate?.role ?? id}`, id)
     setConfirmDeleteId(null)
     fetchRates()
   }
