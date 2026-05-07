@@ -9,16 +9,18 @@ import ConflictsTab from './tabs/ConflictsTab'
 import WageRatesTab from './tabs/WageRatesTab'
 import SpecialNotesTab from './tabs/SpecialNotesTab'
 import SwapsTab from './tabs/SwapsTab'
+import OnboardingTab from './tabs/OnboardingTab'
 
 const TABS = [
-  { id: 'employees', label: 'Employees' },
-  { id: 'roles',     label: 'Roles' },
-  { id: 'shifts',    label: 'Shifts' },
-  { id: 'timeoff',   label: 'Time Off' },
-  { id: 'swaps',     label: 'Swaps' },
-  { id: 'conflicts', label: 'Conflicts' },
-  { id: 'wages',     label: 'Wage Rates' },
-  { id: 'notes',     label: 'Special Notes' },
+  { id: 'employees',  label: 'Employees' },
+  { id: 'roles',      label: 'Roles' },
+  { id: 'shifts',     label: 'Shifts' },
+  { id: 'timeoff',    label: 'Time Off' },
+  { id: 'swaps',      label: 'Swaps' },
+  { id: 'conflicts',  label: 'Conflicts' },
+  { id: 'wages',      label: 'Wage Rates' },
+  { id: 'notes',      label: 'Special Notes' },
+  { id: 'onboarding', label: 'Onboarding' },
 ]
 
 export default function DataPage() {
@@ -73,7 +75,8 @@ export default function DataPage() {
       {activeTab === 'swaps'     && <SwapsTab />}
       {activeTab === 'conflicts' && <ConflictsTab />}
       {activeTab === 'wages'     && <WageRatesTab />}
-      {activeTab === 'notes'     && <SpecialNotesTab />}
+      {activeTab === 'notes'      && <SpecialNotesTab />}
+      {activeTab === 'onboarding' && <OnboardingTab />}
     </div>
   )
 }
