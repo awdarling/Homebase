@@ -153,3 +153,30 @@ export interface WageRate {
   role: string
   hourly_rate: number
 }
+
+export interface TimeClockIntegration {
+  id: string
+  company_id: string
+  provider: 'northstar' | 'manual'
+  api_key: string | null
+  api_base_url: string | null
+  location_id: string | null
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PayrollIntegration {
+  id: string
+  company_id: string
+  provider: 'axios_engage' | 'manual'
+  api_key: string | null
+  company_identifier: string | null
+  pay_period: 'weekly' | 'biweekly' | 'semimonthly'
+  payroll_check_day: number
+  auto_check_enabled: boolean
+  last_run_at: string | null
+  active: boolean
+  created_at: string
+  updated_at: string
+}

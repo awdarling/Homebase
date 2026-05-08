@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { href: '/rules',    label: 'Rules' },
   { href: '/schedule', label: 'Schedule' },
   { href: '/activity', label: 'Activity' },
+  { href: '/payroll',  label: 'Payroll' },
 ]
 
 export default function Nav() {
