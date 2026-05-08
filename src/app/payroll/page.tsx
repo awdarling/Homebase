@@ -887,9 +887,18 @@ function SettingsTab({ companyId }: { companyId: string }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function PayrollPage() {
-  const { company } = useCompany()
+  const { company, user } = useCompany()
   const companyId = company?.id ?? ''
   const [activeTab, setActiveTab] = useState('overview')
+
+  const isQuriaStaff = user?.email?.endsWith('@quriasolutions.com') ?? false
+  const visibleTabs = TABS.filter(tab => tab.id !== 'settings' || isQuriaStaff)
+
+  useEffect(() => {
+    if (!isQuriaStaff && activeTab === 'settings') {
+      setActiveTab('overview')
+    }
+  }, [isQuriaStaff, activeTab])
 
   return (
     <div className="page-content">
@@ -906,7 +915,7 @@ export default function PayrollPage() {
         borderBottom: '1px solid var(--border-subtle)',
         marginBottom: 24,
       }}>
-        {TABS.map(tab => (
+        {visibleTabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
