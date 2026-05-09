@@ -1,8 +1,6 @@
 import type { Metadata } from 'next'
 import { Syne, DM_Sans } from 'next/font/google'
 import './globals.css'
-import Nav from '@/components/layout/Nav'
-import SoteriaPanel from '@/components/layout/SoteriaPanel'
 
 const syne = Syne({
   subsets: ['latin'],
@@ -30,13 +28,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${syne.variable} ${dmSans.variable}`}>
-      <body>
-        <Nav />
-        <main style={{ paddingTop: 'var(--nav-height)' }}>
-          {children}
-        </main>
-        <SoteriaPanel />
-      </body>
+      <body>{children}</body>
     </html>
   )
 }
