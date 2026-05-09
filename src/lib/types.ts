@@ -67,15 +67,68 @@ export interface ShiftRequirement {
   days_active: number[]
 }
 
-export interface Schedule {
+export interface ScheduleTemplate {
   id: string
   company_id: string
-  week_start: string
-  week_end: string
-  generated_at: string
-  generated_by: 'aegis' | 'manager'
-  status: 'draft' | 'published'
-  data: ScheduleData
+  layout_type: 'shift-rows-day-columns' | 'employee-rows-day-columns' | 'role-rows-day-columns'
+  row_config: RowConfig[]
+  column_config: ColumnConfig[]
+  color_config: ColorConfig
+  display_options: DisplayOptions
+  created_at: string
+  updated_at: string
+}
+
+export interface RowConfig {
+  id: string           // shift_name or employee_id or role
+  label: string        // display label
+  height: number       // px height, default 120
+  visible: boolean
+  order: number
+}
+
+export interface ColumnConfig {
+  day: number          // 0=Sun through 6=Sat
+  label: string        // 'Sunday', 'Monday' etc
+  width: number        // px width, default 180
+  color: string        // hex color for this day column
+  visible: boolean
+  order: number
+}
+
+export interface ColorConfig {
+  by: 'day' | 'role' | 'shift' | 'none'
+  map: Record<string, string>  // key -> hex color
+}
+
+export interface DisplayOptions {
+  show_photos: boolean         // default false
+  font_size: 'sm' | 'md' | 'lg'  // default 'sm'
+  show_hours: boolean          // default true
+  show_role: boolean           // default true
+  show_start_end: boolean      // default false
+  compact: boolean             // default false
+}
+
+export interface ScheduleAssignment {
+  date: string
+  employee_id: string
+  employee_name: string
+  employee_photo?: string | null
+  shift_name: string
+  role: string
+  start_time: string
+  end_time: string
+  hours: number
+}
+
+export interface ScheduleGap {
+  date: string
+  shift_name: string
+  role: string
+  required_count: number
+  filled_count: number
+  reason: string
 }
 
 export interface ScheduleData {
@@ -84,22 +137,46 @@ export interface ScheduleData {
   summary: string
 }
 
-export interface ScheduleAssignment {
-  employee_id: string
-  employee_name: string
-  shift_name: string
-  role: string
-  date: string
-  start_time: string
-  end_time: string
+export interface StaffingReport {
+  coverage_rate: number
+  top_contributors: Array<{
+    employee_id: string
+    name: string
+    hours: number
+  }>
+  overtime_risk: Array<{
+    employee_id: string
+    name: string
+    hours: number
+    max_hours: number
+  }>
+  gap_summary: string
+  special_notes_applied: string[]
+  aegis_notes: string
+  estimated_wages: {
+    total_estimated: number
+    by_employee: Array<{
+      employee_id: string
+      employee_name: string
+      hours: number
+      hourly_rate: number
+      estimated_pay: number
+    }>
+  }
 }
 
-export interface ScheduleGap {
-  shift_name: string
-  role: string
-  date: string
-  required: number
-  filled: number
+export interface Schedule {
+  id: string
+  company_id: string
+  week_start: string
+  week_end: string
+  status: 'draft' | 'published' | 'approved'
+  generated_by: string
+  generated_at: string
+  approved_at: string | null
+  distributed_at: string | null
+  data: ScheduleData
+  staffing_report: StaffingReport | null
 }
 
 export interface Policy {
