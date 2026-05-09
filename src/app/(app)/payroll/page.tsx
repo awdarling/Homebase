@@ -1,6 +1,7 @@
 'use client'
 
 import { useCompany } from '@/lib/hooks/useCompany'
+import { useQuria } from '@/lib/hooks/useQuria'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
@@ -519,7 +520,7 @@ function HistoryTab({ companyId }: { companyId: string }) {
 
 // ─── Settings Tab ─────────────────────────────────────────────────────────────
 
-function SettingsTab({ companyId }: { companyId: string }) {
+function SettingsTab({ companyId, isQuria }: { companyId: string; isQuria: boolean }) {
   const supabase = createClient()
 
   // Time Clock
@@ -734,11 +735,16 @@ function SettingsTab({ companyId }: { companyId: string }) {
               <label className="form-label">API Key</label>
               <input
                 className="form-input"
-                type="password"
+                type={isQuria ? 'text' : 'password'}
                 value={tcForm.api_key}
                 onChange={e => setTcForm(f => ({ ...f, api_key: e.target.value }))}
                 placeholder="Your NorthStar API key"
               />
+              {!isQuria && (
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Contact Quria to view
+                </div>
+              )}
             </div>
 
             <div className="form-group">
@@ -802,11 +808,16 @@ function SettingsTab({ companyId }: { companyId: string }) {
               <label className="form-label">API Key</label>
               <input
                 className="form-input"
-                type="password"
+                type={isQuria ? 'text' : 'password'}
                 value={prForm.api_key}
                 onChange={e => setPrForm(f => ({ ...f, api_key: e.target.value }))}
                 placeholder="Your Engage API key"
               />
+              {!isQuria && (
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Contact Quria to view
+                </div>
+              )}
             </div>
 
             <div className="form-group">
@@ -887,18 +898,19 @@ function SettingsTab({ companyId }: { companyId: string }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function PayrollPage() {
-  const { company, user } = useCompany()
+  const { company } = useCompany()
+  const { isQuria, loading: quriaLoading } = useQuria()
   const companyId = company?.id ?? ''
   const [activeTab, setActiveTab] = useState('overview')
 
-  const isQuriaStaff = user?.email?.endsWith('@quriasolutions.com') ?? false
-  const visibleTabs = TABS.filter(tab => tab.id !== 'settings' || isQuriaStaff)
+  // While loading, isQuria is false — Settings tab stays hidden (safe default).
+  const visibleTabs = TABS.filter(tab => tab.id !== 'settings' || isQuria)
 
   useEffect(() => {
-    if (!isQuriaStaff && activeTab === 'settings') {
+    if (!quriaLoading && !isQuria && activeTab === 'settings') {
       setActiveTab('overview')
     }
-  }, [isQuriaStaff, activeTab])
+  }, [quriaLoading, isQuria, activeTab])
 
   return (
     <div className="page-content">
@@ -946,7 +958,7 @@ export default function PayrollPage() {
         <>
           {activeTab === 'overview' && <OverviewTab companyId={companyId} />}
           {activeTab === 'history'  && <HistoryTab  companyId={companyId} />}
-          {activeTab === 'settings' && <SettingsTab companyId={companyId} />}
+          {activeTab === 'settings' && <SettingsTab companyId={companyId} isQuria={isQuria} />}
         </>
       ) : (
         <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>

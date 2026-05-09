@@ -166,6 +166,15 @@ export interface TimeClockIntegration {
   updated_at: string
 }
 
+export interface QuriaStaff {
+  id: string
+  email: string
+  name: string
+  contact_phone: string | null
+  active: boolean
+  created_at: string
+}
+
 export interface PayrollIntegration {
   id: string
   company_id: string

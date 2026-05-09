@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useCompany } from '@/lib/hooks/useCompany'
+import { useQuria } from '@/lib/hooks/useQuria'
 
 const NAV_LINKS = [
   { href: '/',         label: 'Home' },
@@ -22,6 +23,7 @@ export default function Nav() {
   const dropdownRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
   const { company, user } = useCompany()
+  const { isQuria } = useQuria()
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -150,6 +152,22 @@ export default function Nav() {
           <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-body)' }}>
             {user?.name ?? 'Account'}
           </span>
+          {isQuria && (
+            <span style={{
+              fontSize: 9,
+              fontFamily: 'var(--font-display)',
+              fontWeight: 800,
+              letterSpacing: '0.1em',
+              color: 'var(--accent)',
+              background: 'var(--accent-dim)',
+              border: '1px solid var(--accent-border)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '1px 5px',
+              lineHeight: 1.4,
+            }}>
+              QURIA
+            </span>
+          )}
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--text-muted)' }}>
             <polyline points="6 9 12 15 18 9" />
           </svg>
