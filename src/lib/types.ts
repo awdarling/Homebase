@@ -252,6 +252,23 @@ export interface QuriaStaff {
   created_at: string
 }
 
+export interface SwapRequest {
+  id: string
+  company_id: string
+  requesting_employee_id: string
+  receiving_employee_id: string | null
+  shift_date: string
+  shift_name: string
+  role: string
+  status: 'pending_employee' | 'pending_manager' | 'approved' | 'denied' | 'cancelled'
+  initiated_by: 'employee' | 'manager' | 'aegis'
+  notes: string | null
+  decided_by: string | null
+  decided_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface PayrollIntegration {
   id: string
   company_id: string
