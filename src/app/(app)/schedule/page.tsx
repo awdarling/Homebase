@@ -411,8 +411,9 @@ export default function SchedulePage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
-  // Modal
+  // Modals
   const [reviewModalOpen, setReviewModalOpen] = useState(false)
+  const [editTemplateMode, setEditTemplateMode] = useState(false)
 
   const supabase = createClient()
 
@@ -493,15 +494,13 @@ export default function SchedulePage() {
               <>
                 <button
                   className="btn btn-secondary btn-sm"
-                  onClick={() => {/* template editor — Pass 2 */}}
+                  onClick={() => setEditTemplateMode(true)}
                 >
                   Edit Template
                 </button>
-                {currentSchedule && (
-                  <button className="btn btn-primary btn-sm" onClick={enterEditMode}>
-                    Edit Schedule
-                  </button>
-                )}
+                <button className="btn btn-primary btn-sm" onClick={enterEditMode}>
+                  Edit Schedule
+                </button>
               </>
             ) : (
               <>
@@ -604,6 +603,55 @@ export default function SchedulePage() {
 
       {/* ══ Review Modal ═════════════════════════════════════════════════════ */}
       {reviewModalOpen && <ReviewModal onClose={() => setReviewModalOpen(false)} />}
+
+      {/* ══ Template Editor Placeholder ══════════════════════════════════════ */}
+      {editTemplateMode && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 24,
+          }}
+          onClick={() => setEditTemplateMode(false)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'var(--bg-surface-1)',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-xl)',
+              padding: '32px',
+              maxWidth: 440,
+              width: '100%',
+            }}
+          >
+            <div style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 16,
+              fontWeight: 700,
+              color: 'var(--text-primary)',
+              marginBottom: 12,
+            }}>
+              Edit Template
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7, marginBottom: 24 }}>
+              Template editor coming in Pass 2. Your template settings have been saved.
+            </div>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => setEditTemplateMode(false)}
+              style={{ width: '100%', justifyContent: 'center' }}
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   )
