@@ -4,6 +4,7 @@ import { useCompany } from '@/lib/hooks/useCompany'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import type { Employee } from '@/lib/types'
 
 
 
@@ -14,7 +15,17 @@ interface UserRecord {
   role: string
   avatar_url: string | null
   created_at: string
+  last_sign_in_at?: string | null
 }
+
+interface QuriaStaffRecord {
+  id: string
+  email: string
+  name: string
+  active: boolean
+}
+
+type AegisAccess = 'manager' | 'employee' | 'blocked'
 
 function TrashIcon() {
   return (
@@ -28,32 +39,71 @@ function TrashIcon() {
   )
 }
 
-const ROLE_STYLES: Record<string, { color: string; bg: string; border: string }> = {
+function nameInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '??'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
+function formatRelative(dateString: string | null | undefined) {
+  if (!dateString) return 'Never'
+  const diff = Date.now() - new Date(dateString).getTime()
+  const minutes = Math.floor(diff / 60000)
+  const hours = Math.floor(diff / 3600000)
+  const days = Math.floor(diff / 86400000)
+  if (minutes < 1) return 'Just now'
+  if (minutes < 60) return `${minutes}m ago`
+  if (hours < 24) return `${hours}h ago`
+  if (days < 30) return `${days}d ago`
+  return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+const HOMEBASE_ROLE_STYLES: Record<string, { color: string; bg: string; border: string }> = {
   quria:   { color: '#f97316', bg: 'rgba(249,115,22,0.1)',   border: 'rgba(249,115,22,0.25)' },
   owner:   { color: '#a78bfa', bg: 'rgba(167,139,250,0.1)', border: 'rgba(167,139,250,0.25)' },
   manager: { color: '#60a5fa', bg: 'rgba(96,165,250,0.1)',  border: 'rgba(96,165,250,0.25)' },
 }
 
+const AEGIS_ACCESS_STYLES: Record<AegisAccess | 'quria', { label: string; color: string; bg: string; border: string }> = {
+  manager:  { label: 'Manager',  color: '#60a5fa', bg: 'rgba(96,165,250,0.1)',  border: 'rgba(96,165,250,0.25)' },
+  employee: { label: 'Employee', color: '#22c55e', bg: 'rgba(34,197,94,0.1)',   border: 'rgba(34,197,94,0.25)' },
+  blocked:  { label: 'Blocked',  color: '#ef4444', bg: 'rgba(239,68,68,0.1)',   border: 'rgba(239,68,68,0.25)' },
+  quria:    { label: 'Quria',    color: '#f97316', bg: 'rgba(249,115,22,0.1)',  border: 'rgba(249,115,22,0.25)' },
+}
+
+const HOMEBASE_LEVELS: Array<{ key: 'quria' | 'owner' | 'manager'; title: string; desc: string }> = [
+  { key: 'quria',   title: 'Quria',   desc: 'Full platform access. Cannot be revoked by owners or managers. Platform administrator.' },
+  { key: 'owner',   title: 'Owner',   desc: 'Full access. Can add/remove managers and revoke manager access. Cannot revoke Quria.' },
+  { key: 'manager', title: 'Manager', desc: 'Operational access. Can view and edit all data. Cannot manage other users.' },
+]
+
+const AEGIS_LEVELS: Array<{ key: AegisAccess; title: string; desc: string }> = [
+  { key: 'manager',  title: 'Manager',  desc: 'Full Aegis access. Can run all workflows, build schedules, approve requests, edit Homebase via conversation.' },
+  { key: 'employee', title: 'Employee', desc: 'Limited access. Can submit time off, swap shifts, respond to outreach, update their own availability.' },
+  { key: 'blocked',  title: 'Blocked',  desc: 'Cannot interact with Aegis at all.' },
+]
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function AccessPage() {
   const { company } = useCompany()
   const COMPANY_ID = company?.id ?? ''
-  const [users, setUsers] = useState<UserRecord[]>([])
-  const [currentUser, setCurrentUser] = useState<UserRecord | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ email: '', name: '', role: 'manager' })
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-  const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null)
-
   const supabase = createClient()
   const router = useRouter()
+
+  const [currentUser, setCurrentUser] = useState<UserRecord | null>(null)
+  const [users, setUsers] = useState<UserRecord[]>([])
+  const [employees, setEmployees] = useState<Employee[]>([])
+  const [quriaStaff, setQuriaStaff] = useState<QuriaStaffRecord[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
 
   async function fetchData() {
-     if (!COMPANY_ID) return
+    if (!COMPANY_ID) return
     setLoading(true)
+
     const { data: { user: authUser } } = await supabase.auth.getUser()
     if (!authUser) { router.push('/login'); return }
 
@@ -67,65 +117,84 @@ export default function AccessPage() {
       router.push('/')
       return
     }
-
     setCurrentUser(currentUserData)
 
-    // Quria sees all users across all companies, owners see only their company
-    let query = supabase.from('users').select('*').order('created_at')
+    let usersQuery = supabase.from('users').select('*').order('created_at')
     if (currentUserData.role === 'owner') {
-      query = query.eq('company_id', COMPANY_ID)
+      usersQuery = usersQuery.eq('company_id', COMPANY_ID)
     }
+    const { data: usersData } = await usersQuery
+    if (usersData) setUsers(usersData)
 
-    const { data } = await query
-    if (data) setUsers(data)
+    const { data: employeesData } = await supabase
+      .from('employees')
+      .select('*')
+      .eq('company_id', COMPANY_ID)
+      .eq('active', true)
+      .order('name')
+    if (employeesData) setEmployees(employeesData)
+
+    const { data: quriaData } = await supabase
+      .from('quria_staff')
+      .select('id, email, name, active')
+      .eq('active', true)
+    if (quriaData) setQuriaStaff(quriaData)
+
     setLoading(false)
   }
 
-  async function handleAdd() {
-    if (!form.email.trim() || !form.name.trim()) {
-      setError('Name and email are required.')
-      return
-    }
-    setSaving(true)
-    setError('')
+  if (loading) return (
+    <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+      Loading access management...
+    </div>
+  )
 
-    // Create auth user via Supabase admin
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email: form.email.trim(),
-      email_confirm: true,
-      user_metadata: { name: form.name.trim() },
-    })
+  return (
+    <div className="page-content">
+      <div className="page-header">
+        <div className="page-title">Access Management</div>
+        <div className="page-subtitle">
+          Manage who has access to Homebase and Aegis
+        </div>
+      </div>
 
-    if (authError || !authData.user) {
-      setError('Failed to create user. Email may already exist.')
-      setSaving(false)
-      return
-    }
+      <HomebaseSection
+        users={users}
+        currentUser={currentUser}
+        companyId={COMPANY_ID}
+        onChange={fetchData}
+      />
 
-    await supabase.from('users').insert({
-      id: authData.user.id,
-      company_id: COMPANY_ID,
-      email: form.email.trim(),
-      name: form.name.trim(),
-      role: form.role,
-    })
+      <div style={{ height: 40 }} />
 
-    setSaving(false)
-    setShowForm(false)
-    setForm({ email: '', name: '', role: 'manager' })
-    fetchData()
-  }
+      <AegisSection
+        employees={employees}
+        quriaStaff={quriaStaff}
+        onChange={fetchData}
+      />
+    </div>
+  )
+}
 
-  async function handleRevoke(userId: string) {
-    await supabase.from('users').delete().eq('id', userId)
-    setConfirmRevokeId(null)
-    fetchData()
-  }
+// ─── Homebase Access Section ──────────────────────────────────────────────────
 
-  async function handleRoleChange(userId: string, newRole: string) {
-    await supabase.from('users').update({ role: newRole }).eq('id', userId)
-    fetchData()
-  }
+function HomebaseSection({
+  users,
+  currentUser,
+  companyId,
+  onChange,
+}: {
+  users: UserRecord[]
+  currentUser: UserRecord | null
+  companyId: string
+  onChange: () => void
+}) {
+  const supabase = createClient()
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({ email: '', name: '', role: 'manager' })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null)
 
   const canEditRole = (targetRole: string) => {
     if (currentUser?.role === 'quria') return true
@@ -144,19 +213,94 @@ export default function AccessPage() {
     ? ['quria', 'owner', 'manager']
     : ['owner', 'manager']
 
-  if (loading) return (
-    <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-      Loading access management...
-    </div>
-  )
+  async function handleAdd() {
+    if (!form.email.trim() || !form.name.trim()) {
+      setError('Name and email are required.')
+      return
+    }
+    setSaving(true)
+    setError('')
+
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email: form.email.trim(),
+      email_confirm: true,
+      user_metadata: { name: form.name.trim() },
+    })
+
+    if (authError || !authData.user) {
+      setError('Failed to create user. Email may already exist.')
+      setSaving(false)
+      return
+    }
+
+    await supabase.from('users').insert({
+      id: authData.user.id,
+      company_id: companyId,
+      email: form.email.trim(),
+      name: form.name.trim(),
+      role: form.role,
+    })
+
+    setSaving(false)
+    setShowForm(false)
+    setForm({ email: '', name: '', role: 'manager' })
+    onChange()
+  }
+
+  async function handleRevoke(userId: string) {
+    await supabase.from('users').delete().eq('id', userId)
+    setConfirmRevokeId(null)
+    onChange()
+  }
+
+  async function handleRoleChange(userId: string, newRole: string) {
+    await supabase.from('users').update({ role: newRole }).eq('id', userId)
+    onChange()
+  }
 
   return (
-    <div className="page-content">
-      <div className="page-header">
-        <div className="page-title">Access Management</div>
-        <div className="page-subtitle">
-          Manage who has access to Homebase and Aegis
-        </div>
+    <section>
+      <SectionHeader
+        title="Homebase Access"
+        subtitle="Who can log into the manager platform"
+      />
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        gap: 12,
+        marginBottom: 20,
+      }}>
+        {HOMEBASE_LEVELS.map((lvl) => {
+          const s = HOMEBASE_ROLE_STYLES[lvl.key]
+          return (
+            <div key={lvl.key} style={{
+              background: 'var(--bg-surface-1)',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '14px 16px',
+            }}>
+              <span style={{
+                display: 'inline-block',
+                padding: '2px 10px',
+                borderRadius: 'var(--radius-pill)',
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                background: s.bg,
+                color: s.color,
+                border: `1px solid ${s.border}`,
+                marginBottom: 8,
+              }}>
+                {lvl.title}
+              </span>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+                {lvl.desc}
+              </div>
+            </div>
+          )
+        })}
       </div>
 
       <div style={{
@@ -166,14 +310,14 @@ export default function AccessPage() {
         padding: '12px 16px',
         fontSize: 12,
         color: 'var(--text-secondary)',
-        marginBottom: 28,
+        marginBottom: 16,
         lineHeight: 1.6,
       }}>
         <span style={{ color: 'var(--accent)', fontWeight: 600 }}>Revoking access takes effect immediately.</span>
         {' '}Removed users are locked out instantly regardless of any password changes they make.
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
         <button className="btn btn-primary btn-sm" onClick={() => { setError(''); setShowForm(true) }}>
           + Add User
         </button>
@@ -192,7 +336,7 @@ export default function AccessPage() {
           </div>
         ) : (
           users.map((user, i) => {
-            const roleStyle = ROLE_STYLES[user.role] ?? ROLE_STYLES.manager
+            const roleStyle = HOMEBASE_ROLE_STYLES[user.role] ?? HOMEBASE_ROLE_STYLES.manager
             const isMe = user.id === currentUser?.id
 
             return (
@@ -203,7 +347,6 @@ export default function AccessPage() {
                 padding: '14px 20px',
                 borderBottom: i < users.length - 1 ? '1px solid var(--border-subtle)' : 'none',
               }}>
-                {/* Avatar */}
                 <div style={{
                   width: 36,
                   height: 36,
@@ -220,13 +363,12 @@ export default function AccessPage() {
                     <img src={user.avatar_url} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : (
                     <span style={{ fontSize: 12, fontWeight: 700, color: roleStyle.color, fontFamily: 'var(--font-display)' }}>
-                      {user.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}
+                      {nameInitials(user.name)}
                     </span>
                   )}
                 </div>
 
-                {/* Info */}
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500 }}>
                     {user.name} {isMe && <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>(you)</span>}
                   </div>
@@ -235,7 +377,10 @@ export default function AccessPage() {
                   </div>
                 </div>
 
-                {/* Role */}
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 100, textAlign: 'right' }}>
+                  {formatRelative(user.last_sign_in_at)}
+                </div>
+
                 <div>
                   {canEditRole(user.role) && !isMe ? (
                     <select
@@ -273,7 +418,6 @@ export default function AccessPage() {
                   )}
                 </div>
 
-                {/* Revoke */}
                 {canRevoke(user) && (
                   <button
                     onClick={() => setConfirmRevokeId(user.id)}
@@ -299,7 +443,6 @@ export default function AccessPage() {
         )}
       </div>
 
-      {/* Confirm revoke modal */}
       {confirmRevokeId && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 200,
@@ -318,7 +461,7 @@ export default function AccessPage() {
               Revoke Access
             </div>
             <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.6 }}>
-              This user will be immediately locked out of Homebase and Aegis. This cannot be undone — they would need to be re-added to regain access.
+              This user will be immediately locked out of Homebase. This cannot be undone — they would need to be re-added to regain access.
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button className="btn btn-secondary btn-sm" onClick={() => setConfirmRevokeId(null)}>Cancel</button>
@@ -338,7 +481,6 @@ export default function AccessPage() {
         </div>
       )}
 
-      {/* Add user form */}
       {showForm && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 200,
@@ -402,6 +544,237 @@ export default function AccessPage() {
           </div>
         </div>
       )}
+    </section>
+  )
+}
+
+// ─── Aegis Access Section ─────────────────────────────────────────────────────
+
+function AegisSection({
+  employees,
+  quriaStaff,
+  onChange,
+}: {
+  employees: Employee[]
+  quriaStaff: QuriaStaffRecord[]
+  onChange: () => void
+}) {
+  const supabase = createClient()
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [pendingValue, setPendingValue] = useState<AegisAccess>('employee')
+  const [saving, setSaving] = useState(false)
+
+  const quriaEmails = new Set(quriaStaff.map((q) => q.email.toLowerCase()))
+
+  async function saveAccess(employeeId: string, value: AegisAccess) {
+    setSaving(true)
+    await supabase
+      .from('employees')
+      .update({ aegis_access: value })
+      .eq('id', employeeId)
+    setSaving(false)
+    setEditingId(null)
+    onChange()
+  }
+
+  const employeesWithQuriaFlag = employees.map((e) => ({
+    employee: e,
+    isQuria: !!(e.contact_email && quriaEmails.has(e.contact_email.toLowerCase())),
+  }))
+
+  return (
+    <section>
+      <SectionHeader
+        title="Aegis Access"
+        subtitle="Who can interact with Aegis and what they can do"
+      />
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        gap: 12,
+        marginBottom: 20,
+      }}>
+        {AEGIS_LEVELS.map((lvl) => {
+          const s = AEGIS_ACCESS_STYLES[lvl.key]
+          return (
+            <div key={lvl.key} style={{
+              background: 'var(--bg-surface-1)',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '14px 16px',
+            }}>
+              <span style={{
+                display: 'inline-block',
+                padding: '2px 10px',
+                borderRadius: 'var(--radius-pill)',
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                background: s.bg,
+                color: s.color,
+                border: `1px solid ${s.border}`,
+                marginBottom: 8,
+              }}>
+                {lvl.title}
+              </span>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+                {lvl.desc}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      <div style={{
+        background: 'var(--bg-surface-1)',
+        border: '1px solid var(--border-default)',
+        borderRadius: 'var(--radius-lg)',
+        overflow: 'hidden',
+      }}>
+        {employeesWithQuriaFlag.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-title">No employees</div>
+            <div className="empty-state-desc">Add employees in Data → Employees to manage their Aegis access.</div>
+          </div>
+        ) : (
+          employeesWithQuriaFlag.map(({ employee, isQuria }, i) => {
+            const accessKey: AegisAccess = (employee.aegis_access ?? 'employee') as AegisAccess
+            const styleKey = isQuria ? 'quria' : accessKey
+            const accessStyle = AEGIS_ACCESS_STYLES[styleKey]
+            const isEditing = editingId === employee.id
+
+            return (
+              <div key={employee.id} style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 14,
+                padding: '14px 20px',
+                borderBottom: i < employeesWithQuriaFlag.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+              }}>
+                <div style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: '50%',
+                  background: accessStyle.bg,
+                  border: `1px solid ${accessStyle.border}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: accessStyle.color, fontFamily: 'var(--font-display)' }}>
+                    {nameInitials(employee.name)}
+                  </span>
+                </div>
+
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500 }}>
+                    {employee.name}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                    {employee.primary_role}
+                  </div>
+                </div>
+
+                <div style={{ minWidth: 160, fontSize: 11, color: 'var(--text-muted)' }}>
+                  {employee.contact_phone || <span style={{ color: 'var(--text-disabled)' }}>—</span>}
+                </div>
+
+                <div style={{ minWidth: 200, fontSize: 11, color: 'var(--text-muted)' }}>
+                  {employee.contact_email || <span style={{ color: 'var(--text-disabled)' }}>—</span>}
+                </div>
+
+                <div>
+                  {isEditing && !isQuria ? (
+                    <select
+                      value={pendingValue}
+                      autoFocus
+                      onChange={(e) => setPendingValue(e.target.value as AegisAccess)}
+                      onBlur={() => saveAccess(employee.id, pendingValue)}
+                      disabled={saving}
+                      style={{
+                        background: accessStyle.bg,
+                        color: accessStyle.color,
+                        border: `1px solid ${accessStyle.border}`,
+                        borderRadius: 'var(--radius-pill)',
+                        padding: '3px 10px',
+                        fontSize: 11,
+                        fontFamily: 'var(--font-body)',
+                        fontWeight: 500,
+                        cursor: 'pointer',
+                        outline: 'none',
+                      }}
+                    >
+                      <option value="manager">Manager</option>
+                      <option value="employee">Employee</option>
+                      <option value="blocked">Blocked</option>
+                    </select>
+                  ) : (
+                    <span style={{
+                      padding: '3px 10px',
+                      borderRadius: 'var(--radius-pill)',
+                      fontSize: 11,
+                      fontWeight: 500,
+                      background: accessStyle.bg,
+                      color: accessStyle.color,
+                      border: `1px solid ${accessStyle.border}`,
+                    }}>
+                      {accessStyle.label}
+                    </span>
+                  )}
+                </div>
+
+                <div style={{ width: 60, display: 'flex', justifyContent: 'flex-end' }}>
+                  {!isQuria && !isEditing && (
+                    <button
+                      onClick={() => {
+                        setPendingValue(accessKey)
+                        setEditingId(employee.id)
+                      }}
+                      className="btn btn-secondary btn-sm"
+                      style={{ padding: '3px 10px', fontSize: 11 }}
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
+
+      <div style={{
+        marginTop: 12,
+        fontSize: 11,
+        color: 'var(--text-muted)',
+        lineHeight: 1.55,
+      }}>
+        Quria staff always have full Aegis access regardless of this setting.
+      </div>
+    </section>
+  )
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{
+        fontFamily: 'var(--font-display)',
+        fontSize: 20,
+        fontWeight: 700,
+        color: 'var(--text-primary)',
+        letterSpacing: '0.01em',
+      }}>
+        {title}
+      </div>
+      <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
+        {subtitle}
+      </div>
     </div>
   )
 }

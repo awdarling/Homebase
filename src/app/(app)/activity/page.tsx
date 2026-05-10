@@ -6,9 +6,12 @@ import { createClient } from '@/lib/supabase/client'
 
 
 
+type ActorKey = 'aegis' | 'manager' | 'soteria' | 'system' | 'quria_admin'
+
 interface ActivityEntry {
   id: string
-  actor: 'aegis' | 'manager' | 'soteria' | 'system'
+  actor: ActorKey
+  actor_name: string | null
   action: string
   entity_type: string | null
   summary: string
@@ -44,19 +47,80 @@ function timeAgo(dateString: string) {
   return `${days}d ago`
 }
 
-const ACTOR_STYLES: Record<string, { label: string; color: string; bg: string; border: string }> = {
-  aegis:   { label: 'Aegis',   color: 'var(--accent)',              bg: 'var(--accent-dim)',       border: 'var(--accent-border)' },
-  manager: { label: 'Manager', color: '#60a5fa',                    bg: 'rgba(96,165,250,0.1)',    border: 'rgba(96,165,250,0.25)' },
-  soteria: { label: 'Soteria', color: '#a78bfa',                    bg: 'rgba(167,139,250,0.1)',   border: 'rgba(167,139,250,0.25)' },
-  system:  { label: 'System',  color: 'var(--text-muted)',          bg: 'var(--bg-surface-3)',     border: 'var(--border-default)' },
+function nameInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '??'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
+interface ActorPresentation {
+  label: string
+  initials: string
+  color: string
+  bg: string
+  border: string
+  iconUrl?: string
+  filterKey: 'aegis' | 'manager' | 'system' | 'quria'
+}
+
+function presentActor(entry: ActivityEntry, fallbackManagerName: string | null): ActorPresentation {
+  const actor = entry.actor
+
+  if (actor === 'aegis' || actor === 'soteria') {
+    return {
+      label: 'Aegis',
+      initials: 'A',
+      color: '#a78bfa',
+      bg: 'rgba(167,139,250,0.1)',
+      border: 'rgba(167,139,250,0.25)',
+      iconUrl: '/soteria-icon.png',
+      filterKey: 'aegis',
+    }
+  }
+
+  if (actor === 'quria_admin') {
+    const display = entry.actor_name || 'Quria'
+    return {
+      label: display,
+      initials: 'Q',
+      color: '#f97316',
+      bg: 'rgba(249,115,22,0.1)',
+      border: 'rgba(249,115,22,0.25)',
+      filterKey: 'quria',
+    }
+  }
+
+  if (actor === 'manager') {
+    const name = entry.actor_name || fallbackManagerName || 'Manager'
+    return {
+      label: name,
+      initials: name === 'Manager' ? 'MG' : nameInitials(name),
+      color: '#9ca3af',
+      bg: 'rgba(156,163,175,0.1)',
+      border: 'rgba(156,163,175,0.25)',
+      filterKey: 'manager',
+    }
+  }
+
+  // system
+  return {
+    label: entry.actor_name || 'System',
+    initials: 'SY',
+    color: 'var(--text-muted)',
+    bg: 'var(--bg-surface-3)',
+    border: 'var(--border-default)',
+    filterKey: 'system',
+  }
 }
 
 export default function ActivityPage() {
   const { company } = useCompany()
   const COMPANY_ID = company?.id ?? ''
   const [entries, setEntries] = useState<ActivityEntry[]>([])
+  const [fallbackManagerName, setFallbackManagerName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all' | 'aegis' | 'manager' | 'system'>('all')
+  const [filter, setFilter] = useState<'all' | 'aegis' | 'manager' | 'system' | 'quria'>('all')
 
   const supabase = createClient()
 
@@ -65,17 +129,33 @@ export default function ActivityPage() {
   async function fetchData() {
     if (!COMPANY_ID) return
     setLoading(true)
-    const { data } = await supabase
-      .from('activity_log')
-      .select('*')
-      .eq('company_id', COMPANY_ID)
-      .order('created_at', { ascending: false })
-      .limit(200)
-    if (data) setEntries(data)
+
+    const [{ data: activityData }, { data: managerData }] = await Promise.all([
+      supabase
+        .from('activity_log')
+        .select('*')
+        .eq('company_id', COMPANY_ID)
+        .order('created_at', { ascending: false })
+        .limit(200),
+      supabase
+        .from('users')
+        .select('name, role, created_at')
+        .eq('company_id', COMPANY_ID)
+        .in('role', ['manager', 'owner'])
+        .order('created_at', { ascending: false })
+        .limit(1),
+    ])
+
+    if (activityData) setEntries(activityData as ActivityEntry[])
+    setFallbackManagerName(managerData?.[0]?.name ?? null)
     setLoading(false)
   }
 
-  const filtered = entries.filter((e) => filter === 'all' || e.actor === filter)
+  const filtered = entries.filter((e) => {
+    if (filter === 'all') return true
+    const key = presentActor(e, fallbackManagerName).filterKey
+    return key === filter
+  })
 
   const grouped = filtered.reduce((acc, entry) => {
     const dateKey = new Date(entry.created_at).toDateString()
@@ -100,7 +180,7 @@ export default function ActivityPage() {
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 28 }}>
-        {(['all', 'aegis', 'manager', 'system'] as const).map((f) => (
+        {(['all', 'aegis', 'manager', 'quria', 'system'] as const).map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -165,7 +245,7 @@ export default function ActivityPage() {
               overflow: 'hidden',
             }}>
               {dayEntries.map((entry, i) => {
-                const style = ACTOR_STYLES[entry.actor] ?? ACTOR_STYLES.system
+                const p = presentActor(entry, fallbackManagerName)
                 return (
                   <div key={entry.id} style={{
                     display: 'flex',
@@ -177,20 +257,29 @@ export default function ActivityPage() {
                     <div style={{
                       width: 30,
                       height: 30,
-                      borderRadius: 'var(--radius-sm)',
-                      background: style.bg,
-                      border: `1px solid ${style.border}`,
+                      borderRadius: '50%',
+                      background: p.iconUrl ? 'transparent' : p.bg,
+                      border: `1px solid ${p.border}`,
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       fontSize: 11,
                       fontWeight: 700,
                       fontFamily: 'var(--font-display)',
-                      color: style.color,
+                      color: p.color,
                       flexShrink: 0,
                       marginTop: 1,
+                      overflow: 'hidden',
                     }}>
-                      {style.label[0]}
+                      {p.iconUrl ? (
+                        <img
+                          src={p.iconUrl}
+                          alt={p.label}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                      ) : (
+                        p.initials
+                      )}
                     </div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
@@ -204,8 +293,8 @@ export default function ActivityPage() {
                         gap: 6,
                         alignItems: 'center',
                       }}>
-                        <span style={{ color: style.color, textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 500 }}>
-                          {style.label}
+                        <span style={{ color: p.color, textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 500 }}>
+                          {p.label}
                         </span>
                         <span>·</span>
                         <span>{formatTime(entry.created_at)}</span>

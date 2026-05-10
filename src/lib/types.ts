@@ -30,6 +30,7 @@ export interface Employee {
   active: boolean
   created_at: string
   individual_wage?: number | null
+  aegis_access?: 'manager' | 'employee' | 'blocked'
 }
 
 export interface Availability {
@@ -195,7 +196,8 @@ export interface Policy {
 export interface ActivityLog {
   id: string
   company_id: string
-  actor: 'aegis' | 'manager' | 'soteria' | 'system'
+  actor: 'aegis' | 'manager' | 'soteria' | 'system' | 'quria_admin'
+  actor_name: string | null
   action: string
   entity_type: string | null
   entity_id: string | null
