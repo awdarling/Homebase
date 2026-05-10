@@ -947,9 +947,28 @@ export default function PayrollPage() {
               cursor: 'pointer',
               marginBottom: -1,
               transition: 'color 0.15s, border-color 0.15s',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
             }}
           >
             {tab.label}
+            {tab.id === 'settings' && isQuria && (
+              <span style={{
+                padding: '1px 7px',
+                borderRadius: 'var(--radius-pill)',
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                background: 'rgba(249,115,22,0.1)',
+                color: '#f97316',
+                border: '1px solid rgba(249,115,22,0.25)',
+                lineHeight: 1.4,
+              }}>
+                Quria
+              </span>
+            )}
           </button>
         ))}
       </div>

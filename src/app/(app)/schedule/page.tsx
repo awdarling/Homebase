@@ -689,57 +689,69 @@ export default function SchedulePage() {
 
       {/* ══ History ══════════════════════════════════════════════════════════ */}
       {/* ── HISTORY SECTION — DO NOT REMOVE ────────────────────────────────── */}
-      {historySchedules.length > 0 && (
-        <div style={{ marginTop: 48 }}>
+      {/* This section ALWAYS renders, regardless of whether past schedules exist. */}
+      <div style={{ marginTop: 48 }}>
 
-          {/* Divider */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
-            <div style={{ height: 1, background: 'var(--border-subtle)', flex: 1 }} />
-            <div style={{
-              fontSize: 11,
-              fontFamily: 'var(--font-display)',
-              fontWeight: 700,
-              letterSpacing: '0.15em',
-              textTransform: 'uppercase',
-              color: 'var(--text-muted)',
-              flexShrink: 0,
-            }}>
-              Past Schedules
-            </div>
-            <div style={{ height: 1, background: 'var(--border-subtle)', flex: 1 }} />
+        {/* Divider */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+          <div style={{ height: 1, background: 'var(--border-subtle)', flex: 1 }} />
+          <div style={{
+            fontSize: 11,
+            fontFamily: 'var(--font-display)',
+            fontWeight: 700,
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+            color: 'var(--text-muted)',
+            flexShrink: 0,
+          }}>
+            Past Schedules
           </div>
-
-          {/* Search */}
-          <div style={{ marginBottom: 16 }}>
-            <input
-              className="form-input"
-              style={{ maxWidth: 320 }}
-              placeholder="Search by week or date..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-          </div>
-
-          {/* List */}
-          {filteredHistory.length === 0 ? (
-            <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '24px 0', textAlign: 'center' }}>
-              No past schedules match your search.
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {filteredHistory.map(s => template && (
-                <HistoryCard
-                  key={s.id}
-                  schedule={s}
-                  template={template}
-                  expanded={expandedId === s.id}
-                  onToggle={() => setExpandedId(expandedId === s.id ? null : s.id)}
-                />
-              ))}
-            </div>
-          )}
+          <div style={{ height: 1, background: 'var(--border-subtle)', flex: 1 }} />
         </div>
-      )}
+
+        {/* Search */}
+        <div style={{ marginBottom: 16 }}>
+          <input
+            className="form-input"
+            style={{ maxWidth: 320 }}
+            placeholder="Search by week or date..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
+
+        {/* List */}
+        {historySchedules.length === 0 ? (
+          <div style={{
+            background: 'var(--bg-surface-1)',
+            border: '1px solid var(--border-default)',
+            borderRadius: 'var(--radius-lg)',
+          }}>
+            <div className="empty-state">
+              <div className="empty-state-title">No past schedules yet</div>
+              <div className="empty-state-desc">
+                Past schedules will appear here after Aegis builds and publishes them each week.
+              </div>
+            </div>
+          </div>
+        ) : filteredHistory.length === 0 ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '24px 0', textAlign: 'center' }}>
+            No past schedules match your search.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {filteredHistory.map(s => template && (
+              <HistoryCard
+                key={s.id}
+                schedule={s}
+                template={template}
+                expanded={expandedId === s.id}
+                onToggle={() => setExpandedId(expandedId === s.id ? null : s.id)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* ══ Review Modal ═════════════════════════════════════════════════════ */}
       {reviewModalOpen && <ReviewModal onClose={() => setReviewModalOpen(false)} />}

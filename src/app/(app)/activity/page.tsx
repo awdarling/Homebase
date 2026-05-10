@@ -84,10 +84,11 @@ function presentActor(entry: ActivityEntry, fallbackManagerName: string | null):
   if (actor === 'aegis') {
     return {
       label: 'Aegis',
-      initials: 'AG',
+      initials: '',
       color: '#60a5fa',
       bg: 'rgba(96,165,250,0.1)',
       border: 'rgba(96,165,250,0.25)',
+      iconUrl: '/aegis-icon.jpg',
       filterKey: 'aegis',
     }
   }
@@ -277,7 +278,7 @@ export default function ActivityPage() {
                         <img
                           src={p.iconUrl}
                           alt={p.label}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
                         />
                       ) : (
                         p.initials
