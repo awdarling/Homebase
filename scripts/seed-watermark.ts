@@ -400,6 +400,15 @@ async function main() {
     a(days[6], 'PM', 'Greeter',   E.chloe, '15:00', '21:00'),
   ]
 
+  // Sanity log — verify shift_name strings match the canonical names used by
+  // shift_types and the schedule template (otherwise rows render empty).
+  console.log('  first 5 assignments:')
+  for (const row of assignments.slice(0, 5)) {
+    console.log(`    ${row.date}  ${row.shift_name.padEnd(10)} ${row.role.padEnd(18)} ${row.employee_name}`)
+  }
+  const distinctShifts = Array.from(new Set(assignments.map(r => r.shift_name)))
+  console.log(`  distinct shift_names: ${JSON.stringify(distinctShifts)}`)
+
   // Exactly 2 intentional gaps (as required)
   const gaps = [
     {
@@ -457,6 +466,16 @@ async function main() {
     .slice(0, 5)
     .map(({ employee_id, employee_name, hours }) => ({ employee_id, name: employee_name, hours }))
 
+  // Bottom contributors — fewest hours, including any active employee with zero
+  const allActiveByHours = empRows.map((e: { id: string; name: string }) => ({
+    employee_id: e.id,
+    name: e.name,
+    hours: hrs[e.id] ?? 0,
+  }))
+  const bottomContributors = [...allActiveByHours]
+    .sort((a, b) => a.hours - b.hours)
+    .slice(0, 3)
+
   // Overtime risk (employees scheduled > 36h relative to their max)
   const overtimeRisk = byEmployee
     .filter(e => e.hours > 36)
@@ -468,6 +487,7 @@ async function main() {
   const staffingReport = {
     coverage_rate: 90,
     top_contributors: topContributors,
+    bottom_contributors: bottomContributors,
     overtime_risk: overtimeRisk,
     gap_summary: '2 gaps this week: Sunday Day shift missing 1 Greeter; Wednesday PM shift missing 2nd Lifeguard due to limited Wednesday availability.',
     special_notes_applied: [],

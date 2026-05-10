@@ -147,6 +147,11 @@ export interface StaffingReport {
     name: string
     hours: number
   }>
+  bottom_contributors?: Array<{
+    employee_id: string
+    name: string
+    hours: number
+  }>
   overtime_risk: Array<{
     employee_id: string
     name: string

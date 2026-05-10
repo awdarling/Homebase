@@ -899,7 +899,7 @@ function SettingsTab({ companyId, isQuria }: { companyId: string; isQuria: boole
 
 export default function PayrollPage() {
   const { company } = useCompany()
-  const { isQuria, loading: quriaLoading, debug: quriaDebug } = useQuria()
+  const { isQuria, loading: quriaLoading } = useQuria()
   const companyId = company?.id ?? ''
   const [activeTab, setActiveTab] = useState('overview')
 
@@ -911,18 +911,6 @@ export default function PayrollPage() {
       setActiveTab('overview')
     }
   }, [quriaLoading, isQuria, activeTab])
-
-  useEffect(() => {
-    async function verify() {
-      const supabase = createClient()
-      const { data, error } = await supabase
-        .from('quria_staff')
-        .select('email, active')
-        .in('email', ['xander.w.darling@gmail.com', 'awdarling@quriasolutions.com'])
-      console.log('[payroll] quria_staff verify:', { data, error: error?.message })
-    }
-    verify()
-  }, [])
 
   return (
     <div className="page-content">
@@ -965,18 +953,6 @@ export default function PayrollPage() {
           </button>
         ))}
       </div>
-
-      {!isQuria && (
-        <div style={{
-          fontSize: 10,
-          color: 'var(--text-muted)',
-          fontFamily: 'var(--font-mono)',
-          marginBottom: 16,
-          opacity: 0.6,
-        }}>
-          [debug] isQuria: {String(isQuria)}, loading: {String(quriaLoading)}, email: {quriaDebug?.email ?? '—'}, rowFound: {String(quriaDebug?.rowFound ?? false)}{quriaDebug?.error ? `, error: ${quriaDebug.error}` : ''}
-        </div>
-      )}
 
       {companyId ? (
         <>

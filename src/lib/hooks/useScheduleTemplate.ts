@@ -17,7 +17,10 @@ const DEFAULT_DAY_COLORS: Record<string, string> = {
   '6': '#4169E1', // Saturday — royal blue
 }
 
-const DEFAULT_SHIFTS = ['AMWeekday', 'AMWeekend', 'PM', 'Flex', 'Day']
+// Row IDs MUST match the shift_name values used in assignments and the
+// shift_types table (which use 'AM' for weekday and 'AM Weekend' with a
+// space). ScheduleRenderer matches assignments to rows via row.id === a.shift_name.
+const DEFAULT_SHIFTS = ['AM', 'AM Weekend', 'PM', 'Flex', 'Day']
 
 function buildDefault(companyId: string): ScheduleTemplate {
   const now = new Date().toISOString()

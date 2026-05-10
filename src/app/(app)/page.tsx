@@ -16,7 +16,8 @@ interface ActivityEntry {
 interface TORequest {
   id: string
   status: string
-  employee: { name: string; primary_role: string } | null
+  employee: { id?: string; name: string; primary_role: string } | null
+  employee_id?: string
   start_date: string
   end_date: string
 }
@@ -89,6 +90,26 @@ function timeAgo(dateString: string) {
 
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function isoDay(d: Date): string {
+  return d.toLocaleDateString('en-CA')
+}
+
+function currentWeekRange(): { start: string; end: string } {
+  const today = new Date()
+  const start = new Date(today)
+  start.setDate(today.getDate() - today.getDay())
+  start.setHours(0, 0, 0, 0)
+  const end = new Date(start)
+  end.setDate(start.getDate() + 6)
+  return { start: isoDay(start), end: isoDay(end) }
+}
+
+function daysBetween(startISO: string, endISO: string): number {
+  const s = new Date(startISO)
+  const e = new Date(endISO)
+  return Math.max(1, Math.round((e.getTime() - s.getTime()) / 86400000) + 1)
 }
 
 function formatCurrency(n: number) {
@@ -176,6 +197,142 @@ function DonutChart({ value, max, color = 'var(--accent)', label }: {
   )
 }
 
+function OutThisWeekCard({
+  outRequests,
+  weekRange,
+  totalActive,
+}: {
+  outRequests: TORequest[]
+  weekRange: { start: string; end: string }
+  totalActive: number
+}) {
+  const distinctOutNames = new Set(outRequests.map((r) => r.employee?.name).filter(Boolean) as string[])
+  const outCount = distinctOutNames.size
+  const outPercent = totalActive > 0 ? (outCount / totalActive) * 100 : 0
+  const overThreshold = outPercent > 25
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div className="section-label">
+        Out This Week — {formatDate(weekRange.start)} – {formatDate(weekRange.end)}
+      </div>
+      <div style={{
+        background: 'var(--bg-surface-1)',
+        border: `1px solid ${overThreshold ? 'rgba(239,68,68,0.35)' : 'var(--border-default)'}`,
+        borderRadius: 'var(--radius-lg)',
+        overflow: 'hidden',
+      }}>
+        {overThreshold && (
+          <div style={{
+            padding: '8px 16px',
+            background: 'rgba(239,68,68,0.06)',
+            borderBottom: '1px solid rgba(239,68,68,0.2)',
+            fontSize: 11,
+            fontWeight: 600,
+            color: '#ef4444',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#ef4444' }} />
+            {outCount} of {totalActive} staff out ({Math.round(outPercent)}%) — coverage at risk
+          </div>
+        )}
+        {outRequests.length === 0 ? (
+          <div style={{ padding: '20px 16px', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+            No approved time off this week
+          </div>
+        ) : (
+          outRequests.map((r, i) => {
+            const days = daysBetween(r.start_date, r.end_date)
+            return (
+              <div key={r.id} style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '10px 16px',
+                borderBottom: i < outRequests.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 }}>
+                    {r.employee?.name ?? 'Unknown employee'}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                    {r.employee?.primary_role ?? '—'}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                  {formatDate(r.start_date)}
+                  {r.start_date !== r.end_date ? ` – ${formatDate(r.end_date)}` : ''}
+                </div>
+                <div style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: 'var(--text-muted)',
+                  padding: '2px 8px',
+                  borderRadius: 'var(--radius-pill)',
+                  background: 'var(--bg-surface-3)',
+                  border: '1px solid var(--border-subtle)',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {days} {days === 1 ? 'day' : 'days'}
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ContributorsCard({
+  title,
+  rows,
+  color,
+  empty,
+}: {
+  title: string
+  rows: { name: string; hours: number }[]
+  color: string
+  empty: string
+}) {
+  const maxHrs = rows.reduce((m, r) => Math.max(m, r.hours), 0)
+  return (
+    <div>
+      <div className="section-label">{title}</div>
+      <div style={{
+        background: 'var(--bg-surface-1)',
+        border: '1px solid var(--border-default)',
+        borderRadius: 'var(--radius-lg)',
+        overflow: 'hidden',
+      }}>
+        {rows.length === 0 ? (
+          <div style={{ padding: '20px 16px', textAlign: 'center' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{empty}</div>
+          </div>
+        ) : rows.map((c, i) => {
+          const pct = maxHrs > 0 ? (c.hours / maxHrs) * 100 : 0
+          return (
+            <div key={i} style={{
+              padding: '10px 16px',
+              borderBottom: i < rows.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 }}>{c.name}</span>
+                <span style={{ fontSize: 12, color, fontWeight: 600 }}>{c.hours}h</span>
+              </div>
+              <div style={{ height: 3, background: 'var(--bg-surface-3)', borderRadius: 2 }}>
+                <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 2 }} />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function HomePage() {
   const { company } = useCompany()
   const COMPANY_ID = company?.id ?? ''
@@ -184,6 +341,7 @@ export default function HomePage() {
 
   const [activity, setActivity] = useState<ActivityEntry[]>([])
   const [pendingTO, setPendingTO] = useState<TORequest[]>([])
+  const [outThisWeek, setOutThisWeek] = useState<TORequest[]>([])
   const [currentSchedule, setCurrentSchedule] = useState<Schedule | null>(null)
   const [employees, setEmployees] = useState<Employee[]>([])
   const [wageRates, setWageRates] = useState<WageRate[]>([])
@@ -192,15 +350,18 @@ export default function HomePage() {
   const [missingPhone, setMissingPhone] = useState(0)
   const [pendingSwaps, setPendingSwaps] = useState(0)
 
+  const weekRange = currentWeekRange()
+
   useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
 
   async function fetchData() {
     if (!COMPANY_ID) return
     setLoading(true)
 
-    const [actRes, toRes, schedRes, empRes, wageRes, swapRes] = await Promise.all([
+    const [actRes, toRes, outRes, schedRes, empRes, wageRes, swapRes] = await Promise.all([
       supabase.from('activity_log').select('*').eq('company_id', COMPANY_ID).order('created_at', { ascending: false }).limit(8),
       supabase.from('time_off_requests').select('*, employee:employees(name, primary_role)').eq('company_id', COMPANY_ID).eq('status', 'pending').order('requested_at', { ascending: false }),
+      supabase.from('time_off_requests').select('*, employee:employees(id, name, primary_role)').eq('company_id', COMPANY_ID).eq('status', 'approved').lte('start_date', weekRange.end).gte('end_date', weekRange.start),
       supabase.from('schedules').select('*').eq('company_id', COMPANY_ID).order('week_start', { ascending: false }).limit(1).maybeSingle(),
       supabase.from('employees').select('id, name, primary_role, contact_email, contact_phone, individual_wage').eq('company_id', COMPANY_ID).eq('active', true),
       supabase.from('wage_rates').select('role, hourly_rate').eq('company_id', COMPANY_ID),
@@ -209,6 +370,7 @@ export default function HomePage() {
 
     if (actRes.data) setActivity(actRes.data)
     if (toRes.data) setPendingTO(toRes.data as TORequest[])
+    if (outRes.data) setOutThisWeek(outRes.data as TORequest[])
     if (schedRes.data) setCurrentSchedule(schedRes.data)
     if (empRes.data) {
       setEmployees(empRes.data)
@@ -267,11 +429,25 @@ export default function HomePage() {
     }
   }
 
-  // Top contributors
-  const topContributors = Object.entries(hoursByEmployee)
-    .sort(([, a], [, b]) => b - a)
-    .slice(0, 5)
-    .map(([name, hours]) => ({ name, hours: Math.round(hours * 10) / 10 }))
+  // Out-this-week employee names — exclude them from contributor rankings
+  const outNames = new Set(outThisWeek.map((r) => r.employee?.name).filter(Boolean) as string[])
+
+  // Build contributor rows for every active employee (zero hours included),
+  // skipping anyone on approved time off this week
+  const contributorRows = employees
+    .filter((e) => !outNames.has(e.name))
+    .map((e) => ({
+      name: e.name,
+      hours: Math.round((hoursByEmployee[e.name] ?? 0) * 10) / 10,
+    }))
+
+  const topContributors = [...contributorRows]
+    .sort((a, b) => b.hours - a.hours)
+    .slice(0, 3)
+
+  const bottomContributors = [...contributorRows]
+    .sort((a, b) => a.hours - b.hours)
+    .slice(0, 3)
 
   // Role breakdown for bar chart
   const roleChartData = Object.entries(hoursByRole)
@@ -494,42 +670,29 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* ── Top contributors + Activity ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
+      {/* ── Out This Week ── */}
+      <OutThisWeekCard
+        outRequests={outThisWeek}
+        weekRange={weekRange}
+        totalActive={employees.length}
+      />
 
-        {/* Top contributors */}
-        <div>
-          <div className="section-label">Top Contributors This Week</div>
-          <div style={{
-            background: 'var(--bg-surface-1)',
-            border: '1px solid var(--border-default)',
-            borderRadius: 'var(--radius-lg)',
-            overflow: 'hidden',
-          }}>
-            {topContributors.length === 0 ? (
-              <div style={{ padding: '20px 16px', textAlign: 'center' }}>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Will populate when Aegis builds a schedule</div>
-              </div>
-            ) : topContributors.map((c, i) => {
-              const maxHrs = topContributors[0].hours
-              const pct = maxHrs > 0 ? (c.hours / maxHrs) * 100 : 0
-              return (
-                <div key={i} style={{
-                  padding: '10px 16px',
-                  borderBottom: i < topContributors.length - 1 ? '1px solid var(--border-subtle)' : 'none',
-                }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                    <span style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 }}>{c.name}</span>
-                    <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>{c.hours}h</span>
-                  </div>
-                  <div style={{ height: 3, background: 'var(--bg-surface-3)', borderRadius: 2 }}>
-                    <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent)', borderRadius: 2 }} />
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
+      {/* ── Contributors + Activity ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: 12 }}>
+
+        <ContributorsCard
+          title="Top Contributors This Week"
+          rows={topContributors}
+          color="var(--accent)"
+          empty="Will populate when Aegis builds a schedule"
+        />
+
+        <ContributorsCard
+          title="Bottom Contributors This Week"
+          rows={bottomContributors}
+          color="#f97316"
+          empty="Will populate when Aegis builds a schedule"
+        />
 
         {/* Activity */}
         <div>

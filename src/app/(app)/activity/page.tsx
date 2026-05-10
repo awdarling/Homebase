@@ -61,20 +61,33 @@ interface ActorPresentation {
   bg: string
   border: string
   iconUrl?: string
-  filterKey: 'aegis' | 'manager' | 'system' | 'quria'
+  filterKey: 'aegis' | 'soteria' | 'manager' | 'quria'
 }
 
 function presentActor(entry: ActivityEntry, fallbackManagerName: string | null): ActorPresentation {
   const actor = entry.actor
 
-  if (actor === 'aegis' || actor === 'soteria') {
+  // Soteria — internal setup/system assistant. System events are also Soteria.
+  if (actor === 'soteria' || actor === 'system') {
     return {
-      label: 'Aegis',
-      initials: 'A',
+      label: 'Soteria',
+      initials: 'S',
       color: '#a78bfa',
       bg: 'rgba(167,139,250,0.1)',
       border: 'rgba(167,139,250,0.25)',
       iconUrl: '/soteria-icon.png',
+      filterKey: 'soteria',
+    }
+  }
+
+  // Aegis — external operational AI. Distinct identity from Soteria.
+  if (actor === 'aegis') {
+    return {
+      label: 'Aegis',
+      initials: 'AG',
+      color: '#60a5fa',
+      bg: 'rgba(96,165,250,0.1)',
+      border: 'rgba(96,165,250,0.25)',
       filterKey: 'aegis',
     }
   }
@@ -91,26 +104,15 @@ function presentActor(entry: ActivityEntry, fallbackManagerName: string | null):
     }
   }
 
-  if (actor === 'manager') {
-    const name = entry.actor_name || fallbackManagerName || 'Manager'
-    return {
-      label: name,
-      initials: name === 'Manager' ? 'MG' : nameInitials(name),
-      color: '#9ca3af',
-      bg: 'rgba(156,163,175,0.1)',
-      border: 'rgba(156,163,175,0.25)',
-      filterKey: 'manager',
-    }
-  }
-
-  // system
+  // manager
+  const name = entry.actor_name || fallbackManagerName || 'Manager'
   return {
-    label: entry.actor_name || 'System',
-    initials: 'SY',
-    color: 'var(--text-muted)',
-    bg: 'var(--bg-surface-3)',
-    border: 'var(--border-default)',
-    filterKey: 'system',
+    label: name,
+    initials: name === 'Manager' ? 'MG' : nameInitials(name),
+    color: '#9ca3af',
+    bg: 'rgba(156,163,175,0.1)',
+    border: 'rgba(156,163,175,0.25)',
+    filterKey: 'manager',
   }
 }
 
@@ -120,7 +122,7 @@ export default function ActivityPage() {
   const [entries, setEntries] = useState<ActivityEntry[]>([])
   const [fallbackManagerName, setFallbackManagerName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all' | 'aegis' | 'manager' | 'system' | 'quria'>('all')
+  const [filter, setFilter] = useState<'all' | 'aegis' | 'soteria' | 'manager' | 'quria'>('all')
 
   const supabase = createClient()
 
@@ -180,7 +182,7 @@ export default function ActivityPage() {
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 28 }}>
-        {(['all', 'aegis', 'manager', 'quria', 'system'] as const).map((f) => (
+        {(['all', 'aegis', 'soteria', 'manager', 'quria'] as const).map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}

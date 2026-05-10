@@ -125,6 +125,45 @@ function ReviewModal({ onClose }: { onClose: () => void }) {
   )
 }
 
+// ── ContributorList ───────────────────────────────────────────────────────────
+
+function ContributorList({
+  title,
+  rows,
+  color,
+}: {
+  title: string
+  rows: { employee_id: string; name: string; hours: number }[]
+  color: string
+}) {
+  return (
+    <div>
+      <div className="section-label" style={{ margin: '0 0 8px' }}>{title}</div>
+      <div style={{
+        background: 'var(--bg-surface-1)',
+        border: '1px solid var(--border-default)',
+        borderRadius: 'var(--radius-lg)',
+        overflow: 'hidden',
+      }}>
+        {rows.map((c, i) => (
+          <div key={c.employee_id} style={{
+            padding: '10px 16px',
+            borderBottom: i < rows.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}>
+            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{c.name}</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color, fontFamily: 'var(--font-display)' }}>
+              {c.hours}h
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── HistoryReportDetail ───────────────────────────────────────────────────────
 
 function HistoryReportDetail({ schedule }: { schedule: Schedule }) {
@@ -229,31 +268,23 @@ function HistoryReportDetail({ schedule }: { schedule: Schedule }) {
         </div>
       )}
 
-      {/* Top contributors */}
-      {report && report.top_contributors.length > 0 && (
-        <div>
-          <div className="section-label" style={{ margin: '0 0 8px' }}>Top Contributors</div>
-          <div style={{
-            background: 'var(--bg-surface-1)',
-            border: '1px solid var(--border-default)',
-            borderRadius: 'var(--radius-lg)',
-            overflow: 'hidden',
-          }}>
-            {report.top_contributors.map((c, i) => (
-              <div key={c.employee_id} style={{
-                padding: '10px 16px',
-                borderBottom: i < report.top_contributors.length - 1 ? '1px solid var(--border-subtle)' : 'none',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}>
-                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{c.name}</span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', fontFamily: 'var(--font-display)' }}>
-                  {c.hours}h
-                </span>
-              </div>
-            ))}
-          </div>
+      {/* Top + Bottom contributors */}
+      {report && (report.top_contributors.length > 0 || (report.bottom_contributors?.length ?? 0) > 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          {report.top_contributors.length > 0 && (
+            <ContributorList
+              title="Top Contributors"
+              rows={report.top_contributors.slice(0, 3)}
+              color="var(--accent)"
+            />
+          )}
+          {report.bottom_contributors && report.bottom_contributors.length > 0 && (
+            <ContributorList
+              title="Bottom Contributors"
+              rows={report.bottom_contributors.slice(0, 3)}
+              color="#f97316"
+            />
+          )}
         </div>
       )}
 
@@ -657,6 +688,7 @@ export default function SchedulePage() {
       </div>
 
       {/* ══ History ══════════════════════════════════════════════════════════ */}
+      {/* ── HISTORY SECTION — DO NOT REMOVE ────────────────────────────────── */}
       {historySchedules.length > 0 && (
         <div style={{ marginTop: 48 }}>
 
