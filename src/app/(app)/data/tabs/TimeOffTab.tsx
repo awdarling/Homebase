@@ -25,11 +25,37 @@ interface TORequest {
   status: 'pending' | 'approved' | 'denied'
   requested_at: string
   decided_at: string | null
+  aegis_recommendation: 'approve' | 'deny' | 'neutral' | null
+  aegis_reasoning: string | null
   employee: { name: string; primary_role: string } | null
 }
 
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function AegisBadge({ rec }: { rec: 'approve' | 'deny' | 'neutral' }) {
+  const styles: Record<string, { bg: string; border: string; text: string; label: string }> = {
+    approve: { bg: 'rgba(22,163,74,0.1)', border: 'rgba(22,163,74,0.25)', text: '#16a34a', label: 'Aegis: Approve' },
+    deny:    { bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.25)', text: '#ef4444', label: 'Aegis: Deny' },
+    neutral: { bg: 'rgba(107,114,128,0.1)', border: 'rgba(107,114,128,0.25)', text: '#6b7280', label: 'Aegis: Neutral' },
+  }
+  const s = styles[rec]
+  return (
+    <span style={{
+      padding: '2px 8px',
+      background: s.bg,
+      border: `1px solid ${s.border}`,
+      borderRadius: 'var(--radius-pill)',
+      fontSize: 10,
+      fontWeight: 700,
+      color: s.text,
+      letterSpacing: '0.04em',
+      whiteSpace: 'nowrap',
+    }}>
+      {s.label}
+    </span>
+  )
 }
 
 export default function TimeOffTab() {
@@ -189,75 +215,104 @@ export default function TimeOffTab() {
         ) : (
           filtered.map((req, i) => (
             <div key={req.id} style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 16,
               padding: '14px 16px',
               borderBottom: i < filtered.length - 1 ? '1px solid var(--border-subtle)' : 'none',
             }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500 }}>
-                  {req.employee?.name ?? 'Unknown'}
+              {/* Main row */}
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500 }}>
+                    {req.employee?.name ?? 'Unknown'}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                    {req.employee?.primary_role} · Requested {formatDate(req.requested_at)}
+                  </div>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                  {req.employee?.primary_role} · Requested {formatDate(req.requested_at)}
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 160, flexShrink: 0 }}>
+                  {formatDate(req.start_date)} – {formatDate(req.end_date)}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1, minWidth: 0 }}>
+                  {req.reason ?? '—'}
+                </div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  {req.aegis_recommendation && <AegisBadge rec={req.aegis_recommendation} />}
+                  {req.status === 'pending' ? (
+                    <>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => handleDecision(req, 'approved')}
+                        style={{
+                          background: 'var(--status-ready-bg)',
+                          color: 'var(--status-ready-text)',
+                          border: '1px solid var(--status-ready-border)',
+                        }}
+                      >
+                        Approve
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => handleDecision(req, 'denied')}
+                        style={{
+                          background: 'var(--status-blocked-bg)',
+                          color: 'var(--status-blocked-text)',
+                          border: '1px solid var(--status-blocked-border)',
+                        }}
+                      >
+                        Deny
+                      </button>
+                    </>
+                  ) : (
+                    <span className={`badge ${req.status === 'approved' ? 'badge-ready' : 'badge-blocked'}`}>
+                      {req.status.charAt(0).toUpperCase() + req.status.slice(1)}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => handleDelete(req)}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: 'var(--text-muted)',
+                      padding: '4px',
+                      borderRadius: 'var(--radius-sm)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    title="Delete request"
+                  >
+                    <TrashIcon />
+                  </button>
                 </div>
               </div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 160 }}>
-                {formatDate(req.start_date)} – {formatDate(req.end_date)}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1 }}>
-                {req.reason ?? '—'}
-              </div>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                {req.status === 'pending' ? (
-                  <>
-                    <button
-                      className="btn btn-sm"
-                      onClick={() => handleDecision(req, 'approved')}
-                      style={{
-                        background: 'var(--status-ready-bg)',
-                        color: 'var(--status-ready-text)',
-                        border: '1px solid var(--status-ready-border)',
-                      }}
-                    >
-                      Approve
-                    </button>
-                    <button
-                      className="btn btn-sm"
-                      onClick={() => handleDecision(req, 'denied')}
-                      style={{
-                        background: 'var(--status-blocked-bg)',
-                        color: 'var(--status-blocked-text)',
-                        border: '1px solid var(--status-blocked-border)',
-                      }}
-                    >
-                      Deny
-                    </button>
-                  </>
-                ) : (
-                  <span className={`badge ${req.status === 'approved' ? 'badge-ready' : 'badge-blocked'}`}>
-                    {req.status.charAt(0).toUpperCase() + req.status.slice(1)}
-                  </span>
-                )}
-                <button
-                  onClick={() => handleDelete(req)}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
+
+              {/* Aegis reasoning block */}
+              {req.aegis_reasoning && (
+                <div style={{
+                  marginTop: 10,
+                  paddingLeft: 12,
+                  borderLeft: '2px solid rgba(99,102,241,0.3)',
+                }}>
+                  <div style={{
+                    fontSize: 10,
                     color: 'var(--text-muted)',
-                    padding: '4px',
-                    borderRadius: 'var(--radius-sm)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                  title="Delete request"
-                >
-                  <TrashIcon />
-                </button>
-              </div>
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                    fontWeight: 700,
+                    marginBottom: 3,
+                  }}>
+                    Aegis Assessment
+                  </div>
+                  <div style={{
+                    fontSize: 11,
+                    color: 'var(--text-muted)',
+                    fontStyle: 'italic',
+                    lineHeight: 1.55,
+                  }}>
+                    {req.aegis_reasoning}
+                  </div>
+                </div>
+              )}
             </div>
           ))
         )}

@@ -6,7 +6,9 @@ import { useCompany } from '@/lib/hooks/useCompany'
 import { useScheduleTemplate } from '@/lib/hooks/useScheduleTemplate'
 import ScheduleRenderer from '@/components/schedule/ScheduleRenderer'
 import ScheduleStats from '@/components/schedule/ScheduleStats'
-import type { Schedule, ScheduleAssignment, ScheduleTemplate } from '@/lib/types'
+import GapResolverPanel from '@/components/schedule/GapResolverPanel'
+import TemplateEditorPanel from '@/components/schedule/TemplateEditorPanel'
+import type { Schedule, ScheduleAssignment, ScheduleGap, ScheduleTemplate } from '@/lib/types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -43,8 +45,6 @@ function computeChangeCount(live: ScheduleAssignment[], snapshot: ScheduleAssign
 }
 
 // ── ScaledContainer ───────────────────────────────────────────────────────────
-// Measures the natural height of its children, then constrains the outer
-// div to scale * naturalHeight so there's no blank space below scaled content.
 
 function ScaledContainer({ children, scale = 0.7 }: { children: React.ReactNode; scale?: number }) {
   const innerRef = useRef<HTMLDivElement>(null)
@@ -392,12 +392,103 @@ function HistoryCard({
   )
 }
 
+// ── CurrentScheduleGaps ───────────────────────────────────────────────────────
+
+function CurrentScheduleGaps({
+  gaps,
+  onResolve,
+}: {
+  gaps: ScheduleGap[]
+  onResolve: (gap: ScheduleGap) => void
+}) {
+  const openGaps = gaps.filter(g => g.required_count > g.filled_count)
+  if (openGaps.length === 0) return null
+
+  return (
+    <div style={{
+      background: 'var(--bg-surface-1)',
+      border: '1px solid rgba(239,68,68,0.25)',
+      borderRadius: 'var(--radius-lg)',
+      overflow: 'hidden',
+    }}>
+      <div style={{
+        padding: '10px 16px',
+        borderBottom: '1px solid var(--border-subtle)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        background: 'rgba(239,68,68,0.04)',
+      }}>
+        <div style={{
+          fontSize: 11,
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: '0.1em',
+          color: '#ef4444',
+        }}>
+          Open Gaps
+        </div>
+        <div style={{
+          padding: '1px 7px',
+          background: 'rgba(239,68,68,0.12)',
+          border: '1px solid rgba(239,68,68,0.2)',
+          borderRadius: 'var(--radius-pill)',
+          fontSize: 11,
+          fontWeight: 700,
+          color: '#ef4444',
+        }}>
+          {openGaps.length}
+        </div>
+      </div>
+      {openGaps.map((g, i) => (
+        <div key={`${g.shift_name}-${g.role}-${g.date}`} style={{
+          padding: '10px 16px',
+          borderBottom: i < openGaps.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          flexWrap: 'wrap',
+        }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }}>
+              {g.shift_name} — {g.role}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+              {formatDateLong(g.date)} · {g.filled_count}/{g.required_count} filled
+              {g.reason ? ` · ${g.reason}` : ''}
+            </div>
+          </div>
+          <div style={{
+            padding: '2px 8px',
+            background: 'rgba(239,68,68,0.1)',
+            border: '1px solid rgba(239,68,68,0.2)',
+            borderRadius: 'var(--radius-pill)',
+            fontSize: 11,
+            fontWeight: 600,
+            color: '#ef4444',
+            flexShrink: 0,
+          }}>
+            {g.required_count - g.filled_count} unfilled
+          </div>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => onResolve(g)}
+            style={{ flexShrink: 0 }}
+          >
+            Resolve
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function SchedulePage() {
   const { company } = useCompany()
   const companyId = company?.id ?? ''
-  const { template } = useScheduleTemplate()
+  const { template, saveTemplate } = useScheduleTemplate()
 
   const [allSchedules, setAllSchedules] = useState<Schedule[]>([])
   const [loading, setLoading] = useState(true)
@@ -411,9 +502,10 @@ export default function SchedulePage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
-  // Modals
+  // Modals / panels
   const [reviewModalOpen, setReviewModalOpen] = useState(false)
   const [editTemplateMode, setEditTemplateMode] = useState(false)
+  const [resolveGap, setResolveGap] = useState<ScheduleGap | null>(null)
 
   const supabase = createClient()
 
@@ -434,7 +526,7 @@ export default function SchedulePage() {
     setLoading(false)
   }
 
-  // Derive current week schedule (most recent by generated_at if duplicates)
+  // Derive current week schedule
   const currentSchedule = allSchedules
     .filter(s => isCurrentWeek(s))
     .sort((a, b) => b.generated_at.localeCompare(a.generated_at))[0] ?? null
@@ -457,6 +549,11 @@ export default function SchedulePage() {
     setEditMode(false)
   }
 
+  function handleGapResolved(updatedSchedule: Schedule) {
+    setAllSchedules(prev => prev.map(s => s.id === updatedSchedule.id ? updatedSchedule : s))
+    setResolveGap(null)
+  }
+
   if (loading) {
     return (
       <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
@@ -464,6 +561,8 @@ export default function SchedulePage() {
       </div>
     )
   }
+
+  const currentGaps = currentSchedule?.data?.gaps ?? []
 
   return (
     <div className="page-content">
@@ -536,6 +635,15 @@ export default function SchedulePage() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <ScheduleStats schedule={currentSchedule} />
+
+            {/* Open gaps with Resolve buttons */}
+            {!editMode && (
+              <CurrentScheduleGaps
+                gaps={currentGaps}
+                onResolve={setResolveGap}
+              />
+            )}
+
             {template && (
               <ScheduleRenderer
                 schedule={currentSchedule}
@@ -604,53 +712,25 @@ export default function SchedulePage() {
       {/* ══ Review Modal ═════════════════════════════════════════════════════ */}
       {reviewModalOpen && <ReviewModal onClose={() => setReviewModalOpen(false)} />}
 
-      {/* ══ Template Editor Placeholder ══════════════════════════════════════ */}
-      {editTemplateMode && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.5)',
-            zIndex: 1000,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 24,
-          }}
-          onClick={() => setEditTemplateMode(false)}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{
-              background: 'var(--bg-surface-1)',
-              border: '1px solid var(--border-default)',
-              borderRadius: 'var(--radius-xl)',
-              padding: '32px',
-              maxWidth: 440,
-              width: '100%',
-            }}
-          >
-            <div style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: 16,
-              fontWeight: 700,
-              color: 'var(--text-primary)',
-              marginBottom: 12,
-            }}>
-              Edit Template
-            </div>
-            <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7, marginBottom: 24 }}>
-              Template editor coming in Pass 2. Your template settings have been saved.
-            </div>
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={() => setEditTemplateMode(false)}
-              style={{ width: '100%', justifyContent: 'center' }}
-            >
-              Got it
-            </button>
-          </div>
-        </div>
+      {/* ══ Gap Resolver Panel ═══════════════════════════════════════════════ */}
+      {resolveGap && currentSchedule && (
+        <GapResolverPanel
+          gap={resolveGap}
+          schedule={currentSchedule}
+          companyId={companyId}
+          onClose={() => setResolveGap(null)}
+          onResolved={handleGapResolved}
+        />
+      )}
+
+      {/* ══ Template Editor ══════════════════════════════════════════════════ */}
+      {editTemplateMode && template && (
+        <TemplateEditorPanel
+          template={template}
+          currentSchedule={currentSchedule}
+          saveTemplate={saveTemplate}
+          onClose={() => setEditTemplateMode(false)}
+        />
       )}
 
     </div>

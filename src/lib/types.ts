@@ -52,6 +52,8 @@ export interface TimeOffRequest {
   requested_at: string
   decided_at: string | null
   decided_by: string | null
+  aegis_recommendation: 'approve' | 'deny' | 'neutral' | null
+  aegis_reasoning: string | null
   employee?: Employee
 }
 
