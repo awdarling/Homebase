@@ -9,14 +9,12 @@ interface ScheduleRendererProps {
   onAssignmentChange?: (assignments: ScheduleAssignment[]) => void
 }
 
-// Font size maps
 const FONT_SIZES = {
-  sm: { name: 11, meta: 10 },
+  sm: { name: 12, meta: 10 },
   md: { name: 13, meta: 11 },
   lg: { name: 15, meta: 12 },
 }
 
-// Derive the 7 dates of the schedule week in order
 function getWeekDates(weekStart: string): string[] {
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(weekStart)
@@ -25,20 +23,18 @@ function getWeekDates(weekStart: string): string[] {
   })
 }
 
-// hex + alpha suffix for subtle cell backgrounds
 function hexWithAlpha(hex: string, alpha: number): string {
   const a = Math.round(alpha * 255).toString(16).padStart(2, '0')
   return `${hex}${a}`
 }
 
-function EmployeeCard({
+function AssignmentCard({
   assignment,
   color,
   fontSize,
   showRole,
   showHours,
   showStartEnd,
-  editMode,
 }: {
   assignment: ScheduleAssignment
   color: string
@@ -46,34 +42,33 @@ function EmployeeCard({
   showRole: boolean
   showHours: boolean
   showStartEnd: boolean
-  editMode: boolean
 }) {
   return (
     <div style={{
-      background: hexWithAlpha(color, 0.18),
-      border: `1px solid ${hexWithAlpha(color, 0.35)}`,
+      background: 'rgba(255,255,255,0.08)',
       borderRadius: 4,
-      padding: '4px 7px',
-      marginBottom: 4,
-      cursor: editMode ? 'grab' : 'default',
+      padding: '5px 7px',
       userSelect: 'none',
     }}>
       <div style={{
         fontSize: fontSize.name,
-        fontWeight: 600,
+        fontWeight: 500,
         color: 'var(--text-primary)',
         lineHeight: 1.3,
-        fontFamily: 'var(--font-body)',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
       }}>
         {assignment.employee_name}
       </div>
       {showRole && (
         <div style={{
           fontSize: fontSize.meta,
-          color,
+          color: color,
           lineHeight: 1.2,
-          marginTop: 1,
+          marginTop: 2,
           fontWeight: 500,
+          opacity: 0.85,
         }}>
           {assignment.role}
         </div>
@@ -86,28 +81,29 @@ function EmployeeCard({
           marginTop: 1,
         }}>
           {showStartEnd
-            ? `${assignment.start_time} – ${assignment.end_time}`
-            : showHours
-              ? `${assignment.hours}h`
-              : null}
+            ? `${assignment.start_time}–${assignment.end_time}`
+            : `${assignment.hours}h`}
         </div>
       )}
     </div>
   )
 }
 
-function GapSlot({ count, color }: { count: number; color: string }) {
+function GapPill({ count }: { count: number }) {
   return (
     <div style={{
-      border: `1px dashed ${hexWithAlpha(color, 0.4)}`,
-      borderRadius: 4,
-      padding: '4px 7px',
-      marginBottom: 4,
-      textAlign: 'center',
+      display: 'inline-flex',
+      alignItems: 'center',
+      padding: '2px 8px',
+      background: 'rgba(239,68,68,0.12)',
+      border: '1px solid rgba(239,68,68,0.25)',
+      borderRadius: 20,
+      fontSize: 10,
+      fontWeight: 600,
+      color: '#ef4444',
+      letterSpacing: '0.02em',
     }}>
-      <div style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.06em' }}>
-        {count} UNFILLED
-      </div>
+      {count === 1 ? '1 gap' : `${count} gaps`}
     </div>
   )
 }
@@ -134,9 +130,8 @@ function ShiftRowsDayColumns({
     .filter(c => c.visible)
     .sort((a, b) => a.order - b.order)
 
-  // Map date string -> column config entry
   const colByDate = new Map<string, ColumnConfig>()
-  weekDates.forEach((date, i) => {
+  weekDates.forEach(date => {
     const dayOfWeek = new Date(date).getDay()
     const col = visibleCols.find(c => c.day === dayOfWeek)
     if (col) colByDate.set(date, col)
@@ -145,7 +140,6 @@ function ShiftRowsDayColumns({
   const assignments = schedule.data?.assignments ?? []
   const gaps = schedule.data?.gaps ?? []
 
-  // assignment lookup: shiftName+date -> assignments[]
   const assignmentMap = new Map<string, ScheduleAssignment[]>()
   for (const a of assignments) {
     const key = `${a.shift_name}||${a.date}`
@@ -153,17 +147,14 @@ function ShiftRowsDayColumns({
     assignmentMap.get(key)!.push(a)
   }
 
-  // gap lookup: shiftName+date -> unfilled count
+  // gap lookup: shiftName+date -> unfilled count (summed across roles if multiple)
   const gapMap = new Map<string, number>()
   for (const g of gaps) {
     const key = `${g.shift_name}||${g.date}`
     const unfilled = g.required_count - g.filled_count
-    if (unfilled > 0) {
-      gapMap.set(key, (gapMap.get(key) ?? 0) + unfilled)
-    }
+    if (unfilled > 0) gapMap.set(key, (gapMap.get(key) ?? 0) + unfilled)
   }
 
-  // Ordered visible dates (matching column order)
   const orderedDates = visibleCols
     .map(col => weekDates.find(d => new Date(d).getDay() === col.day))
     .filter((d): d is string => d !== undefined)
@@ -175,15 +166,11 @@ function ShiftRowsDayColumns({
   const getColor = (col: ColumnConfig, row: RowConfig): string => {
     if (color_config.by === 'day') return col.color
     if (color_config.by === 'shift') return color_config.map[row.id] ?? col.color
-    if (color_config.by === 'role') return col.color
-    return '#888888'
+    return col.color
   }
 
   return (
-    <div style={{
-      overflowX: 'auto',
-      width: '100%',
-    }}>
+    <div style={{ overflowX: 'auto', width: '100%' }}>
       <div style={{
         display: 'grid',
         gridTemplateColumns: `${LABEL_COL_WIDTH}px ${orderedDates.map(d => {
@@ -193,12 +180,9 @@ function ShiftRowsDayColumns({
         minWidth: LABEL_COL_WIDTH + orderedDates.length * MIN_COL_WIDTH,
       }}>
 
-        {/* Header row */}
         {/* Top-left corner */}
         <div style={{
-          position: 'sticky',
-          left: 0,
-          zIndex: 10,
+          position: 'sticky', left: 0, zIndex: 10,
           background: 'var(--bg-surface-2)',
           borderBottom: '1px solid var(--border-default)',
           borderRight: '1px solid var(--border-default)',
@@ -217,22 +201,17 @@ function ShiftRowsDayColumns({
             }}>
               <div style={{
                 fontFamily: 'var(--font-display)',
-                fontSize: 11,
-                fontWeight: 800,
+                fontSize: 11, fontWeight: 800,
                 letterSpacing: '0.12em',
                 color: 'rgba(255,255,255,0.75)',
-                textTransform: 'uppercase',
-                lineHeight: 1,
+                textTransform: 'uppercase', lineHeight: 1,
               }}>
                 {col.label.slice(0, 3).toUpperCase()}
               </div>
               <div style={{
                 fontFamily: 'var(--font-display)',
-                fontSize: 15,
-                fontWeight: 800,
-                color: '#ffffff',
-                lineHeight: 1,
-                marginTop: 3,
+                fontSize: 15, fontWeight: 800,
+                color: '#ffffff', lineHeight: 1, marginTop: 3,
               }}>
                 {new Date(date).getDate()}
               </div>
@@ -247,21 +226,17 @@ function ShiftRowsDayColumns({
           return [
             // Sticky row label
             <div key={`label-${row.id}`} style={{
-              position: 'sticky',
-              left: 0,
-              zIndex: 5,
+              position: 'sticky', left: 0, zIndex: 5,
               background: 'var(--bg-surface-2)',
               borderBottom: '1px solid var(--border-subtle)',
               borderRight: '1px solid var(--border-default)',
               padding: '10px 12px',
-              display: 'flex',
-              alignItems: 'flex-start',
+              display: 'flex', alignItems: 'flex-start',
               minHeight: rowHeight,
             }}>
               <span style={{
                 fontFamily: 'var(--font-display)',
-                fontSize: 11,
-                fontWeight: 700,
+                fontSize: 11, fontWeight: 700,
                 color: 'var(--text-secondary)',
                 letterSpacing: '0.08em',
                 writingMode: 'vertical-rl',
@@ -288,26 +263,35 @@ function ShiftRowsDayColumns({
                   borderRight: '1px solid var(--border-subtle)',
                   padding: 8,
                   minHeight: rowHeight,
-                  background: isEmpty
-                    ? 'var(--bg-base)'
-                    : hexWithAlpha(color, 0.06),
+                  overflowY: 'auto',
+                  background: isEmpty ? 'var(--bg-base)' : hexWithAlpha(color, 0.06),
                   outline: mode === 'edit' ? '1px solid rgba(99,102,241,0.25)' : undefined,
-                  position: 'relative',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 4,
                 }}>
-                  {cellAssignments.map((a, j) => (
-                    <EmployeeCard
-                      key={`${a.employee_id}-${j}`}
-                      assignment={a}
-                      color={color}
-                      fontSize={fontSize}
-                      showRole={display_options.show_role}
-                      showHours={display_options.show_hours}
-                      showStartEnd={display_options.show_start_end}
-                      editMode={mode === 'edit'}
-                    />
-                  ))}
-                  {gapCount > 0 && (
-                    <GapSlot count={gapCount} color={color} />
+                  {isEmpty ? (
+                    <div style={{
+                      flex: 1,
+                      border: '1px dashed var(--border-subtle)',
+                      borderRadius: 4,
+                      minHeight: 32,
+                    }} />
+                  ) : (
+                    <>
+                      {cellAssignments.map((a, j) => (
+                        <AssignmentCard
+                          key={`${a.employee_id}-${j}`}
+                          assignment={a}
+                          color={color}
+                          fontSize={fontSize}
+                          showRole={display_options.show_role}
+                          showHours={display_options.show_hours}
+                          showStartEnd={display_options.show_start_end}
+                        />
+                      ))}
+                      {gapCount > 0 && <GapPill count={gapCount} />}
+                    </>
                   )}
                 </div>
               )
@@ -320,7 +304,6 @@ function ShiftRowsDayColumns({
 }
 
 export default function ScheduleRenderer({ schedule, template, mode, onAssignmentChange }: ScheduleRendererProps) {
-  // Suppress unused warning — onAssignmentChange is wired in edit mode (Pass 2)
   void onAssignmentChange
 
   const containerStyle: React.CSSProperties = {
@@ -338,7 +321,6 @@ export default function ScheduleRenderer({ schedule, template, mode, onAssignmen
     )
   }
 
-  // Placeholder for other layout modes
   return (
     <div style={{ ...containerStyle, padding: '48px 24px', textAlign: 'center' }}>
       <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>

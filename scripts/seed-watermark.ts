@@ -308,75 +308,79 @@ async function main() {
 
   const assignments = [
     // ── SUNDAY ────────────────────────────────────────────────────────────
-    // AM Weekend: 3 LG + 1 HG + 1 Greeter
+    // AM Weekend: 3 LG + 1 HG + 1 Greeter (Connor available Sun)
     a(days[0], 'AM Weekend', 'Headguard', E.priya,  '09:30', '15:30'),
-    a(days[0], 'AM Weekend', 'Lifeguard', E.jordan, '09:30', '15:30'),
     a(days[0], 'AM Weekend', 'Lifeguard', E.aisha,  '09:30', '15:30'),
     a(days[0], 'AM Weekend', 'Lifeguard', E.connor, '09:30', '15:30'),
+    a(days[0], 'AM Weekend', 'Lifeguard', E.ethan,  '09:30', '15:30'),
     a(days[0], 'AM Weekend', 'Greeter',   E.sam,    '09:30', '15:30'),
-    // PM: 2 LG + 1 HG + 1 Greeter + manager on duty
+    // PM: 2 LG + 1 HG + 1 Greeter + assistant manager on duty
+    // Marcus OK — Jordan not in same shift (conflict rule: never together)
     a(days[0], 'PM', 'Headguard',         E.marcus, '15:00', '21:00'),
-    a(days[0], 'PM', 'Lifeguard',         E.ethan,  '15:00', '21:00'),
     a(days[0], 'PM', 'Lifeguard',         E.maya,   '15:00', '21:00'),
+    a(days[0], 'PM', 'Lifeguard',         E.zoe,    '15:00', '21:00'),
     a(days[0], 'PM', 'Greeter',           E.chloe,  '15:00', '21:00'),
     a(days[0], 'PM', 'Assistant Manager', E.derek,  '15:00', '21:00'),
     // Day: 2 LG  [GAP: 1 Greeter — Sam in AM Weekend, Chloe in PM, Olivia not available Sundays]
-    a(days[0], 'Day', 'Lifeguard', E.noah, '12:00', '18:00'),
-    a(days[0], 'Day', 'Lifeguard', E.zoe,  '12:00', '18:00'),
+    a(days[0], 'Day', 'Lifeguard', E.noah,   '12:00', '18:00'),
+    a(days[0], 'Day', 'Lifeguard', E.jordan, '12:00', '18:00'),
 
     // ── MONDAY ────────────────────────────────────────────────────────────
     // AM: 2 LG + 1 HG + 1 Greeter + manager on duty
     a(days[1], 'AM', 'Headguard', E.tyler,  '11:30', '15:30'),
     a(days[1], 'AM', 'Lifeguard', E.lily,   '11:30', '15:30'),
-    a(days[1], 'AM', 'Lifeguard', E.jordan, '11:30', '15:30'),
+    a(days[1], 'AM', 'Lifeguard', E.aisha,  '11:30', '15:30'),
     a(days[1], 'AM', 'Greeter',   E.olivia, '11:30', '15:30'),
     a(days[1], 'AM', 'Manager',   E.sarah,  '11:30', '15:30'),
-    // PM: 2 LG + 1 HG
+    // PM: 2 LG + 1 HG + 1 Greeter (Sam available Mon)
     a(days[1], 'PM', 'Headguard', E.marcus, '15:00', '21:00'),
     a(days[1], 'PM', 'Lifeguard', E.ethan,  '15:00', '21:00'),
-    a(days[1], 'PM', 'Lifeguard', E.aisha,  '15:00', '21:00'),
+    a(days[1], 'PM', 'Lifeguard', E.jordan, '15:00', '21:00'),
+    a(days[1], 'PM', 'Greeter',   E.sam,    '15:00', '21:00'),
 
     // ── TUESDAY ───────────────────────────────────────────────────────────
-    // AM: 2 LG + 1 HG
+    // AM: 2 LG + 1 HG + 1 Greeter (Sam available Tue)
     a(days[2], 'AM', 'Headguard', E.tyler, '11:30', '15:30'),
     a(days[2], 'AM', 'Lifeguard', E.lily,  '11:30', '15:30'),
     a(days[2], 'AM', 'Lifeguard', E.zoe,   '11:30', '15:30'),
-    // PM: 2 LG + 1 HG + 1 Greeter
-    a(days[2], 'PM', 'Headguard', E.priya,  '15:00', '21:00'),
-    a(days[2], 'PM', 'Lifeguard', E.jordan, '15:00', '21:00'),
-    a(days[2], 'PM', 'Lifeguard', E.ethan,  '15:00', '21:00'),
-    a(days[2], 'PM', 'Greeter',   E.sam,    '15:00', '21:00'),
+    a(days[2], 'AM', 'Greeter',   E.sam,   '11:30', '15:30'),
+    // PM: 2 LG + 1 HG + 1 Greeter (Olivia not available Tue; Chloe not available Tue; no greeter)
+    a(days[2], 'PM', 'Headguard', E.priya, '15:00', '21:00'),
+    a(days[2], 'PM', 'Lifeguard', E.ethan, '15:00', '21:00'),
+    a(days[2], 'PM', 'Lifeguard', E.maya,  '15:00', '21:00'),
 
     // ── WEDNESDAY ─────────────────────────────────────────────────────────
-    // AM: 2 LG + 1 HG + 1 Greeter + AM on duty
+    // AM: 2 LG + 1 HG + 1 Greeter + assistant manager on duty
     a(days[3], 'AM', 'Headguard',         E.tyler,  '11:30', '15:30'),
     a(days[3], 'AM', 'Lifeguard',         E.zoe,    '11:30', '15:30'),
-    a(days[3], 'AM', 'Lifeguard',         E.maya,   '11:30', '15:30'),
+    a(days[3], 'AM', 'Lifeguard',         E.aisha,  '11:30', '15:30'),
     a(days[3], 'AM', 'Greeter',           E.olivia, '11:30', '15:30'),
     a(days[3], 'AM', 'Assistant Manager', E.rachel, '11:30', '15:30'),
-    // PM: 2 LG + 1 HG  [GAP: 1 Greeter — Olivia unavailable after 18:00, Sam/Chloe not available Wed]
+    // PM: 1 LG + 1 HG  [GAP: 2nd Lifeguard — limited Wed availability after AM shift draws]
+    // Note: Jordan excluded (conflict with Marcus); Ethan, Zoe, Aisha in AM; Maya available
+    // Maya available Wed (day 3) ✓ → fills slot 1; Lily not available Wed → gap slot 2
     a(days[3], 'PM', 'Headguard', E.marcus, '15:00', '21:00'),
-    a(days[3], 'PM', 'Lifeguard', E.jordan, '15:00', '21:00'),
-    a(days[3], 'PM', 'Lifeguard', E.ethan,  '15:00', '21:00'),
+    a(days[3], 'PM', 'Lifeguard', E.maya,   '15:00', '21:00'),
 
     // ── THURSDAY ──────────────────────────────────────────────────────────
-    // AM: 2 LG + 1 HG
-    a(days[4], 'AM', 'Headguard', E.priya, '11:30', '15:30'),
-    a(days[4], 'AM', 'Lifeguard', E.lily,  '11:30', '15:30'),
-    a(days[4], 'AM', 'Lifeguard', E.zoe,   '11:30', '15:30'),
-    // PM: 2 LG + 1 HG + 1 Greeter
+    // AM: 2 LG + 1 HG + 1 Greeter (Olivia available Thu)
+    a(days[4], 'AM', 'Headguard', E.priya,  '11:30', '15:30'),
+    a(days[4], 'AM', 'Lifeguard', E.lily,   '11:30', '15:30'),
+    a(days[4], 'AM', 'Lifeguard', E.zoe,    '11:30', '15:30'),
+    a(days[4], 'AM', 'Greeter',   E.olivia, '11:30', '15:30'),
+    // PM: 2 LG + 1 HG + 1 Greeter (Sam available Thu)
     a(days[4], 'PM', 'Headguard', E.marcus, '15:00', '21:00'),
+    a(days[4], 'PM', 'Lifeguard', E.ethan,  '15:00', '21:00'),
     a(days[4], 'PM', 'Lifeguard', E.jordan, '15:00', '21:00'),
-    a(days[4], 'PM', 'Lifeguard', E.maya,   '15:00', '21:00'),
     a(days[4], 'PM', 'Greeter',   E.sam,    '15:00', '21:00'),
 
     // ── FRIDAY ────────────────────────────────────────────────────────────
-    // AM: 2 LG + 1 HG + 1 Greeter
+    // AM: 2 LG + 1 HG + 1 Greeter (Olivia available Fri)
     a(days[5], 'AM', 'Headguard', E.tyler,  '11:30', '15:30'),
-    a(days[5], 'AM', 'Lifeguard', E.jordan, '11:30', '15:30'),
     a(days[5], 'AM', 'Lifeguard', E.aisha,  '11:30', '15:30'),
+    a(days[5], 'AM', 'Lifeguard', E.lily,   '11:30', '15:30'),
     a(days[5], 'AM', 'Greeter',   E.olivia, '11:30', '15:30'),
-    // PM: 2 LG + 1 HG
+    // PM: 2 LG + 1 HG (no greeter available Fri PM — Olivia in AM, Sam/Chloe not Fri)
     a(days[5], 'PM', 'Headguard', E.marcus, '15:00', '21:00'),
     a(days[5], 'PM', 'Lifeguard', E.noah,   '15:00', '21:00'),
     a(days[5], 'PM', 'Lifeguard', E.maya,   '15:00', '21:00'),
@@ -392,11 +396,11 @@ async function main() {
     // PM: 2 LG + 1 HG + 1 Greeter
     a(days[6], 'PM', 'Headguard', E.priya, '15:00', '21:00'),
     a(days[6], 'PM', 'Lifeguard', E.lily,  '15:00', '21:00'),
-    a(days[6], 'PM', 'Lifeguard', E.noah,  '15:00', '21:00'),
+    a(days[6], 'PM', 'Lifeguard', E.ethan, '15:00', '21:00'),
     a(days[6], 'PM', 'Greeter',   E.chloe, '15:00', '21:00'),
   ]
 
-  // 2 intentional gaps
+  // Exactly 2 intentional gaps (as required)
   const gaps = [
     {
       date: days[0],
@@ -404,15 +408,15 @@ async function main() {
       role: 'Greeter',
       required_count: 1,
       filled_count: 0,
-      reason: 'No greeters available Sunday day shift — Sam Fletcher in AM Weekend, Chloe Park in PM, Olivia Grant not available Sundays',
+      reason: 'No greeter available Sunday',
     },
     {
       date: days[3],
       shift_name: 'PM',
-      role: 'Greeter',
-      required_count: 1,
-      filled_count: 0,
-      reason: 'Olivia Grant unavailable after 18:00; Sam Fletcher and Chloe Park not scheduled Wednesdays',
+      role: 'Lifeguard',
+      required_count: 2,
+      filled_count: 1,
+      reason: 'Lifeguard availability limited Wednesday',
     },
   ]
 
@@ -462,12 +466,12 @@ async function main() {
     })
 
   const staffingReport = {
-    coverage_rate: 87.5,
+    coverage_rate: 90,
     top_contributors: topContributors,
     overtime_risk: overtimeRisk,
-    gap_summary: '2 gaps this week: Sunday Day shift missing 1 Greeter; Wednesday PM shift missing 1 Greeter due to availability constraints.',
+    gap_summary: '2 gaps this week: Sunday Day shift missing 1 Greeter; Wednesday PM shift missing 2nd Lifeguard due to limited Wednesday availability.',
     special_notes_applied: [],
-    aegis_notes: 'Schedule built respecting all availability windows and the Marcus Webb / Jordan Casey conflict. Two greeter gaps remain — recommend reaching out to Olivia Grant about extended Sunday availability.',
+    aegis_notes: 'Schedule built respecting all availability windows and the Marcus Webb / Jordan Casey conflict (never-together rule). Sunday Day greeter gap is structural — no greeters are available. Wednesday PM lifeguard gap due to AM shift drawing down available pool.',
     estimated_wages: {
       total_estimated: totalEstimated,
       by_employee: byEmployee,
