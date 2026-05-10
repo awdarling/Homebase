@@ -17,7 +17,7 @@ function formatDateLong(d: string) {
 }
 
 function todayISO(): string {
-  return new Date().toISOString().split('T')[0]
+  return new Date().toLocaleDateString('en-CA')
 }
 
 function isCurrentWeek(s: Schedule): boolean {
