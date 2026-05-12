@@ -8,6 +8,8 @@ import ScheduleRenderer from '@/components/schedule/ScheduleRenderer'
 import ScheduleStats from '@/components/schedule/ScheduleStats'
 import GapResolverPanel from '@/components/schedule/GapResolverPanel'
 import TemplateEditorPanel from '@/components/schedule/TemplateEditorPanel'
+import ScheduleReviewPanel, { type ScheduleChange } from '@/components/schedule/ScheduleReviewPanel'
+import AddShiftPanel from '@/components/schedule/AddShiftPanel'
 import type { Schedule, ScheduleAssignment, ScheduleGap, ScheduleTemplate } from '@/lib/types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -32,14 +34,57 @@ function scheduleMatchesSearch(s: Schedule, query: string): boolean {
   return label.includes(q)
 }
 
-function computeChangeCount(live: ScheduleAssignment[], snapshot: ScheduleAssignment[]): number {
-  if (live.length !== snapshot.length) return Math.abs(live.length - snapshot.length)
-  let changes = 0
-  for (const a of live) {
-    const found = snapshot.some(
-      s => s.employee_id === a.employee_id && s.date === a.date && s.shift_name === a.shift_name
-    )
-    if (!found) changes++
+function computeChanges(snapshot: ScheduleAssignment[], pending: ScheduleAssignment[]): ScheduleChange[] {
+  const key = (a: ScheduleAssignment) => `${a.employee_id}|${a.shift_name}|${a.date}`
+
+  const snapMap = new Map<string, ScheduleAssignment>()
+  for (const s of snapshot) snapMap.set(key(s), s)
+  const pendMap = new Map<string, ScheduleAssignment>()
+  for (const p of pending) pendMap.set(key(p), p)
+
+  const removed: ScheduleAssignment[] = []
+  snapMap.forEach((s, k) => { if (!pendMap.has(k)) removed.push(s) })
+
+  const added: ScheduleAssignment[] = []
+  pendMap.forEach((p, k) => { if (!snapMap.has(k)) added.push(p) })
+
+  // Match removed → added by employee_id (greedy) to detect moves
+  const moves: Array<{ from: ScheduleAssignment; to: ScheduleAssignment }> = []
+  for (let i = removed.length - 1; i >= 0; i--) {
+    const r = removed[i]
+    const aIdx = added.findIndex(a => a.employee_id === r.employee_id)
+    if (aIdx >= 0) {
+      moves.push({ from: r, to: added[aIdx] })
+      added.splice(aIdx, 1)
+      removed.splice(i, 1)
+    }
+  }
+
+  const changes: ScheduleChange[] = []
+  for (const m of moves) {
+    changes.push({
+      kind: 'moved',
+      employee_id: m.from.employee_id,
+      employee_name: m.from.employee_name,
+      from: { shift_name: m.from.shift_name, date: m.from.date, role: m.from.role },
+      to:   { shift_name: m.to.shift_name,   date: m.to.date,   role: m.to.role   },
+    })
+  }
+  for (const a of added) {
+    changes.push({
+      kind: 'added',
+      employee_id: a.employee_id,
+      employee_name: a.employee_name,
+      to: { shift_name: a.shift_name, date: a.date, role: a.role },
+    })
+  }
+  for (const r of removed) {
+    changes.push({
+      kind: 'removed',
+      employee_id: r.employee_id,
+      employee_name: r.employee_name,
+      from: { shift_name: r.shift_name, date: r.date, role: r.role },
+    })
   }
   return changes
 }
@@ -68,58 +113,6 @@ function ScaledContainer({ children, scale = 0.7 }: { children: React.ReactNode;
         }}
       >
         {children}
-      </div>
-    </div>
-  )
-}
-
-// ── ReviewModal ───────────────────────────────────────────────────────────────
-
-function ReviewModal({ onClose }: { onClose: () => void }) {
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.5)',
-        zIndex: 1000,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-      }}
-      onClick={onClose}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          background: 'var(--bg-surface-1)',
-          border: '1px solid var(--border-default)',
-          borderRadius: 'var(--radius-xl)',
-          padding: '32px',
-          maxWidth: 440,
-          width: '100%',
-        }}
-      >
-        <div style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: 16,
-          fontWeight: 700,
-          color: 'var(--text-primary)',
-          marginBottom: 12,
-        }}>
-          Review Changes
-        </div>
-        <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7, marginBottom: 24 }}>
-          Review is coming in the next update. Changes have been tracked and will be validated by Soteria.
-        </div>
-        <button
-          className="btn btn-primary btn-sm"
-          onClick={onClose}
-          style={{ width: '100%', justifyContent: 'center' }}
-        >
-          Got it
-        </button>
       </div>
     </div>
   )
@@ -526,15 +519,17 @@ export default function SchedulePage() {
 
   // Edit mode
   const [editMode, setEditMode] = useState(false)
-  const [snapshotAssignments, setSnapshotAssignments] = useState<ScheduleAssignment[]>([])
-  const [liveAssignments, setLiveAssignments] = useState<ScheduleAssignment[]>([])
+  const [editSnapshot, setEditSnapshot] = useState<ScheduleAssignment[]>([])
+  const [pendingAssignments, setPendingAssignments] = useState<ScheduleAssignment[]>([])
+  const [removeMode, setRemoveMode] = useState(false)
 
   // History
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
   // Modals / panels
-  const [reviewModalOpen, setReviewModalOpen] = useState(false)
+  const [reviewPanelOpen, setReviewPanelOpen] = useState(false)
+  const [addShiftOpen, setAddShiftOpen] = useState(false)
   const [editTemplateMode, setEditTemplateMode] = useState(false)
   const [resolveGap, setResolveGap] = useState<ScheduleGap | null>(null)
 
@@ -565,24 +560,39 @@ export default function SchedulePage() {
   const historySchedules = allSchedules.filter(s => !isCurrentWeek(s))
   const filteredHistory = historySchedules.filter(s => scheduleMatchesSearch(s, search))
 
-  const changeCount = computeChangeCount(liveAssignments, snapshotAssignments)
+  const changes = editMode ? computeChanges(editSnapshot, pendingAssignments) : []
+  const changesCount = changes.length
 
   function enterEditMode() {
     const assignments = currentSchedule?.data?.assignments ?? []
-    setSnapshotAssignments([...assignments])
-    setLiveAssignments([...assignments])
+    setEditSnapshot([...assignments])
+    setPendingAssignments([...assignments])
+    setRemoveMode(false)
     setEditMode(true)
   }
 
   function cancelEditMode() {
-    setSnapshotAssignments([])
-    setLiveAssignments([])
+    setEditSnapshot([])
+    setPendingAssignments([])
+    setRemoveMode(false)
+    setAddShiftOpen(false)
+    setReviewPanelOpen(false)
     setEditMode(false)
   }
 
   function handleGapResolved(updatedSchedule: Schedule) {
     setAllSchedules(prev => prev.map(s => s.id === updatedSchedule.id ? updatedSchedule : s))
     setResolveGap(null)
+  }
+
+  function handleScheduleSaved(updatedSchedule: Schedule) {
+    setAllSchedules(prev => prev.map(s => s.id === updatedSchedule.id ? updatedSchedule : s))
+    setReviewPanelOpen(false)
+    cancelEditMode()
+  }
+
+  function handleAddPending(newAssignment: ScheduleAssignment) {
+    setPendingAssignments(prev => [...prev, newAssignment])
   }
 
   if (loading) {
@@ -619,7 +629,7 @@ export default function SchedulePage() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}>
             {!editMode ? (
               <>
                 <button
@@ -628,21 +638,42 @@ export default function SchedulePage() {
                 >
                   Edit Template
                 </button>
-                <button className="btn btn-primary btn-sm" onClick={enterEditMode}>
+                <button
+                  className="btn btn-primary btn-sm"
+                  disabled={!currentSchedule}
+                  onClick={enterEditMode}
+                >
                   Edit Schedule
                 </button>
               </>
             ) : (
               <>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setAddShiftOpen(true)}
+                >
+                  + Add Shift
+                </button>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setRemoveMode(v => !v)}
+                  style={removeMode ? {
+                    background: 'rgba(239,68,68,0.1)',
+                    borderColor: 'rgba(239,68,68,0.3)',
+                    color: '#ef4444',
+                  } : undefined}
+                >
+                  {removeMode ? 'Done Removing' : 'Remove'}
+                </button>
                 <button className="btn btn-secondary btn-sm" onClick={cancelEditMode}>
                   Cancel
                 </button>
                 <button
                   className="btn btn-primary btn-sm"
-                  disabled={changeCount === 0}
-                  onClick={() => setReviewModalOpen(true)}
+                  disabled={changesCount === 0}
+                  onClick={() => setReviewPanelOpen(true)}
                 >
-                  Review Changes ({changeCount})
+                  Review Changes ({changesCount})
                 </button>
               </>
             )}
@@ -680,7 +711,9 @@ export default function SchedulePage() {
                 schedule={currentSchedule}
                 template={template}
                 mode={editMode ? 'edit' : 'view'}
-                onAssignmentChange={setLiveAssignments}
+                removeMode={removeMode}
+                pendingAssignments={editMode ? pendingAssignments : undefined}
+                onAssignmentChange={setPendingAssignments}
               />
             )}
           </div>
@@ -753,8 +786,30 @@ export default function SchedulePage() {
         )}
       </div>
 
-      {/* ══ Review Modal ═════════════════════════════════════════════════════ */}
-      {reviewModalOpen && <ReviewModal onClose={() => setReviewModalOpen(false)} />}
+      {/* ══ Soteria Review Panel ═════════════════════════════════════════════ */}
+      {reviewPanelOpen && currentSchedule && (
+        <ScheduleReviewPanel
+          schedule={currentSchedule}
+          companyId={companyId}
+          changes={changes}
+          originalAssignments={editSnapshot}
+          pendingAssignments={pendingAssignments}
+          onClose={() => setReviewPanelOpen(false)}
+          onSaved={handleScheduleSaved}
+        />
+      )}
+
+      {/* ══ Add Shift Panel ══════════════════════════════════════════════════ */}
+      {addShiftOpen && currentSchedule && template && (
+        <AddShiftPanel
+          companyId={companyId}
+          weekStart={currentSchedule.week_start}
+          weekEnd={currentSchedule.week_end}
+          template={template}
+          onClose={() => setAddShiftOpen(false)}
+          onAdd={handleAddPending}
+        />
+      )}
 
       {/* ══ Gap Resolver Panel ═══════════════════════════════════════════════ */}
       {resolveGap && currentSchedule && (

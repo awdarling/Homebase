@@ -1,11 +1,25 @@
 'use client'
 
+import { useState } from 'react'
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  useDraggable,
+  useDroppable,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core'
 import type { Schedule, ScheduleTemplate, ScheduleAssignment, ColumnConfig, RowConfig } from '@/lib/types'
 
 interface ScheduleRendererProps {
   schedule: Schedule
   template: ScheduleTemplate
   mode: 'view' | 'edit'
+  removeMode?: boolean
+  pendingAssignments?: ScheduleAssignment[]
   onAssignmentChange?: (assignments: ScheduleAssignment[]) => void
 }
 
@@ -28,13 +42,24 @@ function hexWithAlpha(hex: string, alpha: number): string {
   return `${hex}${a}`
 }
 
-function AssignmentCard({
+function assignmentDragId(a: ScheduleAssignment): string {
+  return `${a.employee_id}||${a.shift_name}||${a.date}`
+}
+
+function cellDropId(shiftName: string, date: string): string {
+  return `cell::${shiftName}||${date}`
+}
+
+// ── AssignmentCard ────────────────────────────────────────────────────────────
+
+function AssignmentCardContent({
   assignment,
   color,
   fontSize,
   showRole,
   showHours,
   showStartEnd,
+  removeMode,
 }: {
   assignment: ScheduleAssignment
   color: string
@@ -42,6 +67,7 @@ function AssignmentCard({
   showRole: boolean
   showHours: boolean
   showStartEnd: boolean
+  removeMode?: boolean
 }) {
   return (
     <div style={{
@@ -49,7 +75,29 @@ function AssignmentCard({
       borderRadius: 4,
       padding: '5px 7px',
       userSelect: 'none',
+      position: 'relative',
+      border: removeMode ? '1px solid rgba(239,68,68,0.4)' : undefined,
     }}>
+      {removeMode && (
+        <div style={{
+          position: 'absolute',
+          top: 3,
+          right: 4,
+          width: 14,
+          height: 14,
+          borderRadius: '50%',
+          background: '#ef4444',
+          color: '#fff',
+          fontSize: 10,
+          fontWeight: 700,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          lineHeight: 1,
+        }}>
+          ×
+        </div>
+      )}
       <div style={{
         fontSize: fontSize.name,
         fontWeight: 500,
@@ -58,6 +106,7 @@ function AssignmentCard({
         whiteSpace: 'nowrap',
         overflow: 'hidden',
         textOverflow: 'ellipsis',
+        paddingRight: removeMode ? 16 : 0,
       }}>
         {assignment.employee_name}
       </div>
@@ -89,6 +138,124 @@ function AssignmentCard({
   )
 }
 
+function DraggableAssignmentCard({
+  assignment,
+  color,
+  fontSize,
+  showRole,
+  showHours,
+  showStartEnd,
+  removeMode,
+  onRemove,
+}: {
+  assignment: ScheduleAssignment
+  color: string
+  fontSize: { name: number; meta: number }
+  showRole: boolean
+  showHours: boolean
+  showStartEnd: boolean
+  removeMode: boolean
+  onRemove: () => void
+}) {
+  const id = assignmentDragId(assignment)
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id,
+    data: { assignment },
+    disabled: removeMode,
+  })
+
+  const handleClick = () => {
+    if (removeMode) onRemove()
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      onClick={handleClick}
+      style={{
+        cursor: removeMode ? 'pointer' : 'grab',
+        opacity: isDragging ? 0.3 : 1,
+        touchAction: 'none',
+      }}
+      {...listeners}
+      {...attributes}
+    >
+      <AssignmentCardContent
+        assignment={assignment}
+        color={color}
+        fontSize={fontSize}
+        showRole={showRole}
+        showHours={showHours}
+        showStartEnd={showStartEnd}
+        removeMode={removeMode}
+      />
+    </div>
+  )
+}
+
+function StaticAssignmentCard(props: {
+  assignment: ScheduleAssignment
+  color: string
+  fontSize: { name: number; meta: number }
+  showRole: boolean
+  showHours: boolean
+  showStartEnd: boolean
+}) {
+  return <AssignmentCardContent {...props} />
+}
+
+// ── DroppableCell ─────────────────────────────────────────────────────────────
+
+function DroppableCell({
+  shiftName,
+  date,
+  rowHeight,
+  baseBackground,
+  enabled,
+  editing,
+  children,
+}: {
+  shiftName: string
+  date: string
+  rowHeight: number
+  baseBackground: string
+  enabled: boolean
+  editing: boolean
+  children: React.ReactNode
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: cellDropId(shiftName, date),
+    data: { shift_name: shiftName, date },
+    disabled: !enabled,
+  })
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        borderBottom: '1px solid var(--border-subtle)',
+        borderRight: '1px solid var(--border-subtle)',
+        padding: 8,
+        minHeight: rowHeight,
+        overflowY: 'auto',
+        background: baseBackground,
+        outline: enabled && isOver
+          ? '2px solid #60a5fa'
+          : editing
+            ? '1px solid rgba(99,102,241,0.25)'
+            : undefined,
+        outlineOffset: enabled && isOver ? -2 : 0,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        transition: 'outline 0.15s, background 0.15s',
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
 function GapPill({ count }: { count: number }) {
   return (
     <div style={{
@@ -108,17 +275,36 @@ function GapPill({ count }: { count: number }) {
   )
 }
 
+// ── ShiftRowsDayColumns ───────────────────────────────────────────────────────
+
 function ShiftRowsDayColumns({
   schedule,
   template,
   mode,
+  removeMode,
+  pendingAssignments,
+  onAssignmentChange,
 }: {
   schedule: Schedule
   template: ScheduleTemplate
   mode: 'view' | 'edit'
+  removeMode: boolean
+  pendingAssignments?: ScheduleAssignment[]
+  onAssignmentChange?: (assignments: ScheduleAssignment[]) => void
 }) {
   const { display_options, row_config, column_config, color_config } = template
   const fontSize = FONT_SIZES[display_options.font_size]
+  const editing = mode === 'edit'
+
+  const assignments = editing
+    ? (pendingAssignments ?? schedule.data?.assignments ?? [])
+    : (schedule.data?.assignments ?? [])
+
+  const [activeAssignment, setActiveAssignment] = useState<ScheduleAssignment | null>(null)
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+  )
 
   const weekDates = getWeekDates(schedule.week_start)
 
@@ -137,7 +323,6 @@ function ShiftRowsDayColumns({
     if (col) colByDate.set(date, col)
   })
 
-  const assignments = schedule.data?.assignments ?? []
   const gaps = schedule.data?.gaps ?? []
 
   const assignmentMap = new Map<string, ScheduleAssignment[]>()
@@ -147,12 +332,14 @@ function ShiftRowsDayColumns({
     assignmentMap.get(key)!.push(a)
   }
 
-  // gap lookup: shiftName+date -> unfilled count (summed across roles if multiple)
+  // gap lookup: shiftName+date -> unfilled count (only meaningful for the original schedule)
   const gapMap = new Map<string, number>()
-  for (const g of gaps) {
-    const key = `${g.shift_name}||${g.date}`
-    const unfilled = g.required_count - g.filled_count
-    if (unfilled > 0) gapMap.set(key, (gapMap.get(key) ?? 0) + unfilled)
+  if (!editing) {
+    for (const g of gaps) {
+      const key = `${g.shift_name}||${g.date}`
+      const unfilled = g.required_count - g.filled_count
+      if (unfilled > 0) gapMap.set(key, (gapMap.get(key) ?? 0) + unfilled)
+    }
   }
 
   const orderedDates = visibleCols
@@ -169,7 +356,58 @@ function ShiftRowsDayColumns({
     return col.color
   }
 
-  return (
+  function moveAssignment(source: ScheduleAssignment, targetShift: string, targetDate: string) {
+    if (!onAssignmentChange) return
+    if (source.shift_name === targetShift && source.date === targetDate) return
+
+    let moved = false
+    const next = assignments.map(a => {
+      if (
+        !moved &&
+        a.employee_id === source.employee_id &&
+        a.shift_name === source.shift_name &&
+        a.date === source.date
+      ) {
+        moved = true
+        return { ...a, shift_name: targetShift, date: targetDate }
+      }
+      return a
+    })
+    if (moved) onAssignmentChange(next)
+  }
+
+  function removeAssignment(target: ScheduleAssignment) {
+    if (!onAssignmentChange) return
+    let removed = false
+    const next = assignments.filter(a => {
+      if (
+        !removed &&
+        a.employee_id === target.employee_id &&
+        a.shift_name === target.shift_name &&
+        a.date === target.date
+      ) {
+        removed = true
+        return false
+      }
+      return true
+    })
+    if (removed) onAssignmentChange(next)
+  }
+
+  function handleDragStart(e: DragStartEvent) {
+    const a = e.active.data.current?.assignment as ScheduleAssignment | undefined
+    if (a) setActiveAssignment(a)
+  }
+
+  function handleDragEnd(e: DragEndEvent) {
+    setActiveAssignment(null)
+    const source = e.active.data.current?.assignment as ScheduleAssignment | undefined
+    const over = e.over?.data.current as { shift_name?: string; date?: string } | undefined
+    if (!source || !over?.shift_name || !over?.date) return
+    moveAssignment(source, over.shift_name, over.date)
+  }
+
+  const grid = (
     <div style={{ overflowX: 'auto', width: '100%' }}>
       <div style={{
         display: 'grid',
@@ -256,20 +494,18 @@ function ShiftRowsDayColumns({
               const gapCount = gapMap.get(cellKey) ?? 0
               const color = getColor(col, row)
               const isEmpty = cellAssignments.length === 0 && gapCount === 0
+              const baseBackground = isEmpty ? 'var(--bg-base)' : hexWithAlpha(color, 0.06)
 
               return (
-                <div key={`cell-${row.id}-${date}`} style={{
-                  borderBottom: '1px solid var(--border-subtle)',
-                  borderRight: '1px solid var(--border-subtle)',
-                  padding: 8,
-                  minHeight: rowHeight,
-                  overflowY: 'auto',
-                  background: isEmpty ? 'var(--bg-base)' : hexWithAlpha(color, 0.06),
-                  outline: mode === 'edit' ? '1px solid rgba(99,102,241,0.25)' : undefined,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 4,
-                }}>
+                <DroppableCell
+                  key={`cell-${row.id}-${date}`}
+                  shiftName={row.id}
+                  date={date}
+                  rowHeight={rowHeight}
+                  baseBackground={baseBackground}
+                  enabled={editing && !removeMode}
+                  editing={editing}
+                >
                   {isEmpty ? (
                     <div style={{
                       flex: 1,
@@ -279,9 +515,21 @@ function ShiftRowsDayColumns({
                     }} />
                   ) : (
                     <>
-                      {cellAssignments.map((a, j) => (
-                        <AssignmentCard
-                          key={`${a.employee_id}-${j}`}
+                      {cellAssignments.map((a, j) => editing ? (
+                        <DraggableAssignmentCard
+                          key={`${assignmentDragId(a)}-${j}`}
+                          assignment={a}
+                          color={color}
+                          fontSize={fontSize}
+                          showRole={display_options.show_role}
+                          showHours={display_options.show_hours}
+                          showStartEnd={display_options.show_start_end}
+                          removeMode={removeMode}
+                          onRemove={() => removeAssignment(a)}
+                        />
+                      ) : (
+                        <StaticAssignmentCard
+                          key={`${assignmentDragId(a)}-${j}`}
                           assignment={a}
                           color={color}
                           fontSize={fontSize}
@@ -293,7 +541,7 @@ function ShiftRowsDayColumns({
                       {gapCount > 0 && <GapPill count={gapCount} />}
                     </>
                   )}
-                </div>
+                </DroppableCell>
               )
             }),
           ]
@@ -301,11 +549,49 @@ function ShiftRowsDayColumns({
       </div>
     </div>
   )
+
+  if (!editing) {
+    return grid
+  }
+
+  return (
+    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      {grid}
+      <DragOverlay dropAnimation={null}>
+        {activeAssignment && (
+          <div style={{
+            opacity: 0.85,
+            transform: 'rotate(-1deg)',
+            boxShadow: '0 8px 20px rgba(0,0,0,0.35)',
+            borderRadius: 4,
+            background: hexWithAlpha('#60a5fa', 0.18),
+            border: '1px solid rgba(96,165,250,0.5)',
+            padding: 0,
+            pointerEvents: 'none',
+          }}>
+            <AssignmentCardContent
+              assignment={activeAssignment}
+              color="#60a5fa"
+              fontSize={fontSize}
+              showRole={display_options.show_role}
+              showHours={display_options.show_hours}
+              showStartEnd={display_options.show_start_end}
+            />
+          </div>
+        )}
+      </DragOverlay>
+    </DndContext>
+  )
 }
 
-export default function ScheduleRenderer({ schedule, template, mode, onAssignmentChange }: ScheduleRendererProps) {
-  void onAssignmentChange
-
+export default function ScheduleRenderer({
+  schedule,
+  template,
+  mode,
+  removeMode = false,
+  pendingAssignments,
+  onAssignmentChange,
+}: ScheduleRendererProps) {
   const containerStyle: React.CSSProperties = {
     background: 'var(--bg-surface-1)',
     border: '1px solid var(--border-default)',
@@ -316,7 +602,14 @@ export default function ScheduleRenderer({ schedule, template, mode, onAssignmen
   if (template.layout_type === 'shift-rows-day-columns') {
     return (
       <div style={containerStyle}>
-        <ShiftRowsDayColumns schedule={schedule} template={template} mode={mode} />
+        <ShiftRowsDayColumns
+          schedule={schedule}
+          template={template}
+          mode={mode}
+          removeMode={removeMode}
+          pendingAssignments={pendingAssignments}
+          onAssignmentChange={onAssignmentChange}
+        />
       </div>
     )
   }
