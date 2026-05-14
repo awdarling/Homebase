@@ -18,13 +18,15 @@ function formatDateLong(d: string) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function todayISO(): string {
+function isoToday(): string {
   return new Date().toLocaleDateString('en-CA')
 }
 
-function isCurrentWeek(s: Schedule): boolean {
-  const today = todayISO()
-  return today >= s.week_start && today <= s.week_end
+function classifySchedule(s: Schedule): 'current' | 'upcoming' | 'past' {
+  const today = isoToday()
+  if (s.week_start <= today && s.week_end >= today) return 'current'
+  if (s.week_start > today) return 'upcoming'
+  return 'past'
 }
 
 function scheduleMatchesSearch(s: Schedule, query: string): boolean {
@@ -507,6 +509,183 @@ function CurrentScheduleGaps({
   )
 }
 
+// ── UpcomingCard ──────────────────────────────────────────────────────────────
+
+function ClockIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  )
+}
+
+interface UpcomingCardProps {
+  schedule: Schedule
+  template: ScheduleTemplate
+  expanded: boolean
+  onToggle: () => void
+  isEditing: boolean
+  removeMode: boolean
+  pendingAssignments: ScheduleAssignment[]
+  changesCount: number
+  canStartEdit: boolean
+  onStartEdit: () => void
+  onCancelEdit: () => void
+  onAddShift: () => void
+  onToggleRemove: () => void
+  onReview: () => void
+  onAssignmentChange: (next: ScheduleAssignment[]) => void
+  onResolveGap: (gap: ScheduleGap) => void
+}
+
+function UpcomingCard({
+  schedule,
+  template,
+  expanded,
+  onToggle,
+  isEditing,
+  removeMode,
+  pendingAssignments,
+  changesCount,
+  canStartEdit,
+  onStartEdit,
+  onCancelEdit,
+  onAddShift,
+  onToggleRemove,
+  onReview,
+  onAssignmentChange,
+  onResolveGap,
+}: UpcomingCardProps) {
+  const weekLabel = `${formatDateLong(schedule.week_start)} – ${formatDateLong(schedule.week_end)}`
+
+  const statusBadge =
+    schedule.status === 'approved'
+      ? { cls: 'badge badge-ready', label: 'Approved' }
+      : schedule.status === 'published'
+        ? { cls: 'badge badge-ready', label: 'Published' }
+        : { cls: 'badge badge-review', label: 'Draft' }
+
+  const gaps = schedule.data?.gaps ?? []
+
+  return (
+    <div style={{
+      background: 'var(--bg-surface-1)',
+      border: '1px solid var(--border-default)',
+      borderLeft: '3px solid var(--accent-border)',
+      borderRadius: 'var(--radius-lg)',
+      overflow: 'hidden',
+      opacity: isEditing ? 1 : 0.95,
+    }}>
+      {/* Card header */}
+      <div style={{
+        padding: '14px 20px',
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 16,
+        flexWrap: 'wrap',
+      }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              color: 'var(--accent)',
+              fontSize: 13,
+              fontWeight: 600,
+            }}>
+              <ClockIcon />
+              {weekLabel}
+            </span>
+            <span className={statusBadge.cls}>{statusBadge.label}</span>
+          </div>
+          <ScheduleStats schedule={schedule} compact />
+        </div>
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={onToggle}
+          style={{ flexShrink: 0 }}
+        >
+          {expanded ? 'Collapse' : 'Preview & Edit'}
+        </button>
+      </div>
+
+      {/* Expanded panel */}
+      {expanded && (
+        <div style={{
+          borderTop: '1px solid var(--border-subtle)',
+          padding: '20px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 16,
+        }}>
+          {/* Edit controls */}
+          <div style={{
+            display: 'flex',
+            gap: 8,
+            justifyContent: 'flex-end',
+            flexWrap: 'wrap',
+          }}>
+            {!isEditing ? (
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={onStartEdit}
+                disabled={!canStartEdit}
+                title={canStartEdit ? undefined : 'Finish editing the other schedule first'}
+              >
+                Edit Schedule
+              </button>
+            ) : (
+              <>
+                <button className="btn btn-secondary btn-sm" onClick={onAddShift}>
+                  + Add Shift
+                </button>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={onToggleRemove}
+                  style={removeMode ? {
+                    background: 'rgba(239,68,68,0.1)',
+                    borderColor: 'rgba(239,68,68,0.3)',
+                    color: '#ef4444',
+                  } : undefined}
+                >
+                  {removeMode ? 'Done Removing' : 'Remove'}
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={onCancelEdit}>
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary btn-sm"
+                  disabled={changesCount === 0}
+                  onClick={onReview}
+                >
+                  Review Changes ({changesCount})
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Open gaps */}
+          {!isEditing && (
+            <CurrentScheduleGaps gaps={gaps} onResolve={onResolveGap} />
+          )}
+
+          {/* Renderer */}
+          <ScheduleRenderer
+            schedule={schedule}
+            template={template}
+            mode={isEditing ? 'edit' : 'view'}
+            removeMode={isEditing ? removeMode : undefined}
+            pendingAssignments={isEditing ? pendingAssignments : undefined}
+            onAssignmentChange={isEditing ? onAssignmentChange : undefined}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function SchedulePage() {
@@ -517,21 +696,22 @@ export default function SchedulePage() {
   const [allSchedules, setAllSchedules] = useState<Schedule[]>([])
   const [loading, setLoading] = useState(true)
 
-  // Edit mode
-  const [editMode, setEditMode] = useState(false)
+  // Edit state — at most one schedule at a time, across all sections.
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null)
   const [editSnapshot, setEditSnapshot] = useState<ScheduleAssignment[]>([])
   const [pendingAssignments, setPendingAssignments] = useState<ScheduleAssignment[]>([])
   const [removeMode, setRemoveMode] = useState(false)
 
-  // History
-  const [expandedId, setExpandedId] = useState<string | null>(null)
+  // Expansion state
+  const [expandedUpcomingId, setExpandedUpcomingId] = useState<string | null>(null)
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
   // Modals / panels
   const [reviewPanelOpen, setReviewPanelOpen] = useState(false)
   const [addShiftOpen, setAddShiftOpen] = useState(false)
   const [editTemplateMode, setEditTemplateMode] = useState(false)
-  const [resolveGap, setResolveGap] = useState<ScheduleGap | null>(null)
+  const [resolveTarget, setResolveTarget] = useState<{ gap: ScheduleGap; scheduleId: string } | null>(null)
 
   const supabase = createClient()
 
@@ -547,28 +727,42 @@ export default function SchedulePage() {
       .select('*')
       .eq('company_id', companyId)
       .order('week_start', { ascending: false })
-      .limit(20)
+      .limit(40)
     setAllSchedules((data as Schedule[]) ?? [])
     setLoading(false)
   }
 
-  // Derive current week schedule
+  // ── Categorize schedules ────────────────────────────────────────────────
   const currentSchedule = allSchedules
-    .filter(s => isCurrentWeek(s))
+    .filter(s => classifySchedule(s) === 'current')
     .sort((a, b) => b.generated_at.localeCompare(a.generated_at))[0] ?? null
-
-  const historySchedules = allSchedules.filter(s => !isCurrentWeek(s))
+  const upcomingSchedules = allSchedules
+    .filter(s => classifySchedule(s) === 'upcoming')
+    .sort((a, b) => a.week_start.localeCompare(b.week_start))
+  const historySchedules = allSchedules
+    .filter(s => classifySchedule(s) === 'past')
+    .sort((a, b) => b.week_start.localeCompare(a.week_start))
   const filteredHistory = historySchedules.filter(s => scheduleMatchesSearch(s, search))
 
+  // ── Derived edit state ──────────────────────────────────────────────────
+  const editMode = editingScheduleId !== null
+  const editingSchedule = editingScheduleId
+    ? allSchedules.find(s => s.id === editingScheduleId) ?? null
+    : null
+  const isEditingCurrent = !!currentSchedule && editingScheduleId === currentSchedule.id
   const changes = editMode ? computeChanges(editSnapshot, pendingAssignments) : []
   const changesCount = changes.length
 
-  function enterEditMode() {
-    const assignments = currentSchedule?.data?.assignments ?? []
+  const resolvingSchedule = resolveTarget
+    ? allSchedules.find(s => s.id === resolveTarget.scheduleId) ?? null
+    : null
+
+  function enterEditMode(schedule: Schedule) {
+    const assignments = schedule.data?.assignments ?? []
     setEditSnapshot([...assignments])
     setPendingAssignments([...assignments])
     setRemoveMode(false)
-    setEditMode(true)
+    setEditingScheduleId(schedule.id)
   }
 
   function cancelEditMode() {
@@ -577,12 +771,12 @@ export default function SchedulePage() {
     setRemoveMode(false)
     setAddShiftOpen(false)
     setReviewPanelOpen(false)
-    setEditMode(false)
+    setEditingScheduleId(null)
   }
 
   function handleGapResolved(updatedSchedule: Schedule) {
     setAllSchedules(prev => prev.map(s => s.id === updatedSchedule.id ? updatedSchedule : s))
-    setResolveGap(null)
+    setResolveTarget(null)
   }
 
   function handleScheduleSaved(updatedSchedule: Schedule) {
@@ -595,6 +789,15 @@ export default function SchedulePage() {
     setPendingAssignments(prev => [...prev, newAssignment])
   }
 
+  function toggleUpcomingExpanded(id: string) {
+    if (expandedUpcomingId === id) {
+      if (editingScheduleId === id) cancelEditMode()
+      setExpandedUpcomingId(null)
+    } else {
+      setExpandedUpcomingId(id)
+    }
+  }
+
   if (loading) {
     return (
       <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
@@ -604,11 +807,12 @@ export default function SchedulePage() {
   }
 
   const currentGaps = currentSchedule?.data?.gaps ?? []
+  const canStartNewEdit = editingScheduleId === null
 
   return (
     <div className="page-content">
 
-      {/* ══ Active Schedule ══════════════════════════════════════════════════ */}
+      {/* ══ SECTION 1: THIS WEEK ════════════════════════════════════════════ */}
       <div>
 
         {/* Header */}
@@ -630,7 +834,7 @@ export default function SchedulePage() {
           </div>
 
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}>
-            {!editMode ? (
+            {!isEditingCurrent ? (
               <>
                 <button
                   className="btn btn-secondary btn-sm"
@@ -640,8 +844,9 @@ export default function SchedulePage() {
                 </button>
                 <button
                   className="btn btn-primary btn-sm"
-                  disabled={!currentSchedule}
-                  onClick={enterEditMode}
+                  disabled={!currentSchedule || !canStartNewEdit}
+                  onClick={() => currentSchedule && enterEditMode(currentSchedule)}
+                  title={canStartNewEdit ? undefined : 'Finish editing the other schedule first'}
                 >
                   Edit Schedule
                 </button>
@@ -688,9 +893,9 @@ export default function SchedulePage() {
             borderRadius: 'var(--radius-lg)',
           }}>
             <div className="empty-state">
-              <div className="empty-state-title">No schedule yet for this week</div>
+              <div className="empty-state-title">No schedule for this week yet</div>
               <div className="empty-state-desc">
-                Ask Aegis to build one by texting &ldquo;Build next week&rsquo;s schedule&rdquo;, or wait for the auto-schedule to run.
+                Ask Aegis to build one.
               </div>
             </div>
           </div>
@@ -699,10 +904,10 @@ export default function SchedulePage() {
             <ScheduleStats schedule={currentSchedule} />
 
             {/* Open gaps with Resolve buttons */}
-            {!editMode && (
+            {!isEditingCurrent && (
               <CurrentScheduleGaps
                 gaps={currentGaps}
-                onResolve={setResolveGap}
+                onResolve={gap => setResolveTarget({ gap, scheduleId: currentSchedule.id })}
               />
             )}
 
@@ -710,18 +915,80 @@ export default function SchedulePage() {
               <ScheduleRenderer
                 schedule={currentSchedule}
                 template={template}
-                mode={editMode ? 'edit' : 'view'}
-                removeMode={removeMode}
-                pendingAssignments={editMode ? pendingAssignments : undefined}
-                onAssignmentChange={setPendingAssignments}
+                mode={isEditingCurrent ? 'edit' : 'view'}
+                removeMode={isEditingCurrent ? removeMode : undefined}
+                pendingAssignments={isEditingCurrent ? pendingAssignments : undefined}
+                onAssignmentChange={isEditingCurrent ? setPendingAssignments : undefined}
               />
             )}
           </div>
         )}
       </div>
 
-      {/* ══ History ══════════════════════════════════════════════════════════ */}
-      {/* ── HISTORY SECTION — DO NOT REMOVE ────────────────────────────────── */}
+      {/* ══ SECTION 2: UPCOMING SCHEDULES ═══════════════════════════════════ */}
+      {/* ── UPCOMING SCHEDULES — DO NOT REMOVE ───────────────────────────── */}
+      {/* This section ALWAYS renders, regardless of whether upcoming schedules exist. */}
+      <div style={{ marginTop: 48 }}>
+
+        {/* Divider */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+          <div style={{ height: 1, background: 'var(--border-subtle)', flex: 1 }} />
+          <div style={{
+            fontSize: 11,
+            fontFamily: 'var(--font-display)',
+            fontWeight: 700,
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+            color: 'var(--text-muted)',
+            flexShrink: 0,
+          }}>
+            Upcoming Schedules
+          </div>
+          <div style={{ height: 1, background: 'var(--border-subtle)', flex: 1 }} />
+        </div>
+
+        {upcomingSchedules.length === 0 ? (
+          <div style={{
+            background: 'var(--bg-surface-1)',
+            border: '1px solid var(--border-default)',
+            borderRadius: 'var(--radius-lg)',
+          }}>
+            <div className="empty-state">
+              <div className="empty-state-title">No upcoming schedules</div>
+              <div className="empty-state-desc">
+                Ask Aegis to build next week&rsquo;s schedule.
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {upcomingSchedules.map(s => template && (
+              <UpcomingCard
+                key={s.id}
+                schedule={s}
+                template={template}
+                expanded={expandedUpcomingId === s.id}
+                onToggle={() => toggleUpcomingExpanded(s.id)}
+                isEditing={editingScheduleId === s.id}
+                removeMode={removeMode}
+                pendingAssignments={pendingAssignments}
+                changesCount={editingScheduleId === s.id ? changesCount : 0}
+                canStartEdit={canStartNewEdit}
+                onStartEdit={() => enterEditMode(s)}
+                onCancelEdit={cancelEditMode}
+                onAddShift={() => setAddShiftOpen(true)}
+                onToggleRemove={() => setRemoveMode(v => !v)}
+                onReview={() => setReviewPanelOpen(true)}
+                onAssignmentChange={setPendingAssignments}
+                onResolveGap={gap => setResolveTarget({ gap, scheduleId: s.id })}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ══ SECTION 3: PAST SCHEDULES ═══════════════════════════════════════ */}
+      {/* ── PAST SCHEDULES — DO NOT REMOVE ───────────────────────────────── */}
       {/* This section ALWAYS renders, regardless of whether past schedules exist. */}
       <div style={{ marginTop: 48 }}>
 
@@ -778,8 +1045,8 @@ export default function SchedulePage() {
                 key={s.id}
                 schedule={s}
                 template={template}
-                expanded={expandedId === s.id}
-                onToggle={() => setExpandedId(expandedId === s.id ? null : s.id)}
+                expanded={expandedHistoryId === s.id}
+                onToggle={() => setExpandedHistoryId(expandedHistoryId === s.id ? null : s.id)}
               />
             ))}
           </div>
@@ -787,9 +1054,9 @@ export default function SchedulePage() {
       </div>
 
       {/* ══ Soteria Review Panel ═════════════════════════════════════════════ */}
-      {reviewPanelOpen && currentSchedule && (
+      {reviewPanelOpen && editingSchedule && (
         <ScheduleReviewPanel
-          schedule={currentSchedule}
+          schedule={editingSchedule}
           companyId={companyId}
           changes={changes}
           originalAssignments={editSnapshot}
@@ -800,11 +1067,11 @@ export default function SchedulePage() {
       )}
 
       {/* ══ Add Shift Panel ══════════════════════════════════════════════════ */}
-      {addShiftOpen && currentSchedule && template && (
+      {addShiftOpen && editingSchedule && template && (
         <AddShiftPanel
           companyId={companyId}
-          weekStart={currentSchedule.week_start}
-          weekEnd={currentSchedule.week_end}
+          weekStart={editingSchedule.week_start}
+          weekEnd={editingSchedule.week_end}
           template={template}
           onClose={() => setAddShiftOpen(false)}
           onAdd={handleAddPending}
@@ -812,12 +1079,12 @@ export default function SchedulePage() {
       )}
 
       {/* ══ Gap Resolver Panel ═══════════════════════════════════════════════ */}
-      {resolveGap && currentSchedule && (
+      {resolveTarget && resolvingSchedule && (
         <GapResolverPanel
-          gap={resolveGap}
-          schedule={currentSchedule}
+          gap={resolveTarget.gap}
+          schedule={resolvingSchedule}
           companyId={companyId}
-          onClose={() => setResolveGap(null)}
+          onClose={() => setResolveTarget(null)}
           onResolved={handleGapResolved}
         />
       )}
