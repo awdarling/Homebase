@@ -3,6 +3,7 @@ import { useCompany } from '@/lib/hooks/useCompany'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import type { Schedule } from '@/lib/types'
 
 interface ActivityEntry {
   id: string
@@ -22,47 +23,6 @@ interface TORequest {
   end_date: string
 }
 
-interface ScheduleAssignment {
-  employee_id: string
-  employee_name: string
-  shift_name: string
-  role: string
-  date: string
-  start_time: string
-  end_time: string
-}
-
-interface ScheduleGap {
-  shift_name: string
-  role: string
-  date: string
-  required: number
-  filled: number
-}
-
-interface Schedule {
-  id: string
-  week_start: string
-  week_end: string
-  status: string
-  generated_by: string
-  approved_at: string | null
-  distributed_at: string | null
-  staffing_report: {
-    totalHours: number
-    totalEstimatedWages: number
-    coverageRate: number
-    topContributors: { name: string; hours: number }[]
-    overtime: { name: string; hours: number }[]
-    notes: string[]
-  } | null
-  data: {
-    assignments: ScheduleAssignment[]
-    gaps: ScheduleGap[]
-    summary: string
-  }
-}
-
 interface Employee {
   id: string
   name: string
@@ -70,11 +30,6 @@ interface Employee {
   contact_email: string | null
   contact_phone: string | null
   individual_wage: number | null
-}
-
-interface WageRate {
-  role: string
-  hourly_rate: number
 }
 
 function timeAgo(dateString: string) {
@@ -92,18 +47,22 @@ function formatDate(d: string) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-function isoDay(d: Date): string {
-  return d.toLocaleDateString('en-CA')
+function isoToday(): string {
+  return new Date().toLocaleDateString('en-CA')
 }
 
-function currentWeekRange(): { start: string; end: string } {
-  const today = new Date()
-  const start = new Date(today)
-  start.setDate(today.getDate() - today.getDay())
-  start.setHours(0, 0, 0, 0)
-  const end = new Date(start)
-  end.setDate(start.getDate() + 6)
-  return { start: isoDay(start), end: isoDay(end) }
+function enumerateDates(weekStart: string, weekEnd: string): { iso: string; weekday: string }[] {
+  const out: { iso: string; weekday: string }[] = []
+  const [sy, sm, sd] = weekStart.split('-').map(Number)
+  const [ey, em, ed] = weekEnd.split('-').map(Number)
+  const cur = new Date(sy, sm - 1, sd)
+  const last = new Date(ey, em - 1, ed)
+  while (cur <= last) {
+    const iso = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`
+    out.push({ iso, weekday: cur.toLocaleDateString('en-US', { weekday: 'short' }) })
+    cur.setDate(cur.getDate() + 1)
+  }
+  return out
 }
 
 function daysBetween(startISO: string, endISO: string): number {
@@ -344,13 +303,10 @@ export default function HomePage() {
   const [outThisWeek, setOutThisWeek] = useState<TORequest[]>([])
   const [currentSchedule, setCurrentSchedule] = useState<Schedule | null>(null)
   const [employees, setEmployees] = useState<Employee[]>([])
-  const [wageRates, setWageRates] = useState<WageRate[]>([])
   const [loading, setLoading] = useState(true)
   const [missingEmail, setMissingEmail] = useState(0)
   const [missingPhone, setMissingPhone] = useState(0)
   const [pendingSwaps, setPendingSwaps] = useState(0)
-
-  const weekRange = currentWeekRange()
 
   useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
 
@@ -358,138 +314,153 @@ export default function HomePage() {
     if (!COMPANY_ID) return
     setLoading(true)
 
-    const [actRes, toRes, outRes, schedRes, empRes, wageRes, swapRes] = await Promise.all([
+    const today = isoToday()
+
+    // Phase 1: schedule (by date range) + everything that doesn't depend on it.
+    const [schedRes, actRes, toRes, empRes, swapRes] = await Promise.all([
+      supabase.from('schedules').select('*').eq('company_id', COMPANY_ID)
+        .lte('week_start', today).gte('week_end', today)
+        .order('generated_at', { ascending: false }).limit(1).maybeSingle(),
       supabase.from('activity_log').select('*').eq('company_id', COMPANY_ID).order('created_at', { ascending: false }).limit(8),
       supabase.from('time_off_requests').select('*, employee:employees(name, primary_role)').eq('company_id', COMPANY_ID).eq('status', 'pending').order('requested_at', { ascending: false }),
-      supabase.from('time_off_requests').select('*, employee:employees(id, name, primary_role)').eq('company_id', COMPANY_ID).eq('status', 'approved').lte('start_date', weekRange.end).gte('end_date', weekRange.start),
-      supabase.from('schedules').select('*').eq('company_id', COMPANY_ID).order('week_start', { ascending: false }).limit(1).maybeSingle(),
       supabase.from('employees').select('id, name, primary_role, contact_email, contact_phone, individual_wage').eq('company_id', COMPANY_ID).eq('active', true),
-      supabase.from('wage_rates').select('role, hourly_rate').eq('company_id', COMPANY_ID),
       supabase.from('swap_requests').select('id', { count: 'exact' }).eq('company_id', COMPANY_ID).eq('status', 'pending_manager'),
     ])
 
+    const schedule = (schedRes.data as Schedule | null) ?? null
+    setCurrentSchedule(schedule)
+
     if (actRes.data) setActivity(actRes.data)
     if (toRes.data) setPendingTO(toRes.data as TORequest[])
-    if (outRes.data) setOutThisWeek(outRes.data as TORequest[])
-    if (schedRes.data) setCurrentSchedule(schedRes.data)
     if (empRes.data) {
       setEmployees(empRes.data)
       setMissingEmail(empRes.data.filter((e) => !e.contact_email).length)
       setMissingPhone(empRes.data.filter((e) => !e.contact_phone).length)
     }
-    if (wageRes.data) setWageRates(wageRes.data)
     if (swapRes.count !== null) setPendingSwaps(swapRes.count)
+
+    // Phase 2: out-this-week uses the schedule's actual week range, not an
+    // independently computed one. Skip if there's no current schedule.
+    if (schedule) {
+      const outRes = await supabase
+        .from('time_off_requests')
+        .select('*, employee:employees(id, name, primary_role)')
+        .eq('company_id', COMPANY_ID)
+        .eq('status', 'approved')
+        .lte('start_date', schedule.week_end)
+        .gte('end_date', schedule.week_start)
+      setOutThisWeek((outRes.data ?? []) as TORequest[])
+    } else {
+      setOutThisWeek([])
+    }
 
     setLoading(false)
   }
 
-  // ── Computed values ──────────────────────────────────────────────────────
+  // ── Schedule-derived values ─────────────────────────────────────────────
+  // Everything below pulls from the current schedule record. If there is no
+  // current schedule, fall back to neutral/empty values — never compute
+  // "this week" independently of what the database says.
 
-  const gaps = currentSchedule?.data?.gaps?.length ?? 0
-  const pendingCount = pendingTO.length
-  const employeeCount = employees.length
+  const assignments = currentSchedule?.data?.assignments ?? []
+  const gapList = currentSchedule?.data?.gaps ?? []
+  const unfilledGaps = gapList.filter(g => g.filled_count < g.required_count)
+  const unfilledGapsCount = unfilledGaps.length
+  const unfilledSlotsTotal = unfilledGaps.reduce((sum, g) => sum + (g.required_count - g.filled_count), 0)
+  const filledSlotsTotal = assignments.length
 
-  // Hours by role from current schedule
+  const estimatedWages = currentSchedule?.staffing_report?.estimated_wages?.total_estimated ?? null
+  const coverageRate = currentSchedule?.staffing_report?.coverage_rate
+    ?? (currentSchedule
+      ? (filledSlotsTotal + unfilledSlotsTotal > 0
+        ? Math.round((filledSlotsTotal / (filledSlotsTotal + unfilledSlotsTotal)) * 100)
+        : 100)
+      : 0)
+
+  // Hours by role from assignments (uses canonical `hours` field).
   const hoursByRole: Record<string, number> = {}
-  if (currentSchedule?.data?.assignments) {
-    for (const a of currentSchedule.data.assignments) {
-      const start = new Date(`2000-01-01T${a.start_time}`)
-      const end = new Date(`2000-01-01T${a.end_time}`)
-      const hrs = (end.getTime() - start.getTime()) / 3600000
-      hoursByRole[a.role] = (hoursByRole[a.role] ?? 0) + hrs
-    }
-  }
+  for (const a of assignments) hoursByRole[a.role] = (hoursByRole[a.role] ?? 0) + (a.hours ?? 0)
 
-  // Hours by employee from current schedule
-  const hoursByEmployee: Record<string, number> = {}
-  if (currentSchedule?.data?.assignments) {
-    for (const a of currentSchedule.data.assignments) {
-      const start = new Date(`2000-01-01T${a.start_time}`)
-      const end = new Date(`2000-01-01T${a.end_time}`)
-      const hrs = (end.getTime() - start.getTime()) / 3600000
-      hoursByEmployee[a.employee_name] = (hoursByEmployee[a.employee_name] ?? 0) + hrs
-    }
-  }
-
-  // Estimated wages from current schedule
-  function getWage(employeeName: string, role: string): number {
-    const emp = employees.find((e) => e.name === employeeName)
-    if (emp?.individual_wage) return emp.individual_wage
-    const rate = wageRates.find((w) => w.role === role)
-    return rate?.hourly_rate ?? 0
-  }
-
-  let estimatedWages = 0
-  if (currentSchedule?.data?.assignments) {
-    for (const a of currentSchedule.data.assignments) {
-      const start = new Date(`2000-01-01T${a.start_time}`)
-      const end = new Date(`2000-01-01T${a.end_time}`)
-      const hrs = (end.getTime() - start.getTime()) / 3600000
-      estimatedWages += hrs * getWage(a.employee_name, a.role)
-    }
-  }
-
-  // Out-this-week employee names — exclude them from contributor rankings
-  const outNames = new Set(outThisWeek.map((r) => r.employee?.name).filter(Boolean) as string[])
-
-  // Build contributor rows for every active employee (zero hours included),
-  // skipping anyone on approved time off this week
-  const contributorRows = employees
-    .filter((e) => !outNames.has(e.name))
-    .map((e) => ({
-      name: e.name,
-      hours: Math.round((hoursByEmployee[e.name] ?? 0) * 10) / 10,
-    }))
-
-  const topContributors = [...contributorRows]
-    .sort((a, b) => b.hours - a.hours)
-    .slice(0, 3)
-
-  const bottomContributors = [...contributorRows]
-    .sort((a, b) => a.hours - b.hours)
-    .slice(0, 3)
-
-  // Role breakdown for bar chart
   const roleChartData = Object.entries(hoursByRole)
     .sort(([, a], [, b]) => b - a)
     .slice(0, 6)
     .map(([label, value]) => ({ label, value: Math.round(value) }))
-
   const maxRoleHours = Math.max(...roleChartData.map((d) => d.value), 1)
 
-  // Gaps by day for gap chart
-  const gapsByDay: Record<string, number> = {}
-  if (currentSchedule?.data?.gaps) {
-    for (const g of currentSchedule.data.gaps) {
-      const day = new Date(g.date).toLocaleDateString('en-US', { weekday: 'short' })
-      gapsByDay[day] = (gapsByDay[day] ?? 0) + 1
-    }
+  // Gap chart — labels come from the schedule's actual week dates, not from
+  // an independently computed Sun-Sat range.
+  const weekDays = currentSchedule
+    ? enumerateDates(currentSchedule.week_start, currentSchedule.week_end)
+    : []
+  const unfilledByDate: Record<string, number> = {}
+  for (const g of unfilledGaps) {
+    unfilledByDate[g.date] = (unfilledByDate[g.date] ?? 0) + (g.required_count - g.filled_count)
   }
-  const gapChartData = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-    .map((label) => ({ label, value: gapsByDay[label] ?? 0 }))
+  const gapChartData = weekDays.map(d => ({ label: d.weekday, value: unfilledByDate[d.iso] ?? 0 }))
 
-  // Coverage rate
-  const totalRequired = currentSchedule?.data?.gaps?.reduce((acc, g) => acc + g.required, 0) ?? 0
-  const totalFilled = currentSchedule?.data?.gaps?.reduce((acc, g) => acc + g.filled, 0) ?? 0
-  const totalSlots = (currentSchedule?.data?.assignments?.length ?? 0) + totalRequired
-  const coverageRate = totalSlots > 0
-    ? Math.round(((currentSchedule?.data?.assignments?.length ?? 0) / totalSlots) * 100)
-    : currentSchedule ? 100 : 0
+  // Top / bottom contributors come straight from staffing_report. If absent,
+  // compute from assignments.
+  const reportTop = currentSchedule?.staffing_report?.top_contributors
+  const reportBottom = currentSchedule?.staffing_report?.bottom_contributors
+  const outNames = new Set(outThisWeek.map((r) => r.employee?.name).filter(Boolean) as string[])
+
+  function computedContributorsFromAssignments() {
+    const hoursByEmployee: Record<string, number> = {}
+    for (const a of assignments) {
+      hoursByEmployee[a.employee_name] = (hoursByEmployee[a.employee_name] ?? 0) + (a.hours ?? 0)
+    }
+    return employees
+      .filter((e) => !outNames.has(e.name))
+      .map((e) => ({ name: e.name, hours: Math.round((hoursByEmployee[e.name] ?? 0) * 10) / 10 }))
+  }
+
+  const topContributors: { name: string; hours: number }[] = !currentSchedule
+    ? []
+    : reportTop
+      ? reportTop.slice(0, 3).map(c => ({ name: c.name, hours: Math.round(c.hours * 10) / 10 }))
+      : [...computedContributorsFromAssignments()].sort((a, b) => b.hours - a.hours).slice(0, 3)
+
+  const bottomContributors: { name: string; hours: number }[] = !currentSchedule
+    ? []
+    : reportBottom
+      ? reportBottom.slice(0, 3).map(c => ({ name: c.name, hours: Math.round(c.hours * 10) / 10 }))
+      : [...computedContributorsFromAssignments()].sort((a, b) => a.hours - b.hours).slice(0, 3)
+
+  const pendingCount = pendingTO.length
+  const employeeCount = employees.length
 
   // Warnings
   const warnings: { label: string; desc: string; action: string; path: string; severity: 'high' | 'medium' | 'low' }[] = []
   if (pendingCount > 0) warnings.push({ label: `${pendingCount} pending time-off request${pendingCount > 1 ? 's' : ''}`, desc: 'Awaiting your decision', action: 'Review', path: '/data', severity: 'high' })
   if (pendingSwaps > 0) warnings.push({ label: `${pendingSwaps} swap${pendingSwaps > 1 ? 's' : ''} awaiting approval`, desc: 'Employees are waiting', action: 'Review', path: '/data', severity: 'high' })
-  if (gaps > 0) warnings.push({ label: `${gaps} schedule gap${gaps > 1 ? 's' : ''}`, desc: 'Unfilled shifts this week', action: 'View Schedule', path: '/schedule', severity: 'medium' })
+  if (unfilledGapsCount > 0) warnings.push({ label: `${unfilledGapsCount} schedule gap${unfilledGapsCount > 1 ? 's' : ''}`, desc: 'Unfilled shifts this week', action: 'View Schedule', path: '/schedule', severity: 'medium' })
   if (missingEmail > 0) warnings.push({ label: `${missingEmail} employee${missingEmail > 1 ? 's' : ''} missing email`, desc: 'Aegis cannot distribute schedules to them', action: 'Fix in Data', path: '/data', severity: 'medium' })
   if (missingPhone > 0) warnings.push({ label: `${missingPhone} employee${missingPhone > 1 ? 's' : ''} missing phone`, desc: 'Aegis cannot send SMS notifications', action: 'Fix in Data', path: '/data', severity: 'low' })
   if (!currentSchedule) warnings.push({ label: 'No schedule yet', desc: 'Email or text Aegis to build this week\'s schedule', action: 'View Schedule', path: '/schedule', severity: 'low' })
 
-  // System status
-  let statusLabel = 'Ready'
-  let statusClass = 'badge-ready'
-  if (warnings.some((w) => w.severity === 'high')) { statusLabel = 'Action Required'; statusClass = 'badge-action' }
-  else if (warnings.some((w) => w.severity === 'medium')) { statusLabel = 'Awaiting Review'; statusClass = 'badge-review' }
+  // System status — reflects the current schedule's state, not the warning mix.
+  let statusLabel: string
+  let statusClass: string
+  let statusStyle: React.CSSProperties | undefined
+  if (!currentSchedule) {
+    statusLabel = 'No Schedule'
+    statusClass = 'badge'
+    statusStyle = {
+      background: 'var(--bg-surface-3)',
+      color: 'var(--text-muted)',
+      border: '1px solid var(--border-default)',
+    }
+  } else if ((currentSchedule.status === 'published' || currentSchedule.status === 'approved') && unfilledGapsCount > 0) {
+    statusLabel = 'Coverage Gap'
+    statusClass = 'badge badge-blocked'
+  } else if (currentSchedule.status === 'published' || currentSchedule.status === 'approved') {
+    statusLabel = 'Ready'
+    statusClass = 'badge badge-ready'
+  } else {
+    // status === 'draft'
+    statusLabel = 'Awaiting Review'
+    statusClass = 'badge badge-review'
+  }
 
   if (loading) return (
     <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
@@ -505,7 +476,7 @@ export default function HomePage() {
             <div className="page-title">Operations Home</div>
             <div className="page-subtitle">Current system state and this week's schedule intelligence</div>
           </div>
-          <span className={`badge ${statusClass}`}>
+          <span className={statusClass} style={statusStyle}>
             <span className="badge-dot" />
             {statusLabel}
           </span>
@@ -516,9 +487,9 @@ export default function HomePage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 20 }}>
         {[
           { label: 'Active Employees', value: String(employeeCount), sub: 'on record', accent: false },
-          { label: 'Est. Labor This Week', value: estimatedWages > 0 ? formatCurrency(estimatedWages) : '—', sub: currentSchedule ? 'from current schedule' : 'no schedule yet', accent: false },
+          { label: 'Est. Labor This Week', value: estimatedWages !== null ? formatCurrency(estimatedWages) : '—', sub: currentSchedule ? 'from current schedule' : 'no schedule yet', accent: false },
           { label: 'Pending Time-Off', value: String(pendingCount), sub: pendingCount > 0 ? 'awaiting decision' : 'all clear', accent: pendingCount > 0 },
-          { label: 'Schedule Gaps', value: String(gaps), sub: gaps > 0 ? 'unfilled shifts' : currentSchedule ? 'fully covered' : 'no schedule', accent: gaps > 0 },
+          { label: 'Schedule Gaps', value: currentSchedule ? String(unfilledGapsCount) : '—', sub: !currentSchedule ? 'no schedule' : unfilledGapsCount > 0 ? 'unfilled shifts' : 'fully covered', accent: unfilledGapsCount > 0 },
           { label: 'Pending Swaps', value: String(pendingSwaps), sub: pendingSwaps > 0 ? 'need approval' : 'none pending', accent: pendingSwaps > 0 },
         ].map((stat) => (
           <div key={stat.label} style={{
@@ -609,11 +580,11 @@ export default function HomePage() {
             <div style={{ width: '100%' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
                 <span>Filled slots</span>
-                <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{currentSchedule?.data?.assignments?.length ?? 0}</span>
+                <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{filledSlotsTotal}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)' }}>
                 <span>Open gaps</span>
-                <span style={{ color: gaps > 0 ? 'var(--status-blocked-text)' : 'var(--text-muted)', fontWeight: 500 }}>{gaps}</span>
+                <span style={{ color: unfilledSlotsTotal > 0 ? 'var(--status-blocked-text)' : 'var(--text-muted)', fontWeight: 500 }}>{unfilledSlotsTotal}</span>
               </div>
             </div>
           </div>
@@ -640,7 +611,7 @@ export default function HomePage() {
             />
             {roleChartData.length === 0 && (
               <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', paddingBottom: 8 }}>
-                Will populate when Aegis builds a schedule
+                {currentSchedule ? 'No schedule this week' : "Ask Aegis to build this week's schedule"}
               </div>
             )}
           </div>
@@ -661,9 +632,9 @@ export default function HomePage() {
               color="var(--status-blocked-text)"
               height={100}
             />
-            {gaps === 0 && (
+            {unfilledGapsCount === 0 && (
               <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', paddingBottom: 8 }}>
-                {currentSchedule ? 'No gaps this week' : 'Will populate when Aegis builds a schedule'}
+                {currentSchedule ? 'No gaps this week' : "Ask Aegis to build this week's schedule"}
               </div>
             )}
           </div>
@@ -671,11 +642,13 @@ export default function HomePage() {
       </div>
 
       {/* ── Out This Week ── */}
-      <OutThisWeekCard
-        outRequests={outThisWeek}
-        weekRange={weekRange}
-        totalActive={employees.length}
-      />
+      {currentSchedule && (
+        <OutThisWeekCard
+          outRequests={outThisWeek}
+          weekRange={{ start: currentSchedule.week_start, end: currentSchedule.week_end }}
+          totalActive={employees.length}
+        />
+      )}
 
       {/* ── Contributors + Activity ── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: 12 }}>
@@ -684,14 +657,14 @@ export default function HomePage() {
           title="Top Contributors This Week"
           rows={topContributors}
           color="var(--accent)"
-          empty="Will populate when Aegis builds a schedule"
+          empty={currentSchedule ? 'No contributor data this week' : "Ask Aegis to build this week's schedule"}
         />
 
         <ContributorsCard
           title="Bottom Contributors This Week"
           rows={bottomContributors}
           color="#f97316"
-          empty="Will populate when Aegis builds a schedule"
+          empty={currentSchedule ? 'No contributor data this week' : "Ask Aegis to build this week's schedule"}
         />
 
         {/* Activity */}
