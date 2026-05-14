@@ -2,6 +2,8 @@ import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
+console.log('[soteria] API key present:', !!process.env.ANTHROPIC_API_KEY)
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
 const supabase = createClient(
@@ -10,6 +12,7 @@ const supabase = createClient(
 )
 
 export async function POST(req: NextRequest) {
+  try {
   const body = await req.json() as {
     company_id: string
     schedule_id: string
@@ -136,4 +139,13 @@ If there are no issues, return valid: true, empty arrays for issues/suggestions,
   }
 
   return NextResponse.json(result)
+  } catch (err) {
+    console.error('[soteria] error:', err)
+    return NextResponse.json({
+      valid: false,
+      issues: [],
+      suggestions: [],
+      summary: 'Soteria encountered an error. Check Vercel logs for details.',
+    })
+  }
 }
