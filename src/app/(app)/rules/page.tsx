@@ -1,8 +1,10 @@
 'use client'
 import { useCompany } from '@/lib/hooks/useCompany'
+import { useQuria } from '@/lib/hooks/useQuria'
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { logActivity as logActivityFn } from '@/lib/activity'
 
 function TrashIcon() {
   return (
@@ -36,7 +38,8 @@ const CATEGORIES: { id: string; label: string; description: string }[] = [
 ]
 
 export default function RulesPage() {
-  const { company } = useCompany()
+  const { company, user } = useCompany()
+  const { isQuria } = useQuria()
   const COMPANY_ID = company?.id ?? ''
   const [policies, setPolicies] = useState<Policy[]>([])
   const [loading, setLoading] = useState(true)
@@ -65,13 +68,15 @@ export default function RulesPage() {
   }
 
   async function logActivity(action: string, summary: string, entityId?: string) {
-    await supabase.from('activity_log').insert({
+    await logActivityFn({
+      supabase,
       company_id: COMPANY_ID,
-      actor: 'manager',
       action,
       entity_type: 'policy',
-      entity_id: entityId ?? null,
+      entity_id: entityId,
       summary,
+      isQuria,
+      actorName: user?.name,
     })
   }
 

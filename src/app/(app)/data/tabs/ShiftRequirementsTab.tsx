@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useCompany } from '@/lib/hooks/useCompany'
+import { useQuria } from '@/lib/hooks/useQuria'
+import { logActivity as logActivityFn } from '@/lib/activity'
 import type { ShiftType, ShiftRequirement } from '@/lib/types'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -37,7 +39,8 @@ type RequirementModal =
   | { mode: 'edit'; requirement: ShiftRequirement }
 
 export default function ShiftRequirementsTab() {
-  const { company } = useCompany()
+  const { company, user } = useCompany()
+  const { isQuria } = useQuria()
   const COMPANY_ID = company?.id ?? ''
   const supabase = createClient()
 
@@ -72,13 +75,15 @@ export default function ShiftRequirementsTab() {
   }
 
   async function logActivity(action: string, summary: string, entityId?: string) {
-    await supabase.from('activity_log').insert({
+    await logActivityFn({
+      supabase,
       company_id: COMPANY_ID,
-      actor: 'manager',
       action,
       entity_type: 'shift',
-      entity_id: entityId ?? null,
+      entity_id: entityId,
       summary,
+      isQuria,
+      actorName: user?.name,
     })
   }
 

@@ -1,8 +1,10 @@
 'use client'
 import { useCompany } from '@/lib/hooks/useCompany'
+import { useQuria } from '@/lib/hooks/useQuria'
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { logActivity as logActivityFn } from '@/lib/activity'
 
 function TrashIcon() {
   return (
@@ -28,7 +30,8 @@ interface Conflict {
 }
 
 export default function ConflictsTab() {
-  const { company } = useCompany()
+  const { company, user } = useCompany()
+  const { isQuria } = useQuria()
   const COMPANY_ID = company?.id ?? ''
   const [conflicts, setConflicts] = useState<Conflict[]>([])
   const [employees, setEmployees] = useState<{ id: string; name: string; primary_role: string }[]>([])
@@ -68,13 +71,15 @@ export default function ConflictsTab() {
   }
 
   async function logActivity(action: string, summary: string, entityId?: string) {
-    await supabase.from('activity_log').insert({
+    await logActivityFn({
+      supabase,
       company_id: COMPANY_ID,
-      actor: 'manager',
       action,
       entity_type: 'conflict',
-      entity_id: entityId ?? null,
+      entity_id: entityId,
       summary,
+      isQuria,
+      actorName: user?.name,
     })
   }
 

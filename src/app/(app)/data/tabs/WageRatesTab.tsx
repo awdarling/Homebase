@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useCompany } from '@/lib/hooks/useCompany'
+import { useQuria } from '@/lib/hooks/useQuria'
+import { logActivity as logActivityFn } from '@/lib/activity'
 
 function TrashIcon() {
   return (
@@ -24,7 +26,8 @@ interface WageRate {
 }
 
 export default function WageRatesTab() {
-  const { company } = useCompany()
+  const { company, user } = useCompany()
+  const { isQuria } = useQuria()
   const COMPANY_ID = company?.id ?? ''
   const supabase = createClient()
 
@@ -51,13 +54,15 @@ export default function WageRatesTab() {
   }
 
   async function logActivity(action: string, summary: string, entityId?: string) {
-    await supabase.from('activity_log').insert({
+    await logActivityFn({
+      supabase,
       company_id: COMPANY_ID,
-      actor: 'manager',
       action,
       entity_type: 'wage_rate',
-      entity_id: entityId ?? null,
+      entity_id: entityId,
       summary,
+      isQuria,
+      actorName: user?.name,
     })
   }
 

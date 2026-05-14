@@ -1,8 +1,10 @@
 'use client'
 import { useCompany } from '@/lib/hooks/useCompany'
+import { useQuria } from '@/lib/hooks/useQuria'
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { logActivity as logActivityFn } from '@/lib/activity'
 
 function TrashIcon() {
   return (
@@ -59,7 +61,8 @@ function AegisBadge({ rec }: { rec: 'approve' | 'deny' | 'neutral' }) {
 }
 
 export default function TimeOffTab() {
-  const { company } = useCompany()
+  const { company, user } = useCompany()
+  const { isQuria } = useQuria()
   const COMPANY_ID = company?.id ?? ''
   const [requests, setRequests] = useState<TORequest[]>([])
   const [loading, setLoading] = useState(true)
@@ -96,13 +99,15 @@ export default function TimeOffTab() {
   }
 
   async function logActivity(action: string, summary: string, entityId?: string) {
-    await supabase.from('activity_log').insert({
+    await logActivityFn({
+      supabase,
       company_id: COMPANY_ID,
-      actor: 'manager',
       action,
       entity_type: 'time_off_request',
-      entity_id: entityId ?? null,
+      entity_id: entityId,
       summary,
+      isQuria,
+      actorName: user?.name,
     })
   }
 

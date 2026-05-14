@@ -203,6 +203,7 @@ export interface ActivityLog {
   company_id: string
   actor: 'aegis' | 'manager' | 'soteria' | 'system' | 'quria_admin'
   actor_name: string | null
+  actor_avatar_url: string | null
   action: string
   entity_type: string | null
   entity_id: string | null
