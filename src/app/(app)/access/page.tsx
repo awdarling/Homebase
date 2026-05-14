@@ -221,25 +221,29 @@ function HomebaseSection({
     setSaving(true)
     setError('')
 
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email: form.email.trim(),
-      email_confirm: true,
-      user_metadata: { name: form.name.trim() },
-    })
-
-    if (authError || !authData.user) {
-      setError('Failed to create user. Email may already exist.')
+    let result: { success?: boolean; error?: string }
+    try {
+      const res = await fetch('/api/create-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: form.email.trim(),
+          name: form.name.trim(),
+          role: form.role,
+          company_id: companyId,
+        }),
+      })
+      result = await res.json() as { success?: boolean; error?: string }
+      if (!res.ok || !result.success) {
+        setError(result.error ?? `Failed to create user (HTTP ${res.status}).`)
+        setSaving(false)
+        return
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reach the server.')
       setSaving(false)
       return
     }
-
-    await supabase.from('users').insert({
-      id: authData.user.id,
-      company_id: companyId,
-      email: form.email.trim(),
-      name: form.name.trim(),
-      role: form.role,
-    })
 
     setSaving(false)
     setShowForm(false)
