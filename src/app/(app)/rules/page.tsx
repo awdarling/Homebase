@@ -77,6 +77,7 @@ export default function RulesPage() {
       summary,
       isQuria,
       actorName: user?.name,
+      actorAvatarUrl: user?.avatar_url,
     })
   }
 

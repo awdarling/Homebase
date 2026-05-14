@@ -108,6 +108,7 @@ export default function TimeOffTab() {
       summary,
       isQuria,
       actorName: user?.name,
+      actorAvatarUrl: user?.avatar_url,
     })
   }
 

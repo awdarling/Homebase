@@ -76,6 +76,7 @@ export default function RolesTab() {
       summary,
       isQuria,
       actorName: user?.name,
+      actorAvatarUrl: user?.avatar_url,
     })
   }
 

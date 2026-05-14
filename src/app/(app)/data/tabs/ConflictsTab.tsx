@@ -80,6 +80,7 @@ export default function ConflictsTab() {
       summary,
       isQuria,
       actorName: user?.name,
+      actorAvatarUrl: user?.avatar_url,
     })
   }
 

@@ -114,6 +114,7 @@ export default function SpecialNotesTab() {
       summary,
       isQuria,
       actorName: user?.name,
+      actorAvatarUrl: user?.avatar_url,
     })
   }
 

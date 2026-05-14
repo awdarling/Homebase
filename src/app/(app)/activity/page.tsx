@@ -12,6 +12,7 @@ interface ActivityEntry {
   id: string
   actor: ActorKey
   actor_name: string | null
+  actor_avatar_url: string | null
   action: string
   entity_type: string | null
   summary: string
@@ -64,7 +65,11 @@ interface ActorPresentation {
   filterKey: 'aegis' | 'soteria' | 'manager' | 'quria'
 }
 
-function presentActor(entry: ActivityEntry, fallbackManagerName: string | null): ActorPresentation {
+function presentActor(
+  entry: ActivityEntry,
+  fallbackManagerName: string | null,
+  userAvatarByName: Record<string, string>,
+): ActorPresentation {
   const actor = entry.actor
 
   // Soteria — internal setup/system assistant. System events are also Soteria.
@@ -95,24 +100,28 @@ function presentActor(entry: ActivityEntry, fallbackManagerName: string | null):
 
   if (actor === 'quria_admin') {
     const display = entry.actor_name || 'Quria'
+    const avatar = entry.actor_avatar_url || (entry.actor_name ? userAvatarByName[entry.actor_name] : undefined)
     return {
       label: display,
       initials: 'Q',
       color: '#f97316',
       bg: 'rgba(249,115,22,0.1)',
       border: 'rgba(249,115,22,0.25)',
+      iconUrl: avatar || undefined,
       filterKey: 'quria',
     }
   }
 
   // manager
   const name = entry.actor_name || fallbackManagerName || 'Manager'
+  const avatar = entry.actor_avatar_url || (entry.actor_name ? userAvatarByName[entry.actor_name] : undefined)
   return {
     label: name,
     initials: name === 'Manager' ? 'MG' : nameInitials(name),
     color: '#9ca3af',
     bg: 'rgba(156,163,175,0.1)',
     border: 'rgba(156,163,175,0.25)',
+    iconUrl: avatar || undefined,
     filterKey: 'manager',
   }
 }
@@ -122,6 +131,7 @@ export default function ActivityPage() {
   const COMPANY_ID = company?.id ?? ''
   const [entries, setEntries] = useState<ActivityEntry[]>([])
   const [fallbackManagerName, setFallbackManagerName] = useState<string | null>(null)
+  const [userAvatarByName, setUserAvatarByName] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'aegis' | 'soteria' | 'manager' | 'quria'>('all')
 
@@ -149,14 +159,38 @@ export default function ActivityPage() {
         .limit(1),
     ])
 
-    if (activityData) setEntries(activityData as ActivityEntry[])
+    const typedActivity = (activityData ?? []) as ActivityEntry[]
+    setEntries(typedActivity)
     setFallbackManagerName(managerData?.[0]?.name ?? null)
+
+    const namesNeedingAvatars = Array.from(
+      new Set(
+        typedActivity
+          .filter((e) => (e.actor === 'manager' || e.actor === 'quria_admin') && !e.actor_avatar_url && e.actor_name)
+          .map((e) => e.actor_name as string),
+      ),
+    )
+
+    if (namesNeedingAvatars.length > 0) {
+      const { data: userRows } = await supabase
+        .from('users')
+        .select('name, avatar_url')
+        .in('name', namesNeedingAvatars)
+      const map: Record<string, string> = {}
+      ;(userRows ?? []).forEach((u: { name: string | null; avatar_url: string | null }) => {
+        if (u.name && u.avatar_url) map[u.name] = u.avatar_url
+      })
+      setUserAvatarByName(map)
+    } else {
+      setUserAvatarByName({})
+    }
+
     setLoading(false)
   }
 
   const filtered = entries.filter((e) => {
     if (filter === 'all') return true
-    const key = presentActor(e, fallbackManagerName).filterKey
+    const key = presentActor(e, fallbackManagerName, userAvatarByName).filterKey
     return key === filter
   })
 
@@ -248,7 +282,7 @@ export default function ActivityPage() {
               overflow: 'hidden',
             }}>
               {dayEntries.map((entry, i) => {
-                const p = presentActor(entry, fallbackManagerName)
+                const p = presentActor(entry, fallbackManagerName, userAvatarByName)
                 return (
                   <div key={entry.id} style={{
                     display: 'flex',

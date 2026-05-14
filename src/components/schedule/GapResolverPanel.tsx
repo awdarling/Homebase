@@ -252,6 +252,7 @@ export default function GapResolverPanel({
       metadata: { employee_id: assignment.employee_id, shift_name: gap.shift_name, role: assignment.role, date: gap.date },
       isQuria,
       actorName: user?.name,
+      actorAvatarUrl: user?.avatar_url,
     })
 
     fetch('/api/notify-assignment', {

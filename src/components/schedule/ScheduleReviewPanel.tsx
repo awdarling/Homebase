@@ -246,6 +246,7 @@ export default function ScheduleReviewPanel({
         metadata: { changes_count: changes.length, changes },
         isQuria,
         actorName: user?.name,
+        actorAvatarUrl: user?.avatar_url,
       })
 
       onSaved((saved as Schedule) ?? { ...schedule, data: newData, staffing_report: newReport })
