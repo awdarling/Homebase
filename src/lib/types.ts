@@ -241,6 +241,21 @@ export interface WageRate {
   hourly_rate: number
 }
 
+export interface WageRow {
+  employee_id: string
+  employee_name: string
+  primary_role: string
+  shifts: Array<{
+    shift_name: string
+    date: string
+    hours: number
+  }>
+  total_hours: number
+  hourly_rate: number | null
+  estimated_pay: number | null
+  rate_source: 'individual' | 'role' | 'unknown'
+}
+
 export interface TimeClockIntegration {
   id: string
   company_id: string

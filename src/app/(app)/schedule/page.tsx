@@ -10,6 +10,7 @@ import GapResolverPanel from '@/components/schedule/GapResolverPanel'
 import TemplateEditorPanel from '@/components/schedule/TemplateEditorPanel'
 import ScheduleReviewPanel, { type ScheduleChange } from '@/components/schedule/ScheduleReviewPanel'
 import AddShiftPanel from '@/components/schedule/AddShiftPanel'
+import WageBreakdownPanel from '@/components/schedule/WageBreakdownPanel'
 import type { Schedule, ScheduleAssignment, ScheduleGap, ScheduleTemplate } from '@/lib/types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -523,6 +524,7 @@ function ClockIcon() {
 interface UpcomingCardProps {
   schedule: Schedule
   template: ScheduleTemplate
+  companyId: string
   expanded: boolean
   onToggle: () => void
   isEditing: boolean
@@ -542,6 +544,7 @@ interface UpcomingCardProps {
 function UpcomingCard({
   schedule,
   template,
+  companyId,
   expanded,
   onToggle,
   isEditing,
@@ -679,6 +682,12 @@ function UpcomingCard({
             removeMode={isEditing ? removeMode : undefined}
             pendingAssignments={isEditing ? pendingAssignments : undefined}
             onAssignmentChange={isEditing ? onAssignmentChange : undefined}
+          />
+
+          {/* Wage breakdown — reflects pendingAssignments live while editing */}
+          <WageBreakdownPanel
+            assignments={isEditing ? pendingAssignments : (schedule.data?.assignments ?? [])}
+            companyId={companyId}
           />
         </div>
       )}
@@ -921,6 +930,12 @@ export default function SchedulePage() {
                 onAssignmentChange={isEditingCurrent ? setPendingAssignments : undefined}
               />
             )}
+
+            {/* Wage breakdown — live while editing the current week */}
+            <WageBreakdownPanel
+              assignments={isEditingCurrent ? pendingAssignments : (currentSchedule.data?.assignments ?? [])}
+              companyId={companyId}
+            />
           </div>
         )}
       </div>
@@ -967,6 +982,7 @@ export default function SchedulePage() {
                 key={s.id}
                 schedule={s}
                 template={template}
+                companyId={companyId}
                 expanded={expandedUpcomingId === s.id}
                 onToggle={() => toggleUpcomingExpanded(s.id)}
                 isEditing={editingScheduleId === s.id}
