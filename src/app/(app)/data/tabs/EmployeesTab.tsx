@@ -42,6 +42,25 @@ function TrashIcon() {
   )
 }
 
+function VeteranBadge() {
+  return (
+    <span style={{
+      display: 'inline-block',
+      padding: '1px 7px',
+      borderRadius: 'var(--radius-pill)',
+      fontSize: 9,
+      fontWeight: 700,
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase',
+      background: 'rgba(220, 38, 38, 0.1)',
+      border: '1px solid rgba(220, 38, 38, 0.25)',
+      color: '#dc2626',
+    }}>
+      Veteran
+    </span>
+  )
+}
+
 function RoleBadge({ role, roles }: { role: string; roles: Role[] }) {
   const match = roles.find((r) => r.name === role)
   const color = match?.color ?? '#6b7280'
@@ -96,6 +115,7 @@ export default function EmployeesTab() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState('all')
+  const [veteransOnly, setVeteransOnly] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null)
   const [form, setForm] = useState({
@@ -106,6 +126,7 @@ export default function EmployeesTab() {
     contact_phone: '',
     contact_email: '',
     individual_wage: '',
+    is_veteran: false,
   })
   const [availForm, setAvailForm] = useState<AvailabilityRow[]>(DEFAULT_AVAILABILITY)
   const [saving, setSaving] = useState(false)
@@ -153,10 +174,13 @@ export default function EmployeesTab() {
 
   const roleNames = ['all', ...roles.map((r) => r.name)]
 
+  const veteranCount = employees.filter((e) => e.is_veteran).length
+
   const filtered = employees.filter((e) => {
     const matchSearch = e.name.toLowerCase().includes(search.toLowerCase())
     const matchRole = roleFilter === 'all' || e.primary_role === roleFilter
-    return matchSearch && matchRole
+    const matchVeteran = !veteransOnly || e.is_veteran
+    return matchSearch && matchRole && matchVeteran
   })
 
   function buildAvailForm(empId: string): AvailabilityRow[] {
@@ -182,6 +206,7 @@ export default function EmployeesTab() {
       contact_phone: '',
       contact_email: '',
       individual_wage: '',
+      is_veteran: false,
     })
     setAvailForm(DEFAULT_AVAILABILITY)
     setError('')
@@ -198,6 +223,7 @@ export default function EmployeesTab() {
       contact_phone: emp.contact_phone ?? '',
       contact_email: emp.contact_email ?? '',
       individual_wage: emp.individual_wage != null ? String(emp.individual_wage) : '',
+      is_veteran: !!emp.is_veteran,
     })
     setAvailForm(buildAvailForm(emp.id))
     setError('')
@@ -250,14 +276,25 @@ export default function EmployeesTab() {
       contact_phone: form.contact_phone.trim() || null,
       contact_email: form.contact_email.trim() || null,
       individual_wage: form.individual_wage !== '' ? parseFloat(form.individual_wage) : null,
+      is_veteran: form.is_veteran,
       active: true,
     }
 
     let empId = editingEmployee?.id
 
     if (editingEmployee) {
+      const veteranChanged = !!editingEmployee.is_veteran !== form.is_veteran
       await supabase.from('employees').update(payload).eq('id', editingEmployee.id)
       await logActivity('employee_updated', `Updated employee: ${form.name}`, editingEmployee.id)
+      if (veteranChanged) {
+        await logActivity(
+          'employee_updated',
+          form.is_veteran
+            ? `Marked ${form.name.trim()} as a veteran`
+            : `Removed veteran status from ${form.name.trim()}`,
+          editingEmployee.id,
+        )
+      }
     } else {
       const { data } = await supabase.from('employees').insert(payload).select().single()
       empId = data?.id
@@ -332,6 +369,24 @@ export default function EmployeesTab() {
             <option key={r} value={r}>{r === 'all' ? 'All roles' : r}</option>
           ))}
         </select>
+        <button
+          type="button"
+          onClick={() => setVeteransOnly((v) => !v)}
+          style={{
+            padding: '5px 12px',
+            borderRadius: 'var(--radius-pill)',
+            border: '1px solid',
+            fontSize: 12,
+            fontFamily: 'var(--font-body)',
+            fontWeight: 500,
+            cursor: 'pointer',
+            background: veteransOnly ? 'var(--accent-dim)' : 'var(--bg-surface-3)',
+            borderColor: veteransOnly ? 'var(--accent-border)' : 'var(--border-default)',
+            color: veteransOnly ? 'var(--accent)' : 'var(--text-muted)',
+          }}
+        >
+          Veterans ({veteranCount})
+        </button>
         <div style={{ marginLeft: 'auto' }}>
           <button className="btn btn-primary btn-sm" onClick={openAdd}>
             + Add Employee
@@ -382,7 +437,10 @@ export default function EmployeesTab() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <InitialsAvatar name={emp.name} role={emp.primary_role} roles={roles} />
                       <div>
-                        <div style={{ color: 'var(--text-primary)', fontSize: 13 }}>{emp.name}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ color: 'var(--text-primary)', fontSize: 13 }}>{emp.name}</span>
+                          {emp.is_veteran && <VeteranBadge />}
+                        </div>
                         <div style={{ fontSize: 10, color: emp.active ? 'var(--status-ready-text)' : 'var(--text-disabled)', marginTop: 1 }}>
                           {emp.active ? 'Active' : 'Inactive'}
                         </div>
@@ -570,6 +628,53 @@ export default function EmployeesTab() {
                   <label className="form-label">Phone <span style={{ color: 'var(--status-blocked-text)', fontWeight: 400 }}>*</span></label>
                   <input className="form-input" value={form.contact_phone} onChange={(e) => setForm((f) => ({ ...f, contact_phone: e.target.value }))} placeholder="Required" />
                 </div>
+              </div>
+
+              <div style={{
+                borderTop: '1px solid var(--border-subtle)',
+                paddingTop: 16,
+                marginTop: 4,
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 16,
+              }}>
+                <div style={{ flex: 1 }}>
+                  <div className="form-label" style={{ marginBottom: 4 }}>Veteran</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+                    This employee is a veteran. Managers can use this to prioritize veterans for specific shifts or holidays.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={form.is_veteran}
+                  onClick={() => setForm((f) => ({ ...f, is_veteran: !f.is_veteran }))}
+                  style={{
+                    position: 'relative',
+                    width: 38,
+                    height: 22,
+                    borderRadius: 11,
+                    background: form.is_veteran ? '#dc2626' : 'var(--bg-surface-3)',
+                    border: `1px solid ${form.is_veteran ? 'rgba(220,38,38,0.5)' : 'var(--border-default)'}`,
+                    cursor: 'pointer',
+                    padding: 0,
+                    flexShrink: 0,
+                    marginTop: 2,
+                    transition: 'background 150ms, border-color 150ms',
+                  }}
+                >
+                  <span style={{
+                    position: 'absolute',
+                    top: 2,
+                    left: form.is_veteran ? 18 : 2,
+                    width: 16,
+                    height: 16,
+                    borderRadius: '50%',
+                    background: 'white',
+                    transition: 'left 150ms',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.25)',
+                  }} />
+                </button>
               </div>
 
               <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 16, marginTop: 4 }}>
