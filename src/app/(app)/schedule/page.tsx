@@ -11,6 +11,7 @@ import TemplateEditorPanel from '@/components/schedule/TemplateEditorPanel'
 import ScheduleReviewPanel, { type ScheduleChange } from '@/components/schedule/ScheduleReviewPanel'
 import AddShiftPanel from '@/components/schedule/AddShiftPanel'
 import WageBreakdownPanel from '@/components/schedule/WageBreakdownPanel'
+import ManualScheduleBuilder from '@/components/schedule/ManualScheduleBuilder'
 import type { Schedule, ScheduleAssignment, ScheduleGap, ScheduleTemplate } from '@/lib/types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -714,6 +715,7 @@ export default function SchedulePage() {
   // Expansion state
   const [expandedUpcomingId, setExpandedUpcomingId] = useState<string | null>(null)
   const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null)
+  const [manualBuilderOpen, setManualBuilderOpen] = useState(false)
   const [search, setSearch] = useState('')
 
   // Modals / panels
@@ -1068,6 +1070,44 @@ export default function SchedulePage() {
           </div>
         )}
       </div>
+
+      {/* ══ Manual builder trigger ═══════════════════════════════════════════ */}
+      <div style={{
+        textAlign: 'center',
+        padding: '48px 0 24px',
+        borderTop: '1px solid var(--border-subtle)',
+        marginTop: 48,
+      }}>
+        <button
+          onClick={() => setManualBuilderOpen(true)}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            fontSize: 12,
+            color: 'var(--text-muted)',
+            textDecoration: 'underline',
+            fontFamily: 'var(--font-body)',
+          }}
+        >
+          Wanna stone-age it? Build a schedule manually here
+        </button>
+      </div>
+
+      {manualBuilderOpen && (
+        <ManualScheduleBuilder
+          companyId={companyId}
+          onClose={() => setManualBuilderOpen(false)}
+          onSaved={(schedule) => {
+            setAllSchedules(prev => {
+              const exists = prev.find(s => s.id === schedule.id)
+              if (exists) return prev.map(s => s.id === schedule.id ? schedule : s)
+              return [...prev, schedule]
+            })
+            setManualBuilderOpen(false)
+          }}
+        />
+      )}
 
       {/* ══ Soteria Review Panel ═════════════════════════════════════════════ */}
       {reviewPanelOpen && editingSchedule && (
