@@ -408,10 +408,11 @@ export default function EmployeesTab() {
         <table className="data-table" style={{ tableLayout: 'fixed', width: '100%' }}>
           <colgroup>
             <col style={{ width: '16%' }} />
+            <col style={{ width: '7%' }} />
             <col style={{ width: '10%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '14%' }} />
             <col style={{ width: '13%' }} />
-            <col style={{ width: '17%' }} />
-            <col style={{ width: '16%' }} />
             <col style={{ width: '13%' }} />
             <col style={{ width: '8%' }} />
             <col style={{ width: '7%' }} />
@@ -419,6 +420,7 @@ export default function EmployeesTab() {
           <thead>
             <tr>
               <th>Employee</th>
+              <th>Veteran</th>
               <th>Role</th>
               <th>Also Qualifies</th>
               <th>Availability</th>
@@ -437,15 +439,15 @@ export default function EmployeesTab() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <InitialsAvatar name={emp.name} role={emp.primary_role} roles={roles} />
                       <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ color: 'var(--text-primary)', fontSize: 13 }}>{emp.name}</span>
-                          {emp.is_veteran && <VeteranBadge />}
-                        </div>
+                        <div style={{ color: 'var(--text-primary)', fontSize: 13 }}>{emp.name}</div>
                         <div style={{ fontSize: 10, color: emp.active ? 'var(--status-ready-text)' : 'var(--text-disabled)', marginTop: 1 }}>
                           {emp.active ? 'Active' : 'Inactive'}
                         </div>
                       </div>
                     </div>
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    {emp.is_veteran && <VeteranBadge />}
                   </td>
                   <td><RoleBadge role={emp.primary_role} roles={roles} /></td>
                   <td>
