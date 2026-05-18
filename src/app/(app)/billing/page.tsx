@@ -1,30 +1,16 @@
 'use client'
 import { useCompany } from '@/lib/hooks/useCompany'
+import { useQuria } from '@/lib/hooks/useQuria'
+import type { BillingInfo } from '@/lib/types'
 
 import { Suspense, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
 
+type BillingState = BillingInfo & { name: string }
 
-
-interface BillingInfo {
-  stripe_customer_id: string | null
-  stripe_subscription_id: string | null
-  subscription_status: string
-  subscription_price: number
-  subscription_notes: string | null
-  billing_email: string | null
-  name: string
-}
-
-interface SubscriptionDetails {
-  status: string
-  current_period_end: number | null
-  cancel_at_period_end: boolean
-}
-
-function formatDate(timestamp: number) {
-  return new Date(timestamp * 1000).toLocaleDateString('en-US', {
+function formatISODate(iso: string) {
+  return new Date(iso).toLocaleDateString('en-US', {
     month: 'long',
     day: 'numeric',
     year: 'numeric',
@@ -45,9 +31,9 @@ const STATUS_STYLES: Record<string, { label: string; color: string; bg: string; 
 
 function BillingContent() {
   const { company } = useCompany()
+  const { isQuria } = useQuria()
   const COMPANY_ID = company?.id ?? ''
-  const [billing, setBilling] = useState<BillingInfo | null>(null)
-  const [subscription, setSubscription] = useState<SubscriptionDetails | null>(null)
+  const [billing, setBilling] = useState<BillingState | null>(null)
   const [currentUser, setCurrentUser] = useState<{ role: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
@@ -79,28 +65,15 @@ function BillingContent() {
 
     const { data: companyData } = await supabase
       .from('companies')
-      .select('name, stripe_customer_id, stripe_subscription_id, subscription_status, subscription_price, subscription_notes, billing_email')
+      .select('name, stripe_customer_id, stripe_subscription_id, subscription_status, subscription_price, subscription_notes, billing_email, subscription_period_end, cancel_at_period_end')
       .eq('id', COMPANY_ID)
       .single()
 
     if (companyData) {
-      setBilling(companyData)
+      setBilling(companyData as BillingState)
       setNotesValue(companyData.subscription_notes ?? '')
       setPriceValue(String(companyData.subscription_price ?? 0))
       setBillingEmailValue(companyData.billing_email ?? '')
-
-      if (companyData.stripe_subscription_id) {
-        const res = await fetch('/api/stripe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'get_subscription',
-            subscription_id: companyData.stripe_subscription_id,
-          }),
-        })
-        const subData = await res.json()
-        setSubscription(subData)
-      }
     }
 
     setLoading(false)
@@ -175,8 +148,7 @@ function BillingContent() {
     fetchData()
   }
 
- const isQuria = currentUser?.role === 'quria'
-  const canSeePricing = currentUser?.role === 'quria' || currentUser?.role === 'owner'
+  const canSeePricing = isQuria || currentUser?.role === 'owner'
   const statusInfo = STATUS_STYLES[billing?.subscription_status ?? 'inactive'] ?? STATUS_STYLES.inactive
   const success = searchParams.get('success')
   const cancelled = searchParams.get('cancelled')
@@ -235,12 +207,17 @@ function BillingContent() {
 
 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
             <div>
-              {canSeePricing && (
+              {canSeePricing && billing?.subscription_price ? (
                 <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1, marginBottom: 6 }}>
-                  {billing?.subscription_price ? formatPrice(billing.subscription_price) : '—'}
+                  {formatPrice(billing.subscription_price)}
                   <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>/month</span>
                 </div>
-              )}
+              ) : isQuria ? (
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: 'var(--text-muted)', lineHeight: 1, marginBottom: 6 }}>
+                  Not set
+                  <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>/month</span>
+                </div>
+              ) : null}
               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                 Homebase + Aegis — {billing?.name}
               </div>
@@ -258,14 +235,19 @@ function BillingContent() {
             </span>
           </div>
 
-          {subscription?.current_period_end && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 20 }}>
-              {subscription.cancel_at_period_end
-                ? `Cancels on ${formatDate(subscription.current_period_end)}`
-                : `Next billing date: ${formatDate(subscription.current_period_end)}`
-              }
+          {billing?.subscription_status === 'past_due' ? (
+            <div style={{ fontSize: 12, color: 'var(--status-action-text)', marginBottom: 20 }}>
+              Payment failed — update payment method to avoid cancellation
             </div>
-          )}
+          ) : billing?.cancel_at_period_end && billing?.subscription_period_end ? (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 20 }}>
+              Access until: {formatISODate(billing.subscription_period_end)}
+            </div>
+          ) : billing?.subscription_status === 'active' && billing?.subscription_period_end ? (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 20 }}>
+              Next billing date: {formatISODate(billing.subscription_period_end)}
+            </div>
+          ) : null}
 
           <div style={{ display: 'flex', gap: 8 }}>
             {billing?.subscription_status !== 'active' ? (
@@ -287,7 +269,7 @@ function BillingContent() {
             )}
           </div>
 
-          {!billing?.subscription_price && billing?.subscription_status !== 'active' && (
+          {!isQuria && !billing?.subscription_price && billing?.subscription_status !== 'active' && (
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>
               Subscription details are being configured by your Quria Solutions administrator.
             </div>

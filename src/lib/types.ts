@@ -309,3 +309,14 @@ export interface PayrollIntegration {
   created_at: string
   updated_at: string
 }
+
+export interface BillingInfo {
+  stripe_customer_id: string | null
+  stripe_subscription_id: string | null
+  subscription_status: string | null
+  subscription_price: number | null
+  subscription_notes: string | null
+  billing_email: string | null
+  subscription_period_end: string | null
+  cancel_at_period_end: boolean | null
+}
