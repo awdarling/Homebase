@@ -8,7 +8,8 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   action?: any
-  actionStatus?: 'pending' | 'confirmed' | 'rejected'
+  actionStatus?: 'pending' | 'confirmed' | 'failed' | 'rejected'
+  actionError?: string
 }
 
 interface ImageData {
@@ -272,17 +273,39 @@ export default function SoteriaPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, companyId: COMPANY_ID }),
       })
-      const data = await res.json()
-      if (data.success) {
-        const confirmMessage: Message = {
-          id: Date.now().toString(),
-          role: 'assistant',
-          content: `Done — ${action.description} has been saved to Homebase.`,
-        }
-        setMessages((prev) => [...prev, confirmMessage])
+
+      let data: { success?: boolean; error?: string } = {}
+      try {
+        data = await res.json()
+      } catch {
+        // body wasn't JSON
       }
+
+      if (!res.ok || !data.success || data.error) {
+        const errMsg = data.error ?? `Request failed (${res.status})`
+        console.error('Soteria execute error:', errMsg)
+        setMessages((prev) => prev.map((m) =>
+          m.id === messageId ? { ...m, actionStatus: 'failed', actionError: errMsg } : m
+        ))
+        return
+      }
+
+      const followUpContent = action.type === 'trigger_schedule_build'
+        ? "Got it — I've triggered the schedule build. You'll receive a text when it's ready."
+        : `Done — ${action.description} has been saved to Homebase.`
+
+      const confirmMessage: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: followUpContent,
+      }
+      setMessages((prev) => [...prev, confirmMessage])
     } catch (e) {
+      const errMsg = e instanceof Error ? e.message : 'Network error'
       console.error('Execute error:', e)
+      setMessages((prev) => prev.map((m) =>
+        m.id === messageId ? { ...m, actionStatus: 'failed', actionError: errMsg } : m
+      ))
     }
   }
 
@@ -447,7 +470,16 @@ export default function SoteriaPanel() {
                   </div>
                 )}
                 {msg.action && msg.actionStatus === 'confirmed' && (
-                  <div style={{ fontSize: 11, color: 'var(--status-ready-text)', marginTop: 4, paddingLeft: 28 }}>✓ Confirmed and saved</div>
+                  <div style={{ fontSize: 11, color: 'var(--status-ready-text)', marginTop: 4, paddingLeft: 28 }}>
+                    {msg.action.type === 'trigger_schedule_build'
+                      ? "✓ Schedule build triggered — you'll receive a text when it's ready"
+                      : '✓ Confirmed and saved'}
+                  </div>
+                )}
+                {msg.action && msg.actionStatus === 'failed' && (
+                  <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4, paddingLeft: 28 }}>
+                    ✗ Failed — {msg.actionError ?? 'Unknown error'}
+                  </div>
                 )}
                 {msg.action && msg.actionStatus === 'rejected' && (
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, paddingLeft: 28 }}>— Rejected</div>
