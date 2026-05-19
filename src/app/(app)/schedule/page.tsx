@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useCompany } from '@/lib/hooks/useCompany'
+import { useQuria } from '@/lib/hooks/useQuria'
 import { useScheduleTemplate } from '@/lib/hooks/useScheduleTemplate'
 import ScheduleRenderer from '@/components/schedule/ScheduleRenderer'
 import ScheduleStats from '@/components/schedule/ScheduleStats'
@@ -533,6 +534,7 @@ interface UpcomingCardProps {
   pendingAssignments: ScheduleAssignment[]
   changesCount: number
   canStartEdit: boolean
+  canDeleteSchedule: boolean
   onStartEdit: () => void
   onCancelEdit: () => void
   onAddShift: () => void
@@ -540,6 +542,7 @@ interface UpcomingCardProps {
   onReview: () => void
   onAssignmentChange: (next: ScheduleAssignment[]) => void
   onResolveGap: (gap: ScheduleGap) => void
+  onDelete: () => void
 }
 
 function UpcomingCard({
@@ -553,6 +556,7 @@ function UpcomingCard({
   pendingAssignments,
   changesCount,
   canStartEdit,
+  canDeleteSchedule,
   onStartEdit,
   onCancelEdit,
   onAddShift,
@@ -560,6 +564,7 @@ function UpcomingCard({
   onReview,
   onAssignmentChange,
   onResolveGap,
+  onDelete,
 }: UpcomingCardProps) {
   const weekLabel = `${formatDateLong(schedule.week_start)} – ${formatDateLong(schedule.week_end)}`
 
@@ -606,13 +611,30 @@ function UpcomingCard({
           </div>
           <ScheduleStats schedule={schedule} compact />
         </div>
-        <button
-          className="btn btn-secondary btn-sm"
-          onClick={onToggle}
-          style={{ flexShrink: 0 }}
-        >
-          {expanded ? 'Collapse' : 'Preview & Edit'}
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+          {canDeleteSchedule && (
+            <button
+              onClick={onDelete}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#ef4444',
+                fontSize: 11,
+                cursor: 'pointer',
+                padding: 0,
+                fontFamily: 'var(--font-body)',
+              }}
+            >
+              Delete Schedule
+            </button>
+          )}
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={onToggle}
+          >
+            {expanded ? 'Collapse' : 'Preview & Edit'}
+          </button>
+        </div>
       </div>
 
       {/* Expanded panel */}
@@ -699,8 +721,10 @@ function UpcomingCard({
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function SchedulePage() {
-  const { company } = useCompany()
+  const { company, user } = useCompany()
+  const { isQuria } = useQuria()
   const companyId = company?.id ?? ''
+  const canDeleteSchedule = isQuria || user?.role === 'owner'
   const { template, saveTemplate } = useScheduleTemplate()
 
   const [allSchedules, setAllSchedules] = useState<Schedule[]>([])
@@ -723,6 +747,8 @@ export default function SchedulePage() {
   const [addShiftOpen, setAddShiftOpen] = useState(false)
   const [editTemplateMode, setEditTemplateMode] = useState(false)
   const [resolveTarget, setResolveTarget] = useState<{ gap: ScheduleGap; scheduleId: string } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Schedule | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const supabase = createClient()
 
@@ -783,6 +809,27 @@ export default function SchedulePage() {
     setAddShiftOpen(false)
     setReviewPanelOpen(false)
     setEditingScheduleId(null)
+  }
+
+  async function confirmDeleteSchedule() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    const { error } = await supabase
+      .from('schedules')
+      .delete()
+      .eq('id', deleteTarget.id)
+      .eq('company_id', companyId)
+    if (error) {
+      console.error('Delete schedule failed:', error)
+      setDeleting(false)
+      return
+    }
+    if (editingScheduleId === deleteTarget.id) cancelEditMode()
+    if (expandedUpcomingId === deleteTarget.id) setExpandedUpcomingId(null)
+    if (expandedHistoryId === deleteTarget.id) setExpandedHistoryId(null)
+    setDeleteTarget(null)
+    setDeleting(false)
+    await fetchSchedules()
   }
 
   function handleGapResolved(updatedSchedule: Schedule) {
@@ -847,6 +894,22 @@ export default function SchedulePage() {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}>
             {!isEditingCurrent ? (
               <>
+                {canDeleteSchedule && currentSchedule && (
+                  <button
+                    onClick={() => setDeleteTarget(currentSchedule)}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#ef4444',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                      padding: 0,
+                      fontFamily: 'var(--font-body)',
+                    }}
+                  >
+                    Delete Schedule
+                  </button>
+                )}
                 <button
                   className="btn btn-secondary btn-sm"
                   onClick={() => setEditTemplateMode(true)}
@@ -992,6 +1055,7 @@ export default function SchedulePage() {
                 pendingAssignments={pendingAssignments}
                 changesCount={editingScheduleId === s.id ? changesCount : 0}
                 canStartEdit={canStartNewEdit}
+                canDeleteSchedule={canDeleteSchedule}
                 onStartEdit={() => enterEditMode(s)}
                 onCancelEdit={cancelEditMode}
                 onAddShift={() => setAddShiftOpen(true)}
@@ -999,6 +1063,7 @@ export default function SchedulePage() {
                 onReview={() => setReviewPanelOpen(true)}
                 onAssignmentChange={setPendingAssignments}
                 onResolveGap={gap => setResolveTarget({ gap, scheduleId: s.id })}
+                onDelete={() => setDeleteTarget(s)}
               />
             ))}
           </div>
@@ -1153,6 +1218,76 @@ export default function SchedulePage() {
           saveTemplate={saveTemplate}
           onClose={() => setEditTemplateMode(false)}
         />
+      )}
+
+      {/* ══ Delete Schedule Confirmation ═════════════════════════════════════ */}
+      {deleteTarget && (
+        <div
+          onClick={() => !deleting && setDeleteTarget(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            zIndex: 400,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'var(--bg-surface-1)',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '20px 24px',
+              maxWidth: 420,
+              width: '100%',
+              boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+            }}
+          >
+            <div style={{
+              fontSize: 15,
+              fontWeight: 600,
+              color: 'var(--text-primary)',
+              fontFamily: 'var(--font-display)',
+              marginBottom: 10,
+            }}>
+              Delete this schedule?
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 20 }}>
+              Are you sure you want to delete this schedule? This cannot be undone.
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteSchedule}
+                disabled={deleting}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid rgba(239,68,68,0.4)',
+                  background: 'rgba(239,68,68,0.12)',
+                  color: '#ef4444',
+                  fontSize: 12,
+                  fontFamily: 'var(--font-body)',
+                  fontWeight: 500,
+                  cursor: deleting ? 'default' : 'pointer',
+                  opacity: deleting ? 0.6 : 1,
+                }}
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

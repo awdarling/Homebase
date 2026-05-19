@@ -2,9 +2,6 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useCompany } from '@/lib/hooks/useCompany'
-import { useQuria } from '@/lib/hooks/useQuria'
-import { logActivity } from '@/lib/activity'
 import type { Schedule, ScheduleAssignment, StaffingReport } from '@/lib/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -173,8 +170,6 @@ export default function ScheduleReviewPanel({
   onSaved,
 }: ScheduleReviewPanelProps) {
   const supabase = createClient()
-  const { user } = useCompany()
-  const { isQuria } = useQuria()
 
   const [phase, setPhase] = useState<'idle' | 'validating' | 'reviewed' | 'saving'>('idle')
   const [result, setResult] = useState<SoteriaResult | null>(null)
@@ -235,19 +230,6 @@ export default function ScheduleReviewPanel({
         .select()
         .single()
       if (updateErr) throw updateErr
-
-      await logActivity({
-        supabase,
-        company_id: companyId,
-        action: 'schedule_edited_manually',
-        entity_type: 'schedule',
-        entity_id: schedule.id,
-        summary: `Manager made ${changes.length} change${changes.length === 1 ? '' : 's'} to the schedule`,
-        metadata: { changes_count: changes.length, changes },
-        isQuria,
-        actorName: user?.name,
-        actorAvatarUrl: user?.avatar_url,
-      })
 
       onSaved((saved as Schedule) ?? { ...schedule, data: newData, staffing_report: newReport })
     } catch (e) {

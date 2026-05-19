@@ -51,14 +51,6 @@ function SendIcon() {
   )
 }
 
-function StopIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-      <rect x="4" y="4" width="16" height="16" rx="2" />
-    </svg>
-  )
-}
-
 function FileTypeIcon({ type }: { type: FileAttachment['type'] }) {
   const color = type === 'image' ? '#10b981'
     : type === 'pdf' ? '#ef4444'
@@ -115,7 +107,6 @@ export default function SoteriaPanel() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [listening, setListening] = useState(false)
-  const [speaking, setSpeaking] = useState(false)
   const [pendingAttachment, setPendingAttachment] = useState<FileAttachment | null>(null)
   const [showTooltip, setShowTooltip] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -160,7 +151,6 @@ export default function SoteriaPanel() {
         actionStatus: data.action ? 'pending' : undefined,
       }
       setMessages([assistantMessage])
-      speakText(data.message)
     } catch {
       setMessages([{
         id: Date.now().toString(),
@@ -262,7 +252,6 @@ export default function SoteriaPanel() {
         actionStatus: data.action ? 'pending' : undefined,
       }
       setMessages((prev) => [...prev, assistantMessage])
-      speakText(data.message)
     } catch {
       setMessages((prev) => [...prev, {
         id: Date.now().toString(),
@@ -291,7 +280,6 @@ export default function SoteriaPanel() {
           content: `Done — ${action.description} has been saved to Homebase.`,
         }
         setMessages((prev) => [...prev, confirmMessage])
-        speakText(confirmMessage.content)
       }
     } catch (e) {
       console.error('Execute error:', e)
@@ -308,32 +296,6 @@ export default function SoteriaPanel() {
       content: "No problem — I won't make that change. What would you like to do differently?",
     }
     setMessages((prev) => [...prev, rejectMessage])
-    speakText(rejectMessage.content)
-  }
-
-  function speakText(text: string) {
-    if (!window.speechSynthesis) return
-    window.speechSynthesis.cancel()
-    const cleaned = text.replace(/<[^>]*>/g, '').replace(/[*_#`]/g, '')
-    const utterance = new SpeechSynthesisUtterance(cleaned)
-    const voices = window.speechSynthesis.getVoices()
-    const preferred = ['Samantha', 'Karen', 'Moira', 'Fiona', 'Victoria']
-    const picked = preferred.reduce<SpeechSynthesisVoice | null>((found, name) => {
-      if (found) return found
-      return voices.find(v => v.name === name) ?? null
-    }, null)
-    if (picked) utterance.voice = picked
-    utterance.rate = 0.95
-    utterance.pitch = 1.05
-    utterance.onstart = () => setSpeaking(true)
-    utterance.onend = () => setSpeaking(false)
-    utterance.onerror = () => setSpeaking(false)
-    window.speechSynthesis.speak(utterance)
-  }
-
-  function handleStopVoice() {
-    window.speechSynthesis?.cancel()
-    setSpeaking(false)
   }
 
   function handleMic() {
@@ -422,35 +384,9 @@ export default function SoteriaPanel() {
                   Soteria
                 </div>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>
-                  {speaking ? <span style={{ color: 'var(--accent)' }}>● Speaking...</span>
-                    : loading ? 'Thinking...' : 'Operational assistant'}
+                  {loading ? 'Thinking...' : 'Operational assistant'}
                 </div>
               </div>
-            </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {speaking && (
-                <button onClick={handleStopVoice} style={{
-                  display: 'flex', alignItems: 'center', gap: 5,
-                  background: 'var(--accent-dim)', border: '1px solid var(--accent-border)',
-                  borderRadius: 'var(--radius-md)', padding: '4px 10px',
-                  cursor: 'pointer', fontSize: 11, color: 'var(--accent)', fontFamily: 'var(--font-body)',
-                }}>
-                  <StopIcon /> Stop
-                </button>
-              )}
-              {!speaking && messages.length > 0 && (
-                <button onClick={() => {
-                  const last = [...messages].reverse().find(m => m.role === 'assistant')
-                  if (last) speakText(last.content)
-                }} style={{
-                  display: 'flex', alignItems: 'center', gap: 5,
-                  background: 'transparent', border: '1px solid var(--border-default)',
-                  borderRadius: 'var(--radius-md)', padding: '4px 10px',
-                  cursor: 'pointer', fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-body)',
-                }}>
-                  ▶ Replay
-                </button>
-              )}
             </div>
           </div>
 

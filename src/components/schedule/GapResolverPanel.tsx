@@ -2,9 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useCompany } from '@/lib/hooks/useCompany'
-import { useQuria } from '@/lib/hooks/useQuria'
-import { logActivity } from '@/lib/activity'
 import type { Schedule, ScheduleGap, ScheduleAssignment } from '@/lib/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -62,8 +59,6 @@ export default function GapResolverPanel({
   gap, schedule, companyId, onClose, onResolved,
 }: GapResolverPanelProps) {
   const supabase = createClient()
-  const { user } = useCompany()
-  const { isQuria } = useQuria()
 
   // Candidate list state
   const [candidates, setCandidates] = useState<Candidate[]>([])
@@ -241,19 +236,6 @@ export default function GapResolverPanel({
     const { data: saved } = await supabase.from('schedules')
       .update({ data: updatedData, staffing_report: updatedReport })
       .eq('id', schedule.id).select().single()
-
-    await logActivity({
-      supabase,
-      company_id: companyId,
-      action: 'gap_resolved_manually',
-      entity_type: 'schedule',
-      entity_id: schedule.id,
-      summary: `Manager assigned ${assignment.employee_name} to ${gap.shift_name} (${assignment.role}) on ${gap.date}`,
-      metadata: { employee_id: assignment.employee_id, shift_name: gap.shift_name, role: assignment.role, date: gap.date },
-      isQuria,
-      actorName: user?.name,
-      actorAvatarUrl: user?.avatar_url,
-    })
 
     fetch('/api/notify-assignment', {
       method: 'POST',

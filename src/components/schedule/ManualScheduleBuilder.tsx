@@ -2,9 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useCompany } from '@/lib/hooks/useCompany'
-import { useQuria } from '@/lib/hooks/useQuria'
-import { logActivity } from '@/lib/activity'
 import type {
   Employee,
   Schedule,
@@ -137,8 +134,6 @@ export default function ManualScheduleBuilder({
   onSaved,
 }: ManualScheduleBuilderProps) {
   const supabase = createClient()
-  const { user } = useCompany()
-  const { isQuria } = useQuria()
 
   const [weekChoice, setWeekChoice] = useState<'this' | 'next'>('this')
   const range = useMemo(() => buildWeek(weekChoice), [weekChoice])
@@ -557,19 +552,6 @@ export default function ManualScheduleBuilder({
       }
       savedSchedule = inserted as Schedule
     }
-
-    await logActivity({
-      supabase,
-      company_id: companyId,
-      action: 'manual_schedule_built',
-      entity_type: 'schedule',
-      entity_id: savedSchedule.id,
-      summary: `Manager manually built schedule for ${range.start} – ${range.end}: ${assignments.length} assignment${assignments.length === 1 ? '' : 's'}, ${coverage}% coverage`,
-      metadata: { week_start: range.start, week_end: range.end, assignments_count: assignments.length, coverage_rate: coverage },
-      isQuria,
-      actorName: user?.name,
-      actorAvatarUrl: user?.avatar_url,
-    })
 
     setSaving(false)
     onSaved(savedSchedule)
