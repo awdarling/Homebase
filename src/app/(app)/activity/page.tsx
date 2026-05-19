@@ -159,7 +159,11 @@ export default function ActivityPage() {
         .limit(1),
     ])
 
-    const typedActivity = (activityData ?? []) as ActivityEntry[]
+    const typedActivity = ((activityData ?? []) as ActivityEntry[]).filter(e =>
+      !e.summary.includes('→ intent:') &&
+      e.action !== 'message_received' &&
+      e.action !== 'intent_classified'
+    )
     setEntries(typedActivity)
     setFallbackManagerName(managerData?.[0]?.name ?? null)
 

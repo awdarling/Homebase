@@ -101,8 +101,18 @@ export default function WageRatesTab() {
     }
 
     if (editingRate) {
+      const { data: current } = await supabase
+        .from('wage_rates')
+        .select('hourly_rate')
+        .eq('id', editingRate.id)
+        .single()
+      const oldRate = (current as { hourly_rate: number } | null)?.hourly_rate ?? editingRate.hourly_rate
       await supabase.from('wage_rates').update(payload).eq('id', editingRate.id)
-      await logActivity('wage_rate_updated', `Updated wage rate for ${form.role}: $${parsed.toFixed(2)}/hr`, editingRate.id)
+      await logActivity(
+        'wage_rate_updated',
+        `${form.role} wage: $${oldRate.toFixed(2)} → $${parsed.toFixed(2)}/hr`,
+        editingRate.id,
+      )
     } else {
       const { data } = await supabase.from('wage_rates').insert(payload).select().single()
       if (data) await logActivity('wage_rate_created', `Created wage rate for ${form.role}: $${parsed.toFixed(2)}/hr`, data.id)

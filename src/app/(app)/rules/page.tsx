@@ -116,14 +116,24 @@ export default function RulesPage() {
     }
 
     if (editingPolicy) {
+      const { data: current } = await supabase
+        .from('policies')
+        .select('policy_value')
+        .eq('id', editingPolicy.id)
+        .single()
+      const oldValue = (current as { policy_value: string } | null)?.policy_value ?? editingPolicy.policy_value
+
       await supabase.from('policies').update({
         ...payload,
         version: editingPolicy.version + 1,
       }).eq('id', editingPolicy.id)
+
+      const categoryLabel = CATEGORIES.find(c => c.id === form.policy_type)?.label ?? form.policy_type
+      const keyHumanized = payload.policy_key.replace(/_/g, ' ')
       await logActivity(
         'policy_updated',
-        `Updated rule "${form.policy_key}" in ${CATEGORIES.find(c => c.id === form.policy_type)?.label ?? form.policy_type}: ${form.policy_value} (v${editingPolicy.version + 1})`,
-        editingPolicy.id
+        `${categoryLabel} — ${keyHumanized}: ${oldValue} → ${payload.policy_value}`,
+        editingPolicy.id,
       )
     } else {
       const { data } = await supabase.from('policies').insert({

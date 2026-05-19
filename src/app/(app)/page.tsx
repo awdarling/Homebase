@@ -7,7 +7,8 @@ import type { Schedule } from '@/lib/types'
 
 interface ActivityEntry {
   id: string
-  actor: 'aegis' | 'manager' | 'soteria' | 'system'
+  actor: 'aegis' | 'manager' | 'soteria' | 'system' | 'quria_admin'
+  actor_name: string | null
   summary: string
   action: string
   entity_type: string | null
@@ -75,11 +76,20 @@ function formatCurrency(n: number) {
   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-const ACTOR_STYLES: Record<string, { color: string; bg: string; border: string }> = {
-  aegis:   { color: 'var(--accent)',     bg: 'var(--accent-dim)',      border: 'var(--accent-border)' },
-  manager: { color: '#60a5fa',           bg: 'rgba(96,165,250,0.1)',   border: 'rgba(96,165,250,0.25)' },
-  soteria: { color: '#a78bfa',           bg: 'rgba(167,139,250,0.1)',  border: 'rgba(167,139,250,0.25)' },
-  system:  { color: 'var(--text-muted)', bg: 'var(--bg-surface-3)',    border: 'var(--border-default)' },
+interface ActorStyle {
+  color: string
+  bg: string
+  border: string
+  label: string
+  initial: string
+}
+
+const ACTOR_STYLES: Record<string, ActorStyle> = {
+  aegis:       { color: 'var(--accent)',     bg: 'var(--accent-dim)',         border: 'var(--accent-border)',      label: 'Aegis',   initial: 'A' },
+  manager:     { color: '#60a5fa',           bg: 'rgba(96,165,250,0.1)',      border: 'rgba(96,165,250,0.25)',     label: 'Manager', initial: 'M' },
+  soteria:     { color: '#a78bfa',           bg: 'rgba(167,139,250,0.1)',     border: 'rgba(167,139,250,0.25)',    label: 'Soteria', initial: 'S' },
+  system:      { color: 'var(--text-muted)', bg: 'var(--bg-surface-3)',       border: 'var(--border-default)',     label: 'System',  initial: '·' },
+  quria_admin: { color: 'var(--accent)',     bg: 'rgba(232, 89, 12, 0.15)',   border: 'var(--accent-border)',      label: 'Quria',   initial: 'Q' },
 }
 
 // Simple bar chart component
@@ -330,7 +340,14 @@ export default function HomePage() {
     const schedule = (schedRes.data as Schedule | null) ?? null
     setCurrentSchedule(schedule)
 
-    if (actRes.data) setActivity(actRes.data)
+    if (actRes.data) {
+      const cleaned = (actRes.data as ActivityEntry[]).filter(e =>
+        !e.summary.includes('→ intent:') &&
+        e.action !== 'message_received' &&
+        e.action !== 'intent_classified'
+      )
+      setActivity(cleaned)
+    }
     if (toRes.data) setPendingTO(toRes.data as TORequest[])
     if (empRes.data) {
       setEmployees(empRes.data)
@@ -682,6 +699,14 @@ export default function HomePage() {
               </div>
             ) : activity.map((item, i) => {
               const style = ACTOR_STYLES[item.actor] ?? ACTOR_STYLES.system
+              const iconUrl = item.actor === 'aegis'
+                ? '/aegis-icon.jpg'
+                : item.actor === 'soteria' || item.actor === 'system'
+                  ? '/soteria-icon.png'
+                  : null
+              const displayLabel = item.actor_name && (item.actor === 'manager' || item.actor === 'quria_admin')
+                ? item.actor_name
+                : style.label
               return (
                 <div key={item.id} style={{
                   display: 'flex',
@@ -693,8 +718,8 @@ export default function HomePage() {
                   <div style={{
                     width: 26,
                     height: 26,
-                    borderRadius: 'var(--radius-sm)',
-                    background: style.bg,
+                    borderRadius: '50%',
+                    background: iconUrl ? 'transparent' : style.bg,
                     border: `1px solid ${style.border}`,
                     display: 'flex',
                     alignItems: 'center',
@@ -704,8 +729,17 @@ export default function HomePage() {
                     fontFamily: 'var(--font-display)',
                     color: style.color,
                     flexShrink: 0,
+                    overflow: 'hidden',
                   }}>
-                    {item.actor[0].toUpperCase()}
+                    {iconUrl ? (
+                      <img
+                        src={iconUrl}
+                        alt={style.label}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
+                      />
+                    ) : (
+                      style.initial
+                    )}
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
@@ -713,7 +747,7 @@ export default function HomePage() {
                     </div>
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3, display: 'flex', gap: 6 }}>
                       <span style={{ color: style.color, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                        {item.actor}
+                        {displayLabel}
                       </span>
                       <span>·</span>
                       <span>{timeAgo(item.created_at)}</span>

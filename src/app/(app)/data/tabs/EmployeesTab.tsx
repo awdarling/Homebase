@@ -172,6 +172,45 @@ export default function EmployeesTab() {
     })
   }
 
+  function buildEmployeeDiff(oldEmp: Employee, formState: typeof form): string | null {
+    const parts: string[] = []
+
+    if (oldEmp.primary_role !== formState.primary_role) {
+      parts.push(`primary role: ${oldEmp.primary_role} → ${formState.primary_role}`)
+    }
+
+    const newMax = parseInt(formState.max_weekly_hours) || 40
+    if (oldEmp.max_weekly_hours !== newMax) {
+      parts.push(`max hours: ${oldEmp.max_weekly_hours} → ${newMax}`)
+    }
+
+    const newEmail = formState.contact_email.trim() || null
+    if ((oldEmp.contact_email ?? null) !== newEmail) {
+      parts.push('email updated')
+    }
+
+    const newPhone = formState.contact_phone.trim() || null
+    if ((oldEmp.contact_phone ?? null) !== newPhone) {
+      parts.push('phone updated')
+    }
+
+    const newWage = formState.individual_wage !== '' ? parseFloat(formState.individual_wage) : null
+    const oldWage = oldEmp.individual_wage ?? null
+    if (oldWage !== newWage) {
+      const fmt = (v: number | null) => v == null ? 'not set' : `$${v.toFixed(2)}`
+      parts.push(`wage: ${fmt(oldWage)} → ${fmt(newWage)}/hr`)
+    }
+
+    // Save flow always writes active: true, so this branch only fires when an
+    // inactive employee is being reactivated through the edit form.
+    if (oldEmp.active === false) {
+      parts.push('reactivated')
+    }
+
+    if (parts.length === 0) return null
+    return `${formState.name.trim()} — ${parts.join(', ')}`
+  }
+
   const roleNames = ['all', ...roles.map((r) => r.name)]
 
   const veteranCount = employees.filter((e) => e.is_veteran).length
@@ -284,8 +323,42 @@ export default function EmployeesTab() {
 
     if (editingEmployee) {
       const veteranChanged = !!editingEmployee.is_veteran !== form.is_veteran
+
+      // Detect non-tracked changes (name, qualified roles, availability) so the
+      // fallback "contact info updated" log fires for those even when no tracked
+      // field changed. If only the veteran flag toggled, skip the generic log
+      // entirely — the veteranChanged branch below handles it.
+      const nameChanged = editingEmployee.name !== form.name.trim()
+      const oldQualified = [...(editingEmployee.qualified_roles ?? [])].sort()
+      const newQualified = [...qualifiedRoles].sort()
+      const qualifiedChanged =
+        oldQualified.length !== newQualified.length ||
+        oldQualified.some((r, i) => r !== newQualified[i])
+
+      const oldAvail = (availability[editingEmployee.id] ?? [])
+        .map(a => `${a.day}|${a.start.slice(0, 5)}|${a.end.slice(0, 5)}`)
+        .sort()
+      const newAvail = availForm
+        .filter(r => r.active)
+        .map(r => `${r.day}|${r.start_time}|${r.end_time}`)
+        .sort()
+      const availabilityEdited =
+        oldAvail.length !== newAvail.length ||
+        oldAvail.some((v, i) => v !== newAvail[i])
+
       await supabase.from('employees').update(payload).eq('id', editingEmployee.id)
-      await logActivity('employee_updated', `Updated employee: ${form.name}`, editingEmployee.id)
+
+      const diffSummary = buildEmployeeDiff(editingEmployee, form)
+      if (diffSummary) {
+        await logActivity('employee_updated', diffSummary, editingEmployee.id)
+      } else if (nameChanged || qualifiedChanged || availabilityEdited) {
+        await logActivity(
+          'employee_updated',
+          `${form.name.trim()} — contact info updated`,
+          editingEmployee.id,
+        )
+      }
+
       if (veteranChanged) {
         await logActivity(
           'employee_updated',
