@@ -1,6 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createClient as createServerSupabase } from '@/lib/supabase/server'
+import * as XLSX from 'xlsx'
+import mammoth from 'mammoth'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -60,7 +63,7 @@ function buildSystemPrompt(context: Awaited<ReturnType<typeof getCompanyContext>
 
   const conflictWarnings = () => {
     if (!conflicts || conflicts.length === 0) return ''
-    const neverPairs = conflicts.filter((c: any) => c.severity === 'never')
+    const neverPairs = conflicts.filter((c: { severity: string }) => c.severity === 'never')
     if (neverPairs.length >= 3) {
       return `\nWARNING: There are ${neverPairs.length} NEVER conflict pairs. This may make scheduling difficult or impossible. Flag this proactively.`
     }
@@ -71,7 +74,7 @@ function buildSystemPrompt(context: Awaited<ReturnType<typeof getCompanyContext>
     if (!memory || memory.length === 0) return ''
     return `
 MEMORY FROM PREVIOUS CONVERSATIONS:
-${memory.map((m: any) => `- [${m.memory_type}] ${m.content}`).join('\n')}
+${memory.map((m: { memory_type: string; content: string }) => `- [${m.memory_type}] ${m.content}`).join('\n')}
 
 Use this memory to personalize your responses. Reference past decisions and preferences naturally.`
   }
@@ -116,17 +119,17 @@ BUSINESS PROFILE:
 
 ${employees && employees.length > 0 ? `
 EMPLOYEES (${employees.length}):
-${employees.map((e: any) => `- ${e.name} | ${e.primary_role} | Qualifies: ${e.qualified_roles?.join(', ')} | Max: ${e.max_weekly_hours}h/week`).join('\n')}
+${employees.map((e: { id: string; name: string; primary_role: string; qualified_roles?: string[]; max_weekly_hours: number }) => `- ${e.name} (id: ${e.id}) | ${e.primary_role} | Qualifies: ${e.qualified_roles?.join(', ')} | Max: ${e.max_weekly_hours}h/week`).join('\n')}
 ` : 'EMPLOYEES: None added yet'}
 
 ${shifts && shifts.length > 0 ? `
 SHIFT REQUIREMENTS:
-${shifts.map((s: any) => `- ${s.shift_name} | ${s.role} | ${s.required_count} needed | ${s.start_time}–${s.end_time}`).join('\n')}
+${shifts.map((s: { shift_name: string; role: string; required_count: number; start_time: string; end_time: string }) => `- ${s.shift_name} | ${s.role} | ${s.required_count} needed | ${s.start_time}–${s.end_time}`).join('\n')}
 ` : 'SHIFT REQUIREMENTS: None added yet'}
 
 ${policies && policies.length > 0 ? `
 POLICIES:
-${policies.map((p: any) => `- ${p.policy_key}: ${p.policy_value} (${p.policy_type})`).join('\n')}
+${policies.map((p: { policy_key: string; policy_value: string; policy_type: string }) => `- ${p.policy_key}: ${p.policy_value} (${p.policy_type})`).join('\n')}
 ` : 'POLICIES: None added yet'}
 
 ${memorySection()}
@@ -157,8 +160,24 @@ For saving memory (no confirmation needed — do this silently when you learn so
 }
 </memory>
 
-Action types: add_employee, update_policy, add_shift, update_profile, add_conflict, delete_employee, delete_policy, delete_shift
+Action types:
+- add_employee — data: { name, primary_role, qualified_roles, max_weekly_hours, contact_phone?, contact_email? }
+- update_employee — data: { employee_id, updates: { name?, primary_role?, qualified_roles?, max_weekly_hours?, contact_email?, contact_phone?, individual_wage?, is_veteran?, active? } }
+- delete_employee — data: { id, name }
+- import_employees — data: { employees: [{ name, primary_role, qualified_roles, contact_email?, contact_phone?, max_weekly_hours?, is_veteran? }, ...] }
+- update_profile — data: { business_type?, description?, operating_hours?, peak_periods?, manager_priorities?, special_context? }
+- add_shift — data: { shift_name, role, required_count, start_time, end_time, days_active? }
+- delete_shift — data: { id, shift_name }
+- update_policy — data: { policy_key, policy_value, policy_type?, description? }
+- delete_policy — data: { id, policy_key }
+- add_conflict — data: { employee_id_1, employee_id_2, reason?, severity? }
+- trigger_schedule_build — data: { target_week: "this" | "next", veteran_preference? }
+
 Memory types: preference, decision, context, feedback
+
+When a manager uploads an employee roster (Excel, CSV, or similar), extract all employee data and emit a single import_employees action with all employees in the array. Ask the manager to confirm before importing. Map columns intelligently — names like 'Head Lifeguard' should map to the closest matching role in the company's role list.
+
+When a manager asks you to build a schedule, emit a trigger_schedule_build action with the appropriate target_week. Always confirm before triggering. Mention that the manager will receive a text confirmation when it's done.
 
 If this is a new company with no data, introduce yourself briefly:
 "Hi, I'm Soteria. I'm here to help get your operation set up. What kind of business do you run?"
@@ -168,39 +187,124 @@ If data already exists, open with a brief status acknowledgment:
 `
 }
 
+type ImageBlock = {
+  type: 'image'
+  source: { type: 'base64'; media_type: string; data: string }
+}
+type DocumentBlock = {
+  type: 'document'
+  source: { type: 'base64'; media_type: 'application/pdf'; data: string }
+}
+type TextBlock = { type: 'text'; text: string }
+type ContentBlock = ImageBlock | DocumentBlock | TextBlock
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { messages, companyId, imageData } = body
+    const { messages, companyId, imageData, fileName, fileType } = body as {
+      messages: { role: 'user' | 'assistant'; content: string }[]
+      companyId: string
+      imageData: { data: string; mediaType: string } | null
+      fileName: string | null
+      fileType: 'image' | 'pdf' | 'csv' | 'spreadsheet' | 'document' | null
+    }
+
+    // ── Auth check ──────────────────────────────────────────────────────────
+    const ssr = await createServerSupabase()
+    const { data: { user } } = await ssr.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    const { data: userRow } = await ssr
+      .from('users')
+      .select('company_id')
+      .eq('id', user.id)
+      .single()
+    if (!userRow || (userRow as { company_id: string }).company_id !== companyId) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
 
     const context = await getCompanyContext(companyId)
     const systemPrompt = buildSystemPrompt(context)
 
-    const formattedMessages = messages.map((msg: any, index: number) => {
-      if (index === messages.length - 1 && imageData && msg.role === 'user') {
-        return {
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: imageData.mediaType,
-                data: imageData.data,
-              },
-            },
-            { type: 'text', text: msg.content },
-          ],
+    // ── Server-side file processing ─────────────────────────────────────────
+    // Excel/Word are parsed here and inlined as text in the last user message.
+    // PDFs are sent as Anthropic document blocks. Images stay as image blocks.
+    let extractedText: string | null = null
+    let pdfBase64: string | null = null
+    let imageBlock: { data: string; mediaType: string } | null = null
+
+    if (imageData && fileType) {
+      if (fileType === 'image') {
+        imageBlock = imageData
+      } else if (fileType === 'pdf') {
+        pdfBase64 = imageData.data
+      } else if (fileType === 'spreadsheet') {
+        try {
+          const buf = Buffer.from(imageData.data, 'base64')
+          const wb = XLSX.read(buf, { type: 'buffer' })
+          const firstSheetName = wb.SheetNames[0]
+          const csv = firstSheetName ? XLSX.utils.sheet_to_csv(wb.Sheets[firstSheetName]) : ''
+          extractedText = `[File: ${fileName ?? 'spreadsheet'}]\n${csv}`
+        } catch (e) {
+          console.error('xlsx parse error:', e)
+          extractedText = `[File: ${fileName ?? 'spreadsheet'}]\n(Could not parse spreadsheet contents.)`
+        }
+      } else if (fileType === 'document') {
+        try {
+          const buf = Buffer.from(imageData.data, 'base64')
+          const result = await mammoth.extractRawText({ buffer: buf })
+          extractedText = `[File: ${fileName ?? 'document'}]\n${result.value}`
+        } catch (e) {
+          console.error('mammoth parse error:', e)
+          extractedText = `[File: ${fileName ?? 'document'}]\n(Could not extract document text. Legacy .doc files are not supported — please re-save as .docx.)`
         }
       }
-      return { role: msg.role, content: msg.content }
+    }
+
+    const formattedMessages = messages.map((msg, index) => {
+      const isLast = index === messages.length - 1
+      if (!isLast || msg.role !== 'user') {
+        return { role: msg.role, content: msg.content }
+      }
+
+      const content: ContentBlock[] = []
+      if (imageBlock) {
+        content.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: imageBlock.mediaType,
+            data: imageBlock.data,
+          },
+        })
+      }
+      if (pdfBase64) {
+        content.push({
+          type: 'document',
+          source: {
+            type: 'base64',
+            media_type: 'application/pdf',
+            data: pdfBase64,
+          },
+        })
+      }
+      const textBody = extractedText
+        ? `${msg.content}\n\n${extractedText}`
+        : msg.content
+      content.push({ type: 'text', text: textBody })
+
+      if (content.length === 1 && content[0].type === 'text') {
+        return { role: 'user' as const, content: textBody }
+      }
+      return { role: 'user' as const, content }
     })
 
     const response = await anthropic.messages.create({
-      model: 'claude-opus-4-5',
+      model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       system: systemPrompt,
-      messages: formattedMessages,
+      messages: formattedMessages as Parameters<typeof anthropic.messages.create>[0]['messages'],
     })
 
     const content = response.content[0].type === 'text' ? response.content[0].text : ''
@@ -242,8 +346,9 @@ export async function POST(request: NextRequest) {
       context: context.summary,
     })
 
-  } catch (error: any) {
+  } catch (error) {
     console.error('Soteria error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
