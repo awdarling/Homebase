@@ -148,7 +148,7 @@ function BillingContent() {
     fetchData()
   }
 
-  const canSeePricing = isQuria || currentUser?.role === 'owner'
+  const canSeePricing = isQuria || currentUser?.role === 'owner' || currentUser?.role === 'manager'
   const statusInfo = STATUS_STYLES[billing?.subscription_status ?? 'inactive'] ?? STATUS_STYLES.inactive
   const success = searchParams.get('success')
   const cancelled = searchParams.get('cancelled')
@@ -212,7 +212,7 @@ function BillingContent() {
                   {formatPrice(billing.subscription_price)}
                   <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>/month</span>
                 </div>
-              ) : isQuria ? (
+              ) : canSeePricing ? (
                 <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: 'var(--text-muted)', lineHeight: 1, marginBottom: 6 }}>
                   Not set
                   <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>/month</span>

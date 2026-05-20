@@ -157,10 +157,20 @@ export default function SpecialNotesTab() {
     }
 
     if (editing) {
-      await supabase.from('events').update(payload).eq('id', editing.id)
+      const { error } = await supabase.from('events').update(payload).eq('id', editing.id)
+      if (error) {
+        setError('Failed to update note: ' + error.message)
+        setSaving(false)
+        return
+      }
       await logActivity('note_updated', `Updated special note: "${form.title}"`, editing.id)
     } else {
-      const { data } = await supabase.from('events').insert(payload).select().single()
+      const { data, error } = await supabase.from('events').insert(payload).select().single()
+      if (error) {
+        setError('Failed to save note: ' + error.message)
+        setSaving(false)
+        return
+      }
       if (data) await logActivity('note_created', `Created special note: "${form.title}"`, data.id)
     }
 

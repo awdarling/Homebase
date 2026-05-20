@@ -61,6 +61,34 @@ function VeteranBadge() {
   )
 }
 
+const SEX_LABELS: Record<string, string> = {
+  male: 'Male',
+  female: 'Female',
+  nonbinary: 'Non-binary',
+  prefer_not_to_say: 'Prefer not to say',
+}
+
+function SexBadge({ value }: { value: string }) {
+  const label = SEX_LABELS[value] ?? value
+  return (
+    <span style={{
+      display: 'inline-block',
+      padding: '1px 7px',
+      borderRadius: 'var(--radius-pill)',
+      fontSize: 9,
+      fontWeight: 700,
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase',
+      background: 'rgba(100, 100, 100, 0.1)',
+      border: '1px solid rgba(100, 100, 100, 0.2)',
+      color: 'var(--text-secondary)',
+      whiteSpace: 'nowrap',
+    }}>
+      {label}
+    </span>
+  )
+}
+
 function RoleBadge({ role, roles }: { role: string; roles: Role[] }) {
   const match = roles.find((r) => r.name === role)
   const color = match?.color ?? '#6b7280'
@@ -127,6 +155,7 @@ export default function EmployeesTab() {
     contact_email: '',
     individual_wage: '',
     is_veteran: false,
+    sex: '',
   })
   const [availForm, setAvailForm] = useState<AvailabilityRow[]>(DEFAULT_AVAILABILITY)
   const [saving, setSaving] = useState(false)
@@ -207,6 +236,19 @@ export default function EmployeesTab() {
       parts.push('reactivated')
     }
 
+    const newSex = formState.sex || null
+    const oldSex = oldEmp.sex ?? null
+    if (oldSex !== newSex) {
+      const sexLabels: Record<string, string> = {
+        male: 'Male',
+        female: 'Female',
+        nonbinary: 'Non-binary',
+        prefer_not_to_say: 'Prefer not to say',
+      }
+      const fmtSex = (v: string | null): string => v ? (sexLabels[v] ?? v) : 'not set'
+      parts.push(`sex: ${fmtSex(oldSex)} → ${fmtSex(newSex)}`)
+    }
+
     if (parts.length === 0) return null
     return `${formState.name.trim()} — ${parts.join(', ')}`
   }
@@ -246,6 +288,7 @@ export default function EmployeesTab() {
       contact_email: '',
       individual_wage: '',
       is_veteran: false,
+      sex: '',
     })
     setAvailForm(DEFAULT_AVAILABILITY)
     setError('')
@@ -263,6 +306,7 @@ export default function EmployeesTab() {
       contact_email: emp.contact_email ?? '',
       individual_wage: emp.individual_wage != null ? String(emp.individual_wage) : '',
       is_veteran: !!emp.is_veteran,
+      sex: emp.sex ?? '',
     })
     setAvailForm(buildAvailForm(emp.id))
     setError('')
@@ -316,6 +360,7 @@ export default function EmployeesTab() {
       contact_email: form.contact_email.trim() || null,
       individual_wage: form.individual_wage !== '' ? parseFloat(form.individual_wage) : null,
       is_veteran: form.is_veteran,
+      sex: form.sex || null,
       active: true,
     }
 
@@ -480,20 +525,22 @@ export default function EmployeesTab() {
       }}>
         <table className="data-table" style={{ tableLayout: 'fixed', width: '100%' }}>
           <colgroup>
-            <col style={{ width: '16%' }} />
-            <col style={{ width: '7%' }} />
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '12%' }} />
             <col style={{ width: '14%' }} />
-            <col style={{ width: '13%' }} />
-            <col style={{ width: '13%' }} />
-            <col style={{ width: '8%' }} />
+            <col style={{ width: '7%' }} />
+            <col style={{ width: '9%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '11%' }} />
+            <col style={{ width: '11%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '7%' }} />
             <col style={{ width: '7%' }} />
           </colgroup>
           <thead>
             <tr>
               <th>Employee</th>
               <th>Veteran</th>
+              <th>Sex</th>
               <th>Role</th>
               <th>Also Qualifies</th>
               <th>Availability</th>
@@ -521,6 +568,9 @@ export default function EmployeesTab() {
                   </td>
                   <td style={{ textAlign: 'center' }}>
                     {emp.is_veteran && <VeteranBadge />}
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    {emp.sex && <SexBadge value={emp.sex} />}
                   </td>
                   <td><RoleBadge role={emp.primary_role} roles={roles} /></td>
                   <td>
@@ -750,6 +800,21 @@ export default function EmployeesTab() {
                     boxShadow: '0 1px 2px rgba(0,0,0,0.25)',
                   }} />
                 </button>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Sex</label>
+                <select
+                  className="form-select"
+                  value={form.sex}
+                  onChange={(e) => setForm((f) => ({ ...f, sex: e.target.value }))}
+                >
+                  <option value="">Not specified</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="nonbinary">Non-binary</option>
+                  <option value="prefer_not_to_say">Prefer not to say</option>
+                </select>
               </div>
 
               <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 16, marginTop: 4 }}>

@@ -32,6 +32,7 @@ export interface Employee {
   individual_wage?: number | null
   aegis_access?: 'manager' | 'employee' | 'blocked'
   is_veteran: boolean
+  sex?: string | null
 }
 
 export interface Availability {

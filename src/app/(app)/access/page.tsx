@@ -113,14 +113,14 @@ export default function AccessPage() {
       .eq('id', authUser.id)
       .single()
 
-    if (!currentUserData || !['quria', 'owner'].includes(currentUserData.role)) {
+    if (!currentUserData || !['quria', 'owner', 'manager'].includes(currentUserData.role)) {
       router.push('/')
       return
     }
     setCurrentUser(currentUserData)
 
     let usersQuery = supabase.from('users').select('*').order('created_at')
-    if (currentUserData.role === 'owner') {
+    if (currentUserData.role === 'owner' || currentUserData.role === 'manager') {
       usersQuery = usersQuery.eq('company_id', COMPANY_ID)
     }
     const { data: usersData } = await usersQuery
@@ -321,11 +321,13 @@ function HomebaseSection({
         {' '}Removed users are locked out instantly regardless of any password changes they make.
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <button className="btn btn-primary btn-sm" onClick={() => { setError(''); setShowForm(true) }}>
-          + Add User
-        </button>
-      </div>
+      {currentUser?.role !== 'manager' && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+          <button className="btn btn-primary btn-sm" onClick={() => { setError(''); setShowForm(true) }}>
+            + Add User
+          </button>
+        </div>
+      )}
 
       <div style={{
         background: 'var(--bg-surface-1)',

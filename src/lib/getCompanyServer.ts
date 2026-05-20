@@ -52,7 +52,7 @@ export async function middleware(request: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    if (!userData || !['quria', 'owner'].includes(userData.role)) {
+    if (!userData || !['quria', 'owner', 'manager'].includes(userData.role)) {
       return NextResponse.redirect(new URL('/', request.url))
     }
   }
