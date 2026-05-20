@@ -19,23 +19,21 @@ function TrashIcon() {
 }
 
 const NOTE_TYPES = [
-  { value: 'event',          label: 'Event' },
-  { value: 'holiday',        label: 'Holiday' },
-  { value: 'schedule',       label: 'Scheduling' },
-  { value: 'time_off',       label: 'Time Off' },
-  { value: 'staffing',       label: 'Staffing' },
-  { value: 'manager_pref',   label: 'Manager Preference' },
-  { value: 'custom',         label: 'General' },
+  { value: 'holiday',       label: 'Holiday' },
+  { value: 'special_event', label: 'Special Event' },
+  { value: 'party',         label: 'Party' },
+  { value: 'fundraiser',    label: 'Fundraiser' },
+  { value: 'closure',       label: 'Closure' },
+  { value: 'custom',        label: 'Custom' },
 ]
 
 const NOTE_TYPE_COLORS: Record<string, string> = {
-  event:        '#8b5cf6',
-  holiday:      '#3b82f6',
-  schedule:     '#10b981',
-  time_off:     '#f97316',
-  staffing:     '#ec4899',
-  manager_pref: '#14b8a6',
-  custom:       '#6b7280',
+  holiday:       '#3b82f6',
+  special_event: '#8b5cf6',
+  party:         '#ec4899',
+  fundraiser:    '#10b981',
+  closure:       '#ef4444',
+  custom:        '#6b7280',
 }
 
 interface SpecialNote {
