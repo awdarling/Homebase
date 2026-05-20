@@ -9,6 +9,7 @@ interface ActivityEntry {
   id: string
   actor: 'aegis' | 'manager' | 'soteria' | 'system' | 'quria_admin'
   actor_name: string | null
+  actor_avatar_url: string | null
   summary: string
   action: string
   entity_type: string | null
@@ -309,6 +310,7 @@ export default function HomePage() {
   const supabase = createClient()
 
   const [activity, setActivity] = useState<ActivityEntry[]>([])
+  const [userAvatarByName, setUserAvatarByName] = useState<Record<string, string>>({})
   const [pendingTO, setPendingTO] = useState<TORequest[]>([])
   const [outThisWeek, setOutThisWeek] = useState<TORequest[]>([])
   const [currentSchedule, setCurrentSchedule] = useState<Schedule | null>(null)
@@ -347,6 +349,28 @@ export default function HomePage() {
         e.action !== 'intent_classified'
       )
       setActivity(cleaned)
+
+      const namesNeedingAvatars = Array.from(
+        new Set(
+          cleaned
+            .filter((e) => (e.actor === 'manager' || e.actor === 'quria_admin') && !e.actor_avatar_url && e.actor_name)
+            .map((e) => e.actor_name as string),
+        ),
+      )
+
+      if (namesNeedingAvatars.length > 0) {
+        const { data: userRows } = await supabase
+          .from('users')
+          .select('name, avatar_url')
+          .in('name', namesNeedingAvatars)
+        const map: Record<string, string> = {}
+        ;(userRows ?? []).forEach((u: { name: string | null; avatar_url: string | null }) => {
+          if (u.name && u.avatar_url) map[u.name] = u.avatar_url
+        })
+        setUserAvatarByName(map)
+      } else {
+        setUserAvatarByName({})
+      }
     }
     if (toRes.data) setPendingTO(toRes.data as TORequest[])
     if (empRes.data) {
@@ -703,10 +727,24 @@ export default function HomePage() {
                 ? '/aegis-icon.jpg'
                 : item.actor === 'soteria' || item.actor === 'system'
                   ? '/soteria-icon.png'
+                : (item.actor === 'manager' || item.actor === 'quria_admin')
+                  ? (item.actor_avatar_url || userAvatarByName[item.actor_name || ''] || null)
                   : null
               const displayLabel = item.actor_name && (item.actor === 'manager' || item.actor === 'quria_admin')
                 ? item.actor_name
                 : style.label
+              const initial = (() => {
+                if (item.actor === 'aegis' || item.actor === 'soteria' || item.actor === 'system') {
+                  return style.initial
+                }
+                const name = item.actor_name || ''
+                if (!name) return style.initial
+                const parts = name.trim().split(/\s+/)
+                if (parts.length >= 2) {
+                  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+                }
+                return parts[0][0].toUpperCase()
+              })()
               return (
                 <div key={item.id} style={{
                   display: 'flex',
@@ -738,7 +776,7 @@ export default function HomePage() {
                         style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
                       />
                     ) : (
-                      style.initial
+                      initial
                     )}
                   </div>
                   <div style={{ flex: 1 }}>
