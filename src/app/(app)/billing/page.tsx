@@ -249,6 +249,13 @@ function BillingContent() {
             </div>
           ) : null}
 
+          {canSeePricing && billing?.subscription_notes && billing.subscription_notes.trim() && (
+            <div style={{ fontSize: 11, fontStyle: 'italic', color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.5 }}>
+              <span style={{ color: 'var(--text-secondary)', fontStyle: 'normal' }}>Contract: </span>
+              {billing.subscription_notes}
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: 8 }}>
             {billing?.subscription_status !== 'active' ? (
               <button
