@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { withAnthropicRetry } from '@/lib/anthropic-retry'
 
 console.log('[soteria] API key present:', !!process.env.ANTHROPIC_API_KEY)
 
@@ -116,12 +117,14 @@ Return JSON with this exact shape:
 
 If there are no issues, return valid: true, empty arrays for issues/suggestions, and a brief positive summary.`
 
-  const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 512,
-    messages: [{ role: 'user', content: userMessage }],
-    system: systemPrompt,
-  })
+  const message = await withAnthropicRetry(() =>
+    anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 512,
+      messages: [{ role: 'user', content: userMessage }],
+      system: systemPrompt,
+    })
+  )
 
   const raw = message.content[0].type === 'text' ? message.content[0].text.trim() : ''
 
@@ -139,13 +142,25 @@ If there are no issues, return valid: true, empty arrays for issues/suggestions,
   }
 
   return NextResponse.json(result)
-  } catch (err) {
-    console.error('[soteria] error:', err)
-    return NextResponse.json({
-      valid: false,
-      issues: [],
-      suggestions: [],
-      summary: 'Soteria encountered an error. Check Vercel logs for details.',
-    })
+  } catch (error) {
+    console.error('[soteria] error:', error)
+    const status = error != null && typeof error === 'object' && 'status' in error
+      ? (error as { status: number }).status
+      : 500
+    const isOverload = status === 529
+    return NextResponse.json(
+      {
+        error: isOverload
+          ? 'AI service temporarily overloaded. Please try again in a few seconds.'
+          : 'Validation failed',
+        valid: false,
+        issues: [],
+        suggestions: [],
+        summary: isOverload
+          ? 'Soteria is temporarily unavailable. Please try again.'
+          : 'An error occurred during validation.',
+      },
+      { status: isOverload ? 503 : 500 },
+    )
   }
 }
