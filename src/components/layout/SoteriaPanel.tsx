@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { useCompany } from '@/lib/hooks/useCompany'
 
 interface Message {
@@ -436,9 +437,118 @@ export default function SoteriaPanel() {
                     borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
                     background: msg.role === 'user' ? 'var(--bg-surface-3)' : 'var(--bg-surface-2)',
                     border: msg.role === 'assistant' ? '1px solid rgba(249,115,22,0.15)' : '1px solid var(--border-subtle)',
-                    fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-wrap',
+                    fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6,
+                    whiteSpace: msg.role === 'user' ? 'pre-wrap' : 'normal',
                   }}>
-                    {msg.content}
+                    {msg.role === 'assistant' ? (
+                      <ReactMarkdown
+                        components={{
+                          p: ({ children }) => (
+                            <p style={{
+                              margin: '0 0 8px 0',
+                              lineHeight: 1.6,
+                              fontSize: 13,
+                              color: 'var(--text-primary)',
+                            }}>
+                              {children}
+                            </p>
+                          ),
+                          strong: ({ children }) => (
+                            <strong style={{
+                              color: 'var(--text-primary)',
+                              fontWeight: 600,
+                            }}>
+                              {children}
+                            </strong>
+                          ),
+                          ul: ({ children }) => (
+                            <ul style={{
+                              margin: '6px 0',
+                              paddingLeft: 18,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 4,
+                            }}>
+                              {children}
+                            </ul>
+                          ),
+                          ol: ({ children }) => (
+                            <ol style={{
+                              margin: '6px 0',
+                              paddingLeft: 18,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 4,
+                            }}>
+                              {children}
+                            </ol>
+                          ),
+                          li: ({ children }) => (
+                            <li style={{
+                              fontSize: 13,
+                              lineHeight: 1.55,
+                              color: 'var(--text-primary)',
+                            }}>
+                              {children}
+                            </li>
+                          ),
+                          h1: ({ children }) => (
+                            <h1 style={{
+                              fontSize: 15,
+                              fontWeight: 700,
+                              margin: '10px 0 6px',
+                              color: 'var(--text-primary)',
+                            }}>
+                              {children}
+                            </h1>
+                          ),
+                          h2: ({ children }) => (
+                            <h2 style={{
+                              fontSize: 14,
+                              fontWeight: 700,
+                              margin: '10px 0 4px',
+                              color: 'var(--text-primary)',
+                            }}>
+                              {children}
+                            </h2>
+                          ),
+                          h3: ({ children }) => (
+                            <h3 style={{
+                              fontSize: 13,
+                              fontWeight: 600,
+                              margin: '8px 0 4px',
+                              color: 'var(--accent)',
+                            }}>
+                              {children}
+                            </h3>
+                          ),
+                          code: ({ children }) => (
+                            <code style={{
+                              background: 'var(--bg-surface-3)',
+                              border: '1px solid var(--border-default)',
+                              borderRadius: 4,
+                              padding: '1px 5px',
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                              color: 'var(--accent)',
+                            }}>
+                              {children}
+                            </code>
+                          ),
+                          hr: () => (
+                            <hr style={{
+                              border: 'none',
+                              borderTop: '1px solid var(--border-subtle)',
+                              margin: '8px 0',
+                            }} />
+                          ),
+                        }}
+                      >
+                        {msg.content}
+                      </ReactMarkdown>
+                    ) : (
+                      msg.content
+                    )}
                   </div>
                 </div>
 
