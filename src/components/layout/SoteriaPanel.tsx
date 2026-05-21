@@ -102,6 +102,13 @@ async function readFileAsBase64(file: File): Promise<string> {
   })
 }
 
+function stripActionTags(text: string): string {
+  return (text ?? '')
+    .replace(/<action>[\s\S]*?<\/action>/g, '')
+    .replace(/<memory>[\s\S]*?<\/memory>/g, '')
+    .trim()
+}
+
 export default function SoteriaPanel() {
   const { company } = useCompany()
   const COMPANY_ID = company?.id ?? ''
@@ -149,7 +156,7 @@ export default function SoteriaPanel() {
       const assistantMessage: Message = {
         id: Date.now().toString(),
         role: 'assistant',
-        content: data.message,
+        content: stripActionTags(data.message),
         action: data.action ?? null,
         actionStatus: data.action ? 'pending' : undefined,
       }
@@ -250,7 +257,7 @@ export default function SoteriaPanel() {
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: data.message,
+        content: stripActionTags(data.message),
         action: data.action ?? null,
         actionStatus: data.action ? 'pending' : undefined,
       }
