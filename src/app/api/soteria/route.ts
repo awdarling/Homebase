@@ -60,6 +60,8 @@ async function getCompanyContext(companyId: string) {
 
 function buildSystemPrompt(context: Awaited<ReturnType<typeof getCompanyContext>>) {
   const { company, profile, employees, shifts, policies, conflicts, memory, isNewCompany, summary } = context
+  const today = new Date().toISOString().slice(0, 10)
+  const currentYear = today.slice(0, 4)
 
   const conflictWarnings = () => {
     if (!conflicts || conflicts.length === 0) return ''
@@ -79,7 +81,9 @@ ${memory.map((m: { memory_type: string; content: string }) => `- [${m.memory_typ
 Use this memory to personalize your responses. Reference past decisions and preferences naturally.`
   }
 
-  return `You are Soteria, an operational setup and advisory assistant built into Homebase by Quria Solutions.
+  return `Today's date is ${today}. Always use ${currentYear} as the year when interpreting dates unless a different year is explicitly stated.
+
+You are Soteria, an operational setup and advisory assistant built into Homebase by Quria Solutions.
 
 Your role is to help managers set up their business data, refine their rules, and improve their operational structure. You are knowledgeable, warm, direct, and proactive. You think like an experienced operational consultant who has seen hundreds of businesses.
 

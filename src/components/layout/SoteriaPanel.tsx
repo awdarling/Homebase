@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useCompany } from '@/lib/hooks/useCompany'
 
 interface Message {
@@ -442,6 +443,7 @@ export default function SoteriaPanel() {
                   }}>
                     {msg.role === 'assistant' ? (
                       <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
                         components={{
                           p: ({ children }) => (
                             <p style={{
@@ -541,6 +543,59 @@ export default function SoteriaPanel() {
                               borderTop: '1px solid var(--border-subtle)',
                               margin: '8px 0',
                             }} />
+                          ),
+                          table: ({ children }) => (
+                            <div style={{ overflowX: 'auto', margin: '8px 0' }}>
+                              <table style={{
+                                borderCollapse: 'collapse',
+                                width: '100%',
+                                fontSize: 12,
+                                fontFamily: 'var(--font-body)',
+                              }}>
+                                {children}
+                              </table>
+                            </div>
+                          ),
+                          thead: ({ children }) => (
+                            <thead style={{
+                              borderBottom: '2px solid var(--border-default)',
+                            }}>
+                              {children}
+                            </thead>
+                          ),
+                          tbody: ({ children }) => (
+                            <tbody>{children}</tbody>
+                          ),
+                          tr: ({ children }) => (
+                            <tr style={{
+                              borderBottom: '1px solid var(--border-subtle)',
+                            }}>
+                              {children}
+                            </tr>
+                          ),
+                          th: ({ children }) => (
+                            <th style={{
+                              padding: '6px 10px',
+                              textAlign: 'left',
+                              fontSize: 10,
+                              fontWeight: 700,
+                              letterSpacing: '0.08em',
+                              textTransform: 'uppercase',
+                              color: 'var(--text-muted)',
+                              whiteSpace: 'nowrap',
+                            }}>
+                              {children}
+                            </th>
+                          ),
+                          td: ({ children }) => (
+                            <td style={{
+                              padding: '6px 10px',
+                              fontSize: 12,
+                              color: 'var(--text-secondary)',
+                              verticalAlign: 'top',
+                            }}>
+                              {children}
+                            </td>
                           ),
                         }}
                       >
