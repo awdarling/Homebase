@@ -338,39 +338,48 @@ export async function POST(request: NextRequest) {
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
+      max_tokens: 8192,
       system: systemPrompt,
       messages: formattedMessages as Parameters<typeof anthropic.messages.create>[0]['messages'],
     })
 
     const content = response.content[0].type === 'text' ? response.content[0].text : ''
+    const stopReason = response.stop_reason
+    if (stopReason === 'max_tokens') {
+      console.warn('Soteria response truncated by max_tokens; action JSON may be incomplete')
+    }
 
-    // Parse action blocks
-    const actionMatch = content.match(/<action>([\s\S]*?)<\/action>/)
+    const stripJsonFence = (s: string): string =>
+      s.replace(/^\s*```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
+
     let action = null
     let cleanContent = content
-
+    const actionMatch = content.match(/<action>([\s\S]*?)<\/action>/)
     if (actionMatch) {
+      cleanContent = cleanContent.replace(/<action>[\s\S]*?<\/action>/g, '').trim()
       try {
-        action = JSON.parse(actionMatch[1].trim())
-        cleanContent = content.replace(/<action>[\s\S]*?<\/action>/, '').trim()
+        action = JSON.parse(stripJsonFence(actionMatch[1]))
       } catch (e) {
-        console.error('Failed to parse action:', e)
+        const raw = actionMatch[1]
+        console.error(
+          `Soteria action JSON parse failed (len=${raw.length}, stop=${stopReason}):`,
+          e,
+          'preview:', raw.slice(0, 200),
+        )
       }
     }
 
-    // Parse and auto-save memory blocks
     const memoryMatch = cleanContent.match(/<memory>([\s\S]*?)<\/memory>/)
     if (memoryMatch) {
+      cleanContent = cleanContent.replace(/<memory>[\s\S]*?<\/memory>/g, '').trim()
       try {
-        const memoryData = JSON.parse(memoryMatch[1].trim())
+        const memoryData = JSON.parse(stripJsonFence(memoryMatch[1]))
         await supabase.from('soteria_memory').insert({
           company_id: companyId,
           memory_type: memoryData.memory_type,
           content: memoryData.content,
           source: memoryData.source ?? 'conversation',
         })
-        cleanContent = cleanContent.replace(/<memory>[\s\S]*?<\/memory>/, '').trim()
       } catch (e) {
         console.error('Failed to save memory:', e)
       }

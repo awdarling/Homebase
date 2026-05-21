@@ -106,6 +106,8 @@ function stripActionTags(text: string): string {
   return (text ?? '')
     .replace(/<action>[\s\S]*?<\/action>/g, '')
     .replace(/<memory>[\s\S]*?<\/memory>/g, '')
+    .replace(/<action>[\s\S]*$/g, '')
+    .replace(/<memory>[\s\S]*$/g, '')
     .trim()
 }
 
