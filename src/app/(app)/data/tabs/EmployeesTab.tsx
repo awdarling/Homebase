@@ -754,26 +754,27 @@ export default function EmployeesTab() {
         border: '1px solid var(--border-default)',
         borderRadius: 'var(--radius-lg)',
         overflow: 'hidden',
+        overflowX: 'auto',
       }}>
-        <table className="data-table" style={{ tableLayout: 'fixed', width: '100%', minWidth: 900 }}>
+        <table className="data-table" style={{ tableLayout: 'fixed', width: '100%', minWidth: 1200 }}>
           <colgroup>
-            <col style={{ width: '18%' }} />
-            <col style={{ width: '6%' }} />
+            <col style={{ width: '22%' }} />
+            <col style={{ width: '7%' }} />
+            <col style={{ width: '9%' }} />
             <col style={{ width: '5%' }} />
-            <col style={{ width: '6%' }} />
             <col style={{ width: '9%' }} />
             <col style={{ width: '11%' }} />
-            <col style={{ width: '13%' }} />
             <col style={{ width: '12%' }} />
             <col style={{ width: '9%' }} />
-            <col style={{ width: '7%' }} />
-            <col style={{ width: '4%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '5%' }} />
+            <col style={{ width: '3%' }} />
           </colgroup>
           <thead>
             <tr>
               <th>Employee</th>
               <th>Veteran</th>
-              <th>Custom</th>
+              <th>Custom Availability</th>
               <th>Sex</th>
               <th>Role</th>
               <th>Also Qualifies</th>
