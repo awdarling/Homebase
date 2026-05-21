@@ -44,6 +44,24 @@ export interface Availability {
   end_time: string    // HH:MM
 }
 
+export interface PartialDayDetail {
+  date: string
+  type: 'shift_off' | 'custom_hours'
+  shift_id?: string | null
+  shift_name?: string | null
+  start_time?: string | null
+  end_time?: string | null
+}
+
+export interface ShiftOption {
+  id: string
+  shift_name: string
+  start_time: string
+  end_time: string
+  role: string
+  days_active: number[]
+}
+
 export interface TimeOffRequest {
   id: string
   employee_id: string
@@ -57,6 +75,8 @@ export interface TimeOffRequest {
   decided_by: string | null
   aegis_recommendation: 'approve' | 'deny' | 'neutral' | null
   aegis_reasoning: string | null
+  time_off_type: 'full_day' | 'partial' | null
+  partial_days: PartialDayDetail[] | null
   employee?: Employee
 }
 
