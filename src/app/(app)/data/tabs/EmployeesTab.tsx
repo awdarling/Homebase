@@ -756,19 +756,19 @@ export default function EmployeesTab() {
         overflow: 'hidden',
         overflowX: 'auto',
       }}>
-        <table className="data-table" style={{ tableLayout: 'fixed', width: '100%', minWidth: 1200 }}>
+        <table className="data-table" style={{ tableLayout: 'fixed', width: '100%', minWidth: 1100 }}>
           <colgroup>
-            <col style={{ width: '22%' }} />
-            <col style={{ width: '7%' }} />
-            <col style={{ width: '9%' }} />
-            <col style={{ width: '5%' }} />
-            <col style={{ width: '9%' }} />
-            <col style={{ width: '11%' }} />
-            <col style={{ width: '12%' }} />
-            <col style={{ width: '9%' }} />
+            <col style={{ width: '16%' }} />
+            <col style={{ width: '6%' }} />
             <col style={{ width: '8%' }} />
             <col style={{ width: '5%' }} />
-            <col style={{ width: '3%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '11%' }} />
+            <col style={{ width: '9%' }} />
+            <col style={{ width: '9%' }} />
+            <col style={{ width: '5%' }} />
+            <col style={{ width: '4%' }} />
           </colgroup>
           <thead>
             <tr>
