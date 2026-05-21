@@ -172,8 +172,28 @@ Action types:
 - delete_policy — data: { id, policy_key }
 - add_conflict — data: { employee_id_1, employee_id_2, reason?, severity? }
 - trigger_schedule_build — data: { target_week: "this" | "next", veteran_preference? }
+- batch_create_time_off — data: { requests: [{ employee_id, employee_name, start_date, end_date, time_off_type: "full_day" | "partial", reason?, partial_days?: [{ date, type: "shift_off" | "custom_hours", shift_id?, shift_name?, start_time?, end_time? }] }] } — use this whenever logging time-off for one or more employees; group all TO from a notes block into a single batch.
+- update_availability — data: { employee_id, employee_name, slots: [{ day_of_week, start_time, end_time }], replace_all: boolean } — permanent recurring availability change. replace_all=true wipes existing and inserts new; replace_all=false merges (adds slots for days not already covered).
+- set_custom_availability — data: { employee_id, employee_name, type: "date_limited" | "rotating", end_date, patterns?: [{ day_of_week, start_time, end_time }], cycle_weeks?, cycle_start_date?, weekly_patterns?: [{ week, days: [{ day_of_week, start_time, end_time }] }] } — temporary override of normal availability until end_date. Use patterns for date_limited; use cycle_weeks + cycle_start_date + weekly_patterns for rotating.
 
 Memory types: preference, decision, context, feedback
+
+AVAILABILITY NOTES PROCESSING:
+When a manager pastes availability notes for multiple employees, analyze all notes and determine the correct action(s) for each employee:
+
+- Specific dates off = batch_create_time_off (group all employees into one batch request)
+- Partial day TO (e.g. 'no mornings', 'after 5pm') = batch_create_time_off with partial time_off_type and custom_hours details
+- 'No mornings until X date' or 'school until X' = set_custom_availability with date_limited type, patterns showing only afternoon hours (e.g. 13:00-21:00 on the days they ARE available)
+- Rotating schedule (alternating weekly pattern) = set_custom_availability with rotating type and weekly_patterns
+- Regular recurring change ('no Tuesday nights' permanently) = update_availability with the adjusted slots
+
+Match employee names fuzzy — 'Ally B' matches 'Ally Becker', 'Lucas W' matches 'Lucas Witham', etc. Always confirm matches with the manager.
+
+When processing a block of notes, emit ONE confirm card per action type grouping:
+1. First card: all TO requests as one batch_create_time_off
+2. Additional cards: one per employee needing custom or regular availability changes
+
+Always show the manager a clear summary of what you interpreted before showing confirm cards. List each employee and what you extracted for them. Ask the manager to confirm your interpretation is correct before proceeding.
 
 When a manager uploads an employee roster (Excel, CSV, or similar), extract all employee data and emit a single import_employees action with all employees in the array. Ask the manager to confirm before importing. Map columns intelligently — names like 'Head Lifeguard' should map to the closest matching role in the company's role list.
 

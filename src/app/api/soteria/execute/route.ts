@@ -311,6 +311,169 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true })
       }
 
+      case 'batch_create_time_off': {
+        const d = action.data as {
+          requests: {
+            employee_id: string
+            employee_name: string
+            start_date: string
+            end_date: string
+            time_off_type: 'full_day' | 'partial'
+            reason?: string | null
+            partial_days?: {
+              date: string
+              type: 'shift_off' | 'custom_hours'
+              shift_id?: string | null
+              shift_name?: string | null
+              start_time?: string | null
+              end_time?: string | null
+            }[] | null
+          }[]
+        }
+
+        const rows = (d.requests ?? []).map((r) => ({
+          company_id: companyId,
+          employee_id: r.employee_id,
+          start_date: r.start_date,
+          end_date: r.end_date,
+          reason: r.reason ?? 'personal',
+          status: 'pending',
+          time_off_type: r.time_off_type,
+          partial_days: r.partial_days ?? null,
+        }))
+
+        const { error } = await supabase.from('time_off_requests').insert(rows)
+        if (error) throw error
+
+        const names = (d.requests ?? []).map((r) => r.employee_name).join(', ')
+        const count = rows.length
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'time_off_batch_created',
+          entity_type: 'time_off_request',
+          summary: `Soteria logged time-off requests for ${count} employee${count === 1 ? '' : 's'}: ${names}`,
+        })
+
+        return NextResponse.json({ success: true, created: count })
+      }
+
+      case 'update_availability': {
+        const d = action.data as {
+          employee_id: string
+          employee_name: string
+          slots: { day_of_week: number; start_time: string; end_time: string }[]
+          replace_all: boolean
+        }
+
+        const { data: emp, error: empErr } = await supabase
+          .from('employees')
+          .select('id')
+          .eq('id', d.employee_id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+        if (empErr) throw empErr
+        if (!emp) {
+          return NextResponse.json(
+            { error: 'Employee not found in this company' },
+            { status: 404 }
+          )
+        }
+
+        let slotsToInsert = d.slots ?? []
+
+        if (d.replace_all) {
+          await supabase
+            .from('availability')
+            .delete()
+            .eq('employee_id', d.employee_id)
+            .eq('company_id', companyId)
+        } else {
+          const { data: existing } = await supabase
+            .from('availability')
+            .select('day_of_week')
+            .eq('employee_id', d.employee_id)
+            .eq('company_id', companyId)
+          const covered = new Set(
+            (existing ?? []).map((r: { day_of_week: number }) => r.day_of_week)
+          )
+          slotsToInsert = slotsToInsert.filter((s) => !covered.has(s.day_of_week))
+        }
+
+        if (slotsToInsert.length > 0) {
+          const { error: insErr } = await supabase.from('availability').insert(
+            slotsToInsert.map((s) => ({
+              company_id: companyId,
+              employee_id: d.employee_id,
+              day_of_week: s.day_of_week,
+              start_time: s.start_time,
+              end_time: s.end_time,
+            }))
+          )
+          if (insErr) throw insErr
+        }
+
+        const dayCount = slotsToInsert.length
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'availability_updated',
+          entity_type: 'availability',
+          entity_id: d.employee_id,
+          summary: `Soteria updated availability for ${d.employee_name}: ${dayCount} day${dayCount === 1 ? '' : 's'} set`,
+        })
+
+        return NextResponse.json({ success: true })
+      }
+
+      case 'set_custom_availability': {
+        const d = action.data as {
+          employee_id: string
+          employee_name: string
+          type: 'date_limited' | 'rotating'
+          end_date: string
+          patterns?: { day_of_week: number; start_time: string; end_time: string }[]
+          cycle_weeks?: number
+          cycle_start_date?: string
+          weekly_patterns?: {
+            week: number
+            days: { day_of_week: number; start_time: string; end_time: string }[]
+          }[]
+        }
+
+        await supabase
+          .from('custom_availability')
+          .update({ active: false })
+          .eq('employee_id', d.employee_id)
+          .eq('company_id', companyId)
+
+        const patterns =
+          d.type === 'date_limited' ? (d.patterns ?? []) : (d.weekly_patterns ?? [])
+
+        const { error: insErr } = await supabase.from('custom_availability').insert({
+          company_id: companyId,
+          employee_id: d.employee_id,
+          type: d.type,
+          end_date: d.end_date,
+          cycle_weeks: d.type === 'rotating' ? (d.cycle_weeks ?? null) : null,
+          cycle_start_date: d.type === 'rotating' ? (d.cycle_start_date ?? null) : null,
+          patterns,
+          active: true,
+        })
+        if (insErr) throw insErr
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'custom_availability_set',
+          entity_type: 'custom_availability',
+          entity_id: d.employee_id,
+          summary: `Soteria set custom availability for ${d.employee_name} (${d.type}, until ${d.end_date})`,
+        })
+
+        return NextResponse.json({ success: true })
+      }
+
       case 'trigger_schedule_build': {
         const d = action.data as {
           target_week: 'this' | 'next'
