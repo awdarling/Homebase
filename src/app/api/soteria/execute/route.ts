@@ -331,6 +331,7 @@ export async function POST(request: NextRequest) {
           }[]
         }
 
+        const nowIso = new Date().toISOString()
         const rows = (d.requests ?? []).map((r) => ({
           company_id: companyId,
           employee_id: r.employee_id,
@@ -340,6 +341,7 @@ export async function POST(request: NextRequest) {
           status: 'pending',
           time_off_type: r.time_off_type,
           partial_days: r.partial_days ?? null,
+          requested_at: nowIso,
         }))
 
         const { error } = await supabase.from('time_off_requests').insert(rows)

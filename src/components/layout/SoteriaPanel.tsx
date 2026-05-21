@@ -12,6 +12,7 @@ interface Message {
   action?: any
   actionStatus?: 'pending' | 'confirmed' | 'failed' | 'rejected'
   actionError?: string
+  actionSubmitting?: boolean
 }
 
 interface ImageData {
@@ -276,7 +277,7 @@ export default function SoteriaPanel() {
 
   async function handleConfirmAction(messageId: string, action: any) {
     setMessages((prev) => prev.map((m) =>
-      m.id === messageId ? { ...m, actionStatus: 'confirmed' } : m
+      m.id === messageId ? { ...m, actionSubmitting: true, actionError: undefined } : m
     ))
     try {
       const res = await fetch('/api/soteria/execute', {
@@ -296,10 +297,14 @@ export default function SoteriaPanel() {
         const errMsg = data.error ?? `Request failed (${res.status})`
         console.error('Soteria execute error:', errMsg)
         setMessages((prev) => prev.map((m) =>
-          m.id === messageId ? { ...m, actionStatus: 'failed', actionError: errMsg } : m
+          m.id === messageId ? { ...m, actionSubmitting: false, actionError: errMsg } : m
         ))
         return
       }
+
+      setMessages((prev) => prev.map((m) =>
+        m.id === messageId ? { ...m, actionSubmitting: false, actionStatus: 'confirmed', actionError: undefined } : m
+      ))
 
       const followUpContent = action.type === 'trigger_schedule_build'
         ? "Got it — I've triggered the schedule build. You'll receive a text when it's ready."
@@ -315,7 +320,7 @@ export default function SoteriaPanel() {
       const errMsg = e instanceof Error ? e.message : 'Network error'
       console.error('Execute error:', e)
       setMessages((prev) => prev.map((m) =>
-        m.id === messageId ? { ...m, actionStatus: 'failed', actionError: errMsg } : m
+        m.id === messageId ? { ...m, actionSubmitting: false, actionError: errMsg } : m
       ))
     }
   }
@@ -629,18 +634,39 @@ export default function SoteriaPanel() {
                       {msg.action.description}
                     </div>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      <button onClick={() => handleConfirmAction(msg.id, msg.action)} style={{
-                        padding: '5px 14px', borderRadius: 'var(--radius-md)',
-                        border: '1px solid var(--status-ready-border)',
-                        background: 'var(--status-ready-bg)', color: 'var(--status-ready-text)',
-                        fontSize: 12, fontFamily: 'var(--font-body)', cursor: 'pointer', fontWeight: 500,
-                      }}>Confirm</button>
-                      <button onClick={() => handleRejectAction(msg.id)} style={{
-                        padding: '5px 14px', borderRadius: 'var(--radius-md)',
-                        border: '1px solid var(--border-default)', background: 'transparent',
-                        color: 'var(--text-muted)', fontSize: 12, fontFamily: 'var(--font-body)', cursor: 'pointer',
-                      }}>Reject</button>
+                      <button
+                        onClick={() => handleConfirmAction(msg.id, msg.action)}
+                        disabled={msg.actionSubmitting}
+                        style={{
+                          padding: '5px 14px', borderRadius: 'var(--radius-md)',
+                          border: '1px solid var(--status-ready-border)',
+                          background: 'var(--status-ready-bg)', color: 'var(--status-ready-text)',
+                          fontSize: 12, fontFamily: 'var(--font-body)', fontWeight: 500,
+                          cursor: msg.actionSubmitting ? 'default' : 'pointer',
+                          opacity: msg.actionSubmitting ? 0.6 : 1,
+                        }}
+                      >
+                        {msg.actionSubmitting ? 'Saving…' : 'Confirm'}
+                      </button>
+                      <button
+                        onClick={() => handleRejectAction(msg.id)}
+                        disabled={msg.actionSubmitting}
+                        style={{
+                          padding: '5px 14px', borderRadius: 'var(--radius-md)',
+                          border: '1px solid var(--border-default)', background: 'transparent',
+                          color: 'var(--text-muted)', fontSize: 12, fontFamily: 'var(--font-body)',
+                          cursor: msg.actionSubmitting ? 'default' : 'pointer',
+                          opacity: msg.actionSubmitting ? 0.6 : 1,
+                        }}
+                      >
+                        Reject
+                      </button>
                     </div>
+                    {msg.actionError && (
+                      <div style={{ fontSize: 11, color: '#ef4444', marginTop: 8 }}>
+                        ✗ {msg.actionError}
+                      </div>
+                    )}
                   </div>
                 )}
                 {msg.action && msg.actionStatus === 'confirmed' && (
@@ -648,11 +674,6 @@ export default function SoteriaPanel() {
                     {msg.action.type === 'trigger_schedule_build'
                       ? "✓ Schedule build triggered — you'll receive a text when it's ready"
                       : '✓ Confirmed and saved'}
-                  </div>
-                )}
-                {msg.action && msg.actionStatus === 'failed' && (
-                  <div style={{ fontSize: 11, color: '#ef4444', marginTop: 4, paddingLeft: 28 }}>
-                    ✗ Failed — {msg.actionError ?? 'Unknown error'}
                   </div>
                 )}
                 {msg.action && msg.actionStatus === 'rejected' && (

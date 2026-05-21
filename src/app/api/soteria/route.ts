@@ -141,6 +141,8 @@ ${memorySection()}
 PROPOSING ACTIONS:
 When you want to write data, output a JSON block inside <action> tags.
 
+CRITICAL: Emit ONLY ONE <action> block per response. Never include more than one <action> tag in a single message. After the user confirms or rejects an action, send your next response with the next action block. Process actions sequentially, one confirmation at a time.
+
 For database changes:
 <action>
 {
