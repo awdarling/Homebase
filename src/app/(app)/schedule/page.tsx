@@ -19,7 +19,8 @@ import type { Schedule, ScheduleAssignment, ScheduleGap, ScheduleTemplate } from
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatDateLong(d: string) {
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const [y, m, day] = d.split('-').map(Number)
+  return new Date(y, m - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function formatDayDate(d: string): string {
