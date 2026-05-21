@@ -755,19 +755,19 @@ export default function EmployeesTab() {
         borderRadius: 'var(--radius-lg)',
         overflow: 'hidden',
       }}>
-        <table className="data-table" style={{ tableLayout: 'fixed', width: '100%' }}>
+        <table className="data-table" style={{ tableLayout: 'fixed', width: '100%', minWidth: 900 }}>
           <colgroup>
-            <col style={{ width: '14%' }} />
-            <col style={{ width: '7%' }} />
+            <col style={{ width: '18%' }} />
+            <col style={{ width: '6%' }} />
             <col style={{ width: '5%' }} />
-            <col style={{ width: '8%' }} />
+            <col style={{ width: '6%' }} />
             <col style={{ width: '9%' }} />
-            <col style={{ width: '10%' }} />
+            <col style={{ width: '11%' }} />
+            <col style={{ width: '13%' }} />
+            <col style={{ width: '12%' }} />
             <col style={{ width: '9%' }} />
-            <col style={{ width: '12%' }} />
-            <col style={{ width: '12%' }} />
             <col style={{ width: '7%' }} />
-            <col style={{ width: '7%' }} />
+            <col style={{ width: '4%' }} />
           </colgroup>
           <thead>
             <tr>
