@@ -34,7 +34,7 @@ function isCustomAvailActive(ca: CustomAvailability | null | undefined): boolean
 }
 
 function emptyWeekRows(): AvailabilityRow[] {
-  return DAYS.map((_, i) => ({ day: i, active: false, start_time: '09:00', end_time: '17:00' }))
+  return DAYS.map((_, i) => ({ day: i, active: false, start_time: '00:01', end_time: '23:59' }))
 }
 
 function patternsToWeekRows(patterns: CustomAvailabilityPattern[]): AvailabilityRow[] {
@@ -42,7 +42,7 @@ function patternsToWeekRows(patterns: CustomAvailabilityPattern[]): Availability
     const p = patterns.find(pp => pp.day_of_week === i)
     return p
       ? { day: i, active: true, start_time: p.start_time.slice(0, 5), end_time: p.end_time.slice(0, 5) }
-      : { day: i, active: false, start_time: '09:00', end_time: '17:00' }
+      : { day: i, active: false, start_time: '00:01', end_time: '23:59' }
   })
 }
 
@@ -77,8 +77,8 @@ interface AvailabilityRow {
 const DEFAULT_AVAILABILITY: AvailabilityRow[] = DAYS.map((_, i) => ({
   day: i,
   active: false,
-  start_time: '09:00',
-  end_time: '17:00',
+  start_time: '00:01',
+  end_time: '23:59',
 }))
 
 function TrashIcon() {
@@ -335,8 +335,8 @@ export default function EmployeesTab() {
       return {
         day: i,
         active: !!found,
-        start_time: found ? found.start.slice(0, 5) : '09:00',
-        end_time: found ? found.end.slice(0, 5) : '17:00',
+        start_time: found ? found.start.slice(0, 5) : '00:01',
+        end_time: found ? found.end.slice(0, 5) : '23:59',
       }
     })
   }
