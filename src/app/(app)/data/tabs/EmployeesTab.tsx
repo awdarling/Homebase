@@ -64,8 +64,6 @@ function VeteranBadge() {
 const SEX_LABELS: Record<string, string> = {
   male: 'Male',
   female: 'Female',
-  nonbinary: 'Non-binary',
-  prefer_not_to_say: 'Prefer not to say',
 }
 
 function SexBadge({ value }: { value: string }) {
@@ -242,8 +240,6 @@ export default function EmployeesTab() {
       const sexLabels: Record<string, string> = {
         male: 'Male',
         female: 'Female',
-        nonbinary: 'Non-binary',
-        prefer_not_to_say: 'Prefer not to say',
       }
       const fmtSex = (v: string | null): string => v ? (sexLabels[v] ?? v) : 'not set'
       parts.push(`sex: ${fmtSex(oldSex)} → ${fmtSex(newSex)}`)
@@ -812,8 +808,6 @@ export default function EmployeesTab() {
                   <option value="">Not specified</option>
                   <option value="male">Male</option>
                   <option value="female">Female</option>
-                  <option value="nonbinary">Non-binary</option>
-                  <option value="prefer_not_to_say">Prefer not to say</option>
                 </select>
               </div>
 
