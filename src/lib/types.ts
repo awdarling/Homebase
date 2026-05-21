@@ -140,6 +140,7 @@ export interface ScheduleData {
   assignments: ScheduleAssignment[]
   gaps: ScheduleGap[]
   summary: string
+  closed_dates?: string[]
 }
 
 export interface StaffingReport {

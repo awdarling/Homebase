@@ -21,6 +21,9 @@ interface ScheduleRendererProps {
   removeMode?: boolean
   pendingAssignments?: ScheduleAssignment[]
   onAssignmentChange?: (assignments: ScheduleAssignment[]) => void
+  closedDates?: string[]
+  onCloseDay?: (date: string) => void
+  onReopenDay?: (date: string) => void
 }
 
 const FONT_SIZES = {
@@ -213,6 +216,7 @@ function DroppableCell({
   baseBackground,
   enabled,
   editing,
+  closed,
   children,
 }: {
   shiftName: string
@@ -221,6 +225,7 @@ function DroppableCell({
   baseBackground: string
   enabled: boolean
   editing: boolean
+  closed: boolean
   children: React.ReactNode
 }) {
   const { setNodeRef, isOver } = useDroppable({
@@ -238,7 +243,7 @@ function DroppableCell({
         padding: 8,
         minHeight: rowHeight,
         overflowY: 'auto',
-        background: baseBackground,
+        background: closed ? 'rgba(107,114,128,0.08)' : baseBackground,
         outline: enabled && isOver
           ? '2px solid #60a5fa'
           : editing
@@ -249,9 +254,149 @@ function DroppableCell({
         flexDirection: 'column',
         gap: 4,
         transition: 'outline 0.15s, background 0.15s',
+        position: 'relative',
       }}
     >
-      {children}
+      {closed && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          pointerEvents: 'none',
+          fontFamily: 'var(--font-display)',
+          fontWeight: 800,
+          fontSize: 16,
+          letterSpacing: '0.25em',
+          color: 'rgba(239,68,68,0.18)',
+          textTransform: 'uppercase',
+          zIndex: 0,
+        }}>
+          CLOSED
+        </div>
+      )}
+      <div style={{
+        position: 'relative',
+        zIndex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        flex: 1,
+        opacity: closed ? 0.4 : 1,
+        pointerEvents: closed ? 'none' : undefined,
+      }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function DayHeader({
+  date,
+  label,
+  color,
+  closed,
+  onCloseDay,
+  onReopenDay,
+}: {
+  date: string
+  label: string
+  color: string
+  closed: boolean
+  onCloseDay?: (date: string) => void
+  onReopenDay?: (date: string) => void
+}) {
+  const [hovered, setHovered] = useState(false)
+
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        background: closed ? '#4b5563' : color,
+        borderBottom: '1px solid var(--border-default)',
+        borderRight: '1px solid var(--border-subtle)',
+        padding: '10px 12px 8px',
+        textAlign: 'center',
+        minHeight: 78,
+        position: 'relative',
+      }}>
+      <div style={{
+        fontFamily: 'var(--font-display)',
+        fontSize: 11, fontWeight: 800,
+        letterSpacing: '0.12em',
+        color: 'rgba(255,255,255,0.75)',
+        textTransform: 'uppercase', lineHeight: 1,
+      }}>
+        {label.slice(0, 3).toUpperCase()}
+      </div>
+      <div style={{
+        fontFamily: 'var(--font-display)',
+        fontSize: 15, fontWeight: 800,
+        color: '#ffffff', lineHeight: 1, marginTop: 3,
+      }}>
+        {new Date(date).getDate()}
+      </div>
+      {closed ? (
+        <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+          <span style={{
+            display: 'inline-block',
+            padding: '1px 7px',
+            borderRadius: 'var(--radius-pill)',
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: '0.1em',
+            textTransform: 'uppercase',
+            background: 'rgba(239,68,68,0.18)',
+            border: '1px solid rgba(239,68,68,0.5)',
+            color: '#fecaca',
+          }}>
+            Closed
+          </span>
+          {onReopenDay && (
+            <button
+              type="button"
+              onClick={() => onReopenDay(date)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#86efac',
+                fontSize: 10,
+                cursor: 'pointer',
+                padding: 0,
+                fontFamily: 'var(--font-body)',
+                fontWeight: 500,
+              }}
+            >
+              Reopen Day
+            </button>
+          )}
+        </div>
+      ) : (
+        onCloseDay && (
+          <div style={{ marginTop: 6, height: 12 }}>
+            <button
+              type="button"
+              onClick={() => onCloseDay(date)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#fca5a5',
+                fontSize: 10,
+                cursor: 'pointer',
+                padding: 0,
+                fontFamily: 'var(--font-body)',
+                fontWeight: 500,
+                opacity: hovered ? 1 : 0,
+                transition: 'opacity 150ms',
+              }}
+            >
+              Close Day
+            </button>
+          </div>
+        )
+      )}
     </div>
   )
 }
@@ -284,6 +429,9 @@ function ShiftRowsDayColumns({
   removeMode,
   pendingAssignments,
   onAssignmentChange,
+  closedDates,
+  onCloseDay,
+  onReopenDay,
 }: {
   schedule: Schedule
   template: ScheduleTemplate
@@ -291,7 +439,11 @@ function ShiftRowsDayColumns({
   removeMode: boolean
   pendingAssignments?: ScheduleAssignment[]
   onAssignmentChange?: (assignments: ScheduleAssignment[]) => void
+  closedDates: string[]
+  onCloseDay?: (date: string) => void
+  onReopenDay?: (date: string) => void
 }) {
+  const closedDateSet = new Set(closedDates)
   const { display_options, row_config, column_config, color_config } = template
   const fontSize = FONT_SIZES[display_options.font_size]
   const editing = mode === 'edit'
@@ -430,30 +582,15 @@ function ShiftRowsDayColumns({
         {orderedDates.map(date => {
           const col = colByDate.get(date)!
           return (
-            <div key={date} style={{
-              background: col.color,
-              borderBottom: '1px solid var(--border-default)',
-              borderRight: '1px solid var(--border-subtle)',
-              padding: '10px 12px',
-              textAlign: 'center',
-            }}>
-              <div style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: 11, fontWeight: 800,
-                letterSpacing: '0.12em',
-                color: 'rgba(255,255,255,0.75)',
-                textTransform: 'uppercase', lineHeight: 1,
-              }}>
-                {col.label.slice(0, 3).toUpperCase()}
-              </div>
-              <div style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: 15, fontWeight: 800,
-                color: '#ffffff', lineHeight: 1, marginTop: 3,
-              }}>
-                {new Date(date).getDate()}
-              </div>
-            </div>
+            <DayHeader
+              key={date}
+              date={date}
+              label={col.label}
+              color={col.color}
+              closed={closedDateSet.has(date)}
+              onCloseDay={onCloseDay}
+              onReopenDay={onReopenDay}
+            />
           )
         })}
 
@@ -495,6 +632,7 @@ function ShiftRowsDayColumns({
               const color = getColor(col, row)
               const isEmpty = cellAssignments.length === 0 && gapCount === 0
               const baseBackground = isEmpty ? 'var(--bg-base)' : hexWithAlpha(color, 0.06)
+              const closed = closedDateSet.has(date)
 
               return (
                 <DroppableCell
@@ -503,8 +641,9 @@ function ShiftRowsDayColumns({
                   date={date}
                   rowHeight={rowHeight}
                   baseBackground={baseBackground}
-                  enabled={editing && !removeMode}
+                  enabled={editing && !removeMode && !closed}
                   editing={editing}
+                  closed={closed}
                 >
                   {isEmpty ? (
                     <div style={{
@@ -591,6 +730,9 @@ export default function ScheduleRenderer({
   removeMode = false,
   pendingAssignments,
   onAssignmentChange,
+  closedDates,
+  onCloseDay,
+  onReopenDay,
 }: ScheduleRendererProps) {
   const containerStyle: React.CSSProperties = {
     background: 'var(--bg-surface-1)',
@@ -598,6 +740,8 @@ export default function ScheduleRenderer({
     borderRadius: 'var(--radius-lg)',
     overflow: 'hidden',
   }
+
+  const resolvedClosedDates = closedDates ?? schedule.data?.closed_dates ?? []
 
   if (template.layout_type === 'shift-rows-day-columns') {
     return (
@@ -609,6 +753,9 @@ export default function ScheduleRenderer({
           removeMode={removeMode}
           pendingAssignments={pendingAssignments}
           onAssignmentChange={onAssignmentChange}
+          closedDates={resolvedClosedDates}
+          onCloseDay={onCloseDay}
+          onReopenDay={onReopenDay}
         />
       </div>
     )

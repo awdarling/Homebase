@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useCompany } from '@/lib/hooks/useCompany'
 import { useQuria } from '@/lib/hooks/useQuria'
 import { useScheduleTemplate } from '@/lib/hooks/useScheduleTemplate'
+import { logActivity as logActivityFn } from '@/lib/activity'
 import ScheduleRenderer from '@/components/schedule/ScheduleRenderer'
 import ScheduleStats from '@/components/schedule/ScheduleStats'
 import GapResolverPanel from '@/components/schedule/GapResolverPanel'
@@ -20,6 +21,15 @@ import type { Schedule, ScheduleAssignment, ScheduleGap, ScheduleTemplate } from
 function formatDateLong(d: string) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
+
+function formatDayDate(d: string): string {
+  const [y, m, day] = d.split('-').map(Number)
+  return new Date(y, m - 1, day).toLocaleDateString('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric',
+  })
+}
+
+const CLOSE_DAY_PHRASE = 'yes, i want to close this day'
 
 function isoToday(): string {
   return new Date().toLocaleDateString('en-CA')
@@ -543,6 +553,8 @@ interface UpcomingCardProps {
   onAssignmentChange: (next: ScheduleAssignment[]) => void
   onResolveGap: (gap: ScheduleGap) => void
   onDelete: () => void
+  onCloseDay: (date: string) => void
+  onReopenDay: (date: string) => void
 }
 
 function UpcomingCard({
@@ -565,7 +577,10 @@ function UpcomingCard({
   onAssignmentChange,
   onResolveGap,
   onDelete,
+  onCloseDay,
+  onReopenDay,
 }: UpcomingCardProps) {
+  const closedDates = schedule.data?.closed_dates ?? []
   const weekLabel = `${formatDateLong(schedule.week_start)} – ${formatDateLong(schedule.week_end)}`
 
   const statusBadge =
@@ -705,12 +720,16 @@ function UpcomingCard({
             removeMode={isEditing ? removeMode : undefined}
             pendingAssignments={isEditing ? pendingAssignments : undefined}
             onAssignmentChange={isEditing ? onAssignmentChange : undefined}
+            closedDates={closedDates}
+            onCloseDay={onCloseDay}
+            onReopenDay={onReopenDay}
           />
 
           {/* Wage breakdown — reflects pendingAssignments live while editing */}
           <WageBreakdownPanel
             assignments={isEditing ? pendingAssignments : (schedule.data?.assignments ?? [])}
             companyId={companyId}
+            closedDates={closedDates}
           />
         </div>
       )}
@@ -749,6 +768,19 @@ export default function SchedulePage() {
   const [resolveTarget, setResolveTarget] = useState<{ gap: ScheduleGap; scheduleId: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Schedule | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  // Day closure state
+  const [closeDayTarget, setCloseDayTarget] = useState<string | null>(null)
+  const [closeDayScheduleId, setCloseDayScheduleId] = useState<string | null>(null)
+  const [closeDayInput, setCloseDayInput] = useState('')
+  const [closingDay, setClosingDay] = useState(false)
+  const [closeDayError, setCloseDayError] = useState<string | null>(null)
+
+  // Post-closure notification modal
+  const [notifyTarget, setNotifyTarget] = useState<{ scheduleId: string; date: string } | null>(null)
+  const [notifying, setNotifying] = useState(false)
+  const [notifyError, setNotifyError] = useState<string | null>(null)
+  const [notifyDone, setNotifyDone] = useState(false)
 
   const supabase = createClient()
 
@@ -846,6 +878,158 @@ export default function SchedulePage() {
   function handleAddPending(newAssignment: ScheduleAssignment) {
     setPendingAssignments(prev => [...prev, newAssignment])
   }
+
+  async function logScheduleActivity(action: string, summary: string, scheduleId: string) {
+    await logActivityFn({
+      supabase,
+      company_id: companyId,
+      action,
+      entity_type: 'schedule',
+      entity_id: scheduleId,
+      summary,
+      isQuria,
+      actorName: user?.name,
+      actorAvatarUrl: user?.avatar_url,
+    })
+  }
+
+  function requestCloseDay(scheduleId: string, date: string) {
+    setCloseDayScheduleId(scheduleId)
+    setCloseDayTarget(date)
+    setCloseDayInput('')
+    setCloseDayError(null)
+  }
+
+  function cancelCloseDay() {
+    if (closingDay) return
+    setCloseDayTarget(null)
+    setCloseDayScheduleId(null)
+    setCloseDayInput('')
+    setCloseDayError(null)
+  }
+
+  async function confirmCloseDay() {
+    if (!closeDayTarget || !closeDayScheduleId) return
+    const target = allSchedules.find(s => s.id === closeDayScheduleId)
+    if (!target) return
+
+    setClosingDay(true)
+    setCloseDayError(null)
+
+    const existing = target.data?.closed_dates ?? []
+    const newClosedDates = existing.includes(closeDayTarget)
+      ? existing
+      : [...existing, closeDayTarget]
+    const newData = { ...target.data, closed_dates: newClosedDates }
+
+    const { error } = await supabase
+      .from('schedules')
+      .update({ data: newData })
+      .eq('id', closeDayScheduleId)
+
+    if (error) {
+      setClosingDay(false)
+      setCloseDayError(error.message || 'Failed to close day. Please try again.')
+      return
+    }
+
+    setAllSchedules(prev => prev.map(s =>
+      s.id === closeDayScheduleId ? { ...s, data: newData } : s
+    ))
+
+    await logScheduleActivity(
+      'day_closed',
+      `${formatDayDate(closeDayTarget)} closed on the schedule`,
+      closeDayScheduleId,
+    )
+
+    const closedDate = closeDayTarget
+    const closedScheduleId = closeDayScheduleId
+    const scheduledCount = (target.data?.assignments ?? []).filter(a => a.date === closedDate).length
+
+    setClosingDay(false)
+    setCloseDayTarget(null)
+    setCloseDayScheduleId(null)
+    setCloseDayInput('')
+
+    if (scheduledCount > 0) {
+      setNotifyTarget({ scheduleId: closedScheduleId, date: closedDate })
+      setNotifyError(null)
+      setNotifyDone(false)
+    }
+  }
+
+  async function handleReopenDay(scheduleId: string, date: string) {
+    if (typeof window === 'undefined') return
+    const ok = window.confirm(`Reopen ${formatDayDate(date)}? This will restore all previously scheduled shifts.`)
+    if (!ok) return
+
+    const target = allSchedules.find(s => s.id === scheduleId)
+    if (!target) return
+
+    const existing = target.data?.closed_dates ?? []
+    const newClosedDates = existing.filter(d => d !== date)
+    const newData = { ...target.data, closed_dates: newClosedDates }
+
+    const { error } = await supabase
+      .from('schedules')
+      .update({ data: newData })
+      .eq('id', scheduleId)
+
+    if (error) {
+      console.error('Reopen day failed:', error)
+      return
+    }
+
+    setAllSchedules(prev => prev.map(s =>
+      s.id === scheduleId ? { ...s, data: newData } : s
+    ))
+
+    await logScheduleActivity(
+      'day_reopened',
+      `${formatDayDate(date)} reopened on the schedule`,
+      scheduleId,
+    )
+  }
+
+  async function sendClosureNotifications() {
+    if (!notifyTarget) return
+    setNotifying(true)
+    setNotifyError(null)
+    try {
+      const res = await fetch('/api/notify-day-closure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scheduleId: notifyTarget.scheduleId,
+          date: notifyTarget.date,
+          companyId,
+        }),
+      })
+      const json = await res.json().catch(() => ({} as { error?: string })) as { error?: string; notified?: number }
+      if (!res.ok) {
+        setNotifyError(json.error || `Request failed (${res.status})`)
+        setNotifying(false)
+        return
+      }
+      setNotifyDone(true)
+      setNotifying(false)
+    } catch (err) {
+      setNotifyError(err instanceof Error ? err.message : 'Network error')
+      setNotifying(false)
+    }
+  }
+
+  const closeDaySchedule = closeDayScheduleId
+    ? allSchedules.find(s => s.id === closeDayScheduleId) ?? null
+    : null
+  const notifySchedule = notifyTarget
+    ? allSchedules.find(s => s.id === notifyTarget.scheduleId) ?? null
+    : null
+  const notifyAssignments = notifyTarget && notifySchedule
+    ? (notifySchedule.data?.assignments ?? []).filter(a => a.date === notifyTarget.date)
+    : []
+  const notifyEmployeeNames = Array.from(new Set(notifyAssignments.map(a => a.employee_name)))
 
   function toggleUpcomingExpanded(id: string) {
     if (expandedUpcomingId === id) {
@@ -993,6 +1177,9 @@ export default function SchedulePage() {
                 removeMode={isEditingCurrent ? removeMode : undefined}
                 pendingAssignments={isEditingCurrent ? pendingAssignments : undefined}
                 onAssignmentChange={isEditingCurrent ? setPendingAssignments : undefined}
+                closedDates={currentSchedule.data?.closed_dates ?? []}
+                onCloseDay={(date) => requestCloseDay(currentSchedule.id, date)}
+                onReopenDay={(date) => handleReopenDay(currentSchedule.id, date)}
               />
             )}
 
@@ -1000,6 +1187,7 @@ export default function SchedulePage() {
             <WageBreakdownPanel
               assignments={isEditingCurrent ? pendingAssignments : (currentSchedule.data?.assignments ?? [])}
               companyId={companyId}
+              closedDates={currentSchedule.data?.closed_dates ?? []}
             />
           </div>
         )}
@@ -1064,6 +1252,8 @@ export default function SchedulePage() {
                 onAssignmentChange={setPendingAssignments}
                 onResolveGap={gap => setResolveTarget({ gap, scheduleId: s.id })}
                 onDelete={() => setDeleteTarget(s)}
+                onCloseDay={(date) => requestCloseDay(s.id, date)}
+                onReopenDay={(date) => handleReopenDay(s.id, date)}
               />
             ))}
           </div>
@@ -1285,6 +1475,212 @@ export default function SchedulePage() {
               >
                 {deleting ? 'Deleting…' : 'Delete'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ Close Day Confirmation ═══════════════════════════════════════════ */}
+      {closeDayTarget && closeDaySchedule && (
+        <div
+          onClick={cancelCloseDay}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            zIndex: 400,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'var(--bg-surface-1)',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '20px 24px',
+              maxWidth: 460,
+              width: '100%',
+              boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+            }}
+          >
+            <div style={{
+              fontSize: 16,
+              fontWeight: 600,
+              color: 'var(--text-primary)',
+              fontFamily: 'var(--font-display)',
+              marginBottom: 10,
+            }}>
+              Close {formatDayDate(closeDayTarget)}?
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55, marginBottom: 16 }}>
+              All shifts on this day will be excluded from hours and wage calculations. Employees already scheduled will not be automatically notified unless you choose to do so after confirming.
+            </div>
+            <input
+              className="form-input"
+              placeholder="Type to confirm"
+              value={closeDayInput}
+              onChange={e => setCloseDayInput(e.target.value)}
+              disabled={closingDay}
+              style={{ width: '100%', marginBottom: 6 }}
+            />
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 16 }}>
+              Type: Yes, I want to close this day
+            </div>
+            {closeDayError && (
+              <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 12 }}>
+                {closeDayError}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={cancelCloseDay}
+                disabled={closingDay}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmCloseDay}
+                disabled={closingDay || closeDayInput.toLowerCase().trim() !== CLOSE_DAY_PHRASE}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid rgba(239,68,68,0.4)',
+                  background: 'rgba(239,68,68,0.12)',
+                  color: '#ef4444',
+                  fontSize: 12,
+                  fontFamily: 'var(--font-body)',
+                  fontWeight: 500,
+                  cursor: (closingDay || closeDayInput.toLowerCase().trim() !== CLOSE_DAY_PHRASE) ? 'default' : 'pointer',
+                  opacity: (closingDay || closeDayInput.toLowerCase().trim() !== CLOSE_DAY_PHRASE) ? 0.5 : 1,
+                }}
+              >
+                {closingDay ? 'Closing…' : 'Close Day'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ Notify Scheduled Employees ═══════════════════════════════════════ */}
+      {notifyTarget && notifySchedule && notifyAssignments.length > 0 && (
+        <div
+          onClick={() => !notifying && setNotifyTarget(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            zIndex: 400,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'var(--bg-surface-1)',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '20px 24px',
+              maxWidth: 480,
+              width: '100%',
+              boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+            }}
+          >
+            <div style={{
+              fontSize: 16,
+              fontWeight: 600,
+              color: 'var(--text-primary)',
+              fontFamily: 'var(--font-display)',
+              marginBottom: 10,
+            }}>
+              Notify Scheduled Employees?
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55, marginBottom: 12 }}>
+              {notifyEmployeeNames.length} employee{notifyEmployeeNames.length === 1 ? ' is' : 's are'} scheduled on {formatDayDate(notifyTarget.date)}. Would you like Aegis to send them a closure notification?
+            </div>
+
+            <div style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 6,
+              marginBottom: 14,
+            }}>
+              {notifyEmployeeNames.map(name => (
+                <span key={name} style={{
+                  padding: '3px 9px',
+                  fontSize: 11,
+                  borderRadius: 'var(--radius-pill)',
+                  background: 'var(--bg-surface-3)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-secondary)',
+                }}>
+                  {name}
+                </span>
+              ))}
+            </div>
+
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>
+              Message Preview
+            </div>
+            <div style={{
+              background: 'var(--bg-surface-3)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              padding: '10px 14px',
+              fontSize: 12,
+              color: 'var(--text-secondary)',
+              lineHeight: 1.55,
+              marginBottom: 16,
+            }}>
+              Hi [Name], {company?.name ?? 'we'} will be closed on {formatDayDate(notifyTarget.date)}. Your shift has been cancelled. We&rsquo;ll see you for your next scheduled shift. — Aegis
+            </div>
+
+            {notifyError && (
+              <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 12 }}>
+                {notifyError}
+              </div>
+            )}
+            {notifyDone && (
+              <div style={{ fontSize: 12, color: '#16a34a', marginBottom: 12 }}>
+                Notifications sent.
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => setNotifyTarget(null)}
+                disabled={notifying}
+              >
+                {notifyDone ? 'Close' : 'Not Now'}
+              </button>
+              {!notifyDone && (
+                <button
+                  onClick={sendClosureNotifications}
+                  disabled={notifying}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid rgba(249,115,22,0.45)',
+                    background: 'rgba(249,115,22,0.14)',
+                    color: '#f97316',
+                    fontSize: 12,
+                    fontFamily: 'var(--font-body)',
+                    fontWeight: 500,
+                    cursor: notifying ? 'default' : 'pointer',
+                    opacity: notifying ? 0.6 : 1,
+                  }}
+                >
+                  {notifying ? 'Sending…' : 'Notify Employees'}
+                </button>
+              )}
             </div>
           </div>
         </div>

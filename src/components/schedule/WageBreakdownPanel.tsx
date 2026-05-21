@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useWageBreakdown } from '@/lib/hooks/useWageBreakdown'
 import type { ScheduleAssignment, WageRow } from '@/lib/types'
 
@@ -91,16 +91,39 @@ function SkeletonTable() {
 interface WageBreakdownPanelProps {
   assignments: ScheduleAssignment[]
   companyId: string
+  closedDates?: string[]
 }
 
-export default function WageBreakdownPanel({ assignments, companyId }: WageBreakdownPanelProps) {
+export default function WageBreakdownPanel({ assignments, companyId, closedDates }: WageBreakdownPanelProps) {
   const [open, setOpen] = useState(false)
-  const { rows, totals, loading } = useWageBreakdown({ assignments, companyId })
+
+  const closedDateSet = useMemo(() => new Set(closedDates ?? []), [closedDates])
+
+  const effectiveAssignments = useMemo(
+    () => closedDateSet.size === 0
+      ? assignments
+      : assignments.filter(a => !closedDateSet.has(a.date)),
+    [assignments, closedDateSet],
+  )
+
+  const closedDayCount = useMemo(() => {
+    if (closedDateSet.size === 0) return 0
+    const assignmentDates = new Set(assignments.map(a => a.date))
+    let count = 0
+    closedDateSet.forEach(d => {
+      if (assignmentDates.has(d)) count += 1
+    })
+    // Fall back to the raw closed-date count when no assignments overlap (still
+    // surface the manager's closure decisions in the footer).
+    return count > 0 ? count : closedDateSet.size
+  }, [assignments, closedDateSet])
+
+  const { rows, totals, loading } = useWageBreakdown({ assignments: effectiveAssignments, companyId })
 
   const hasUnknown = rows.some(r => r.rate_source === 'unknown')
   const employeeCount = rows.length
 
-  const summary = assignments.length === 0
+  const summary = effectiveAssignments.length === 0
     ? 'No assignments this week.'
     : `${employeeCount} employee${employeeCount === 1 ? '' : 's'} · ${formatHours(totals.hours)} total hours · Est. ${formatCurrency(totals.estimated_pay)} in wages${hasUnknown ? ' (partial)' : ''}`
 
@@ -147,9 +170,16 @@ export default function WageBreakdownPanel({ assignments, companyId }: WageBreak
       {open && (
         loading ? (
           <SkeletonTable />
-        ) : assignments.length === 0 ? (
+        ) : effectiveAssignments.length === 0 ? (
           <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
-            No assignments this week.
+            {assignments.length === 0
+              ? 'No assignments this week.'
+              : 'No assignments after excluding closed days.'}
+            {closedDayCount > 0 && (
+              <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-disabled)' }}>
+                {closedDayCount} day{closedDayCount === 1 ? '' : 's'} closed — excluded from estimates
+              </div>
+            )}
           </div>
         ) : (
           <div style={{ padding: '0 4px 8px' }}>
@@ -247,6 +277,17 @@ export default function WageBreakdownPanel({ assignments, companyId }: WageBreak
                 )}
               </div>
             </div>
+
+            {closedDayCount > 0 && (
+              <div style={{
+                padding: '8px 12px',
+                fontSize: 11,
+                color: 'var(--text-muted)',
+                fontStyle: 'italic',
+              }}>
+                {closedDayCount} day{closedDayCount === 1 ? '' : 's'} closed — excluded from estimates
+              </div>
+            )}
           </div>
         )
       )}
