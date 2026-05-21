@@ -5,9 +5,60 @@ import { useQuria } from '@/lib/hooks/useQuria'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { logActivity as logActivityFn } from '@/lib/activity'
-import type { Employee } from '@/lib/types'
+import type {
+  Employee,
+  CustomAvailability,
+  CustomAvailabilityPattern,
+  CustomAvailabilityWeek,
+} from '@/lib/types'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+function todayIso(): string {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${dd}`
+}
+
+function formatShortDate(d: string): string {
+  const [y, m, day] = d.split('-').map(Number)
+  return new Date(y, m - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function isCustomAvailActive(ca: CustomAvailability | null | undefined): boolean {
+  if (!ca || !ca.active) return false
+  if (!ca.end_date) return true
+  return ca.end_date >= todayIso()
+}
+
+function emptyWeekRows(): AvailabilityRow[] {
+  return DAYS.map((_, i) => ({ day: i, active: false, start_time: '09:00', end_time: '17:00' }))
+}
+
+function patternsToWeekRows(patterns: CustomAvailabilityPattern[]): AvailabilityRow[] {
+  return DAYS.map((_, i) => {
+    const p = patterns.find(pp => pp.day_of_week === i)
+    return p
+      ? { day: i, active: true, start_time: p.start_time.slice(0, 5), end_time: p.end_time.slice(0, 5) }
+      : { day: i, active: false, start_time: '09:00', end_time: '17:00' }
+  })
+}
+
+function weekRowsToPatterns(rows: AvailabilityRow[]): CustomAvailabilityPattern[] {
+  return rows
+    .filter(r => r.active)
+    .map(r => ({ day_of_week: r.day, start_time: r.start_time, end_time: r.end_time }))
+}
+
+interface CustomAvailFormState {
+  type: 'date_limited' | 'rotating'
+  end_date: string
+  cycle_weeks: number
+  cycle_start_date: string
+  weeks: AvailabilityRow[][]
+}
 
 interface Role {
   id: string
@@ -160,6 +211,15 @@ export default function EmployeesTab() {
   const [error, setError] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
+  // Custom availability state
+  const [customAvailability, setCustomAvailability] = useState<Record<string, CustomAvailability | null>>({})
+  const [customAvailTarget, setCustomAvailTarget] = useState<Employee | null>(null)
+  const [customAvailForm, setCustomAvailForm] = useState<CustomAvailFormState | null>(null)
+  const [editingCustomAvail, setEditingCustomAvail] = useState<CustomAvailability | null>(null)
+  const [savingCustomAvail, setSavingCustomAvail] = useState(false)
+  const [removingCustomAvail, setRemovingCustomAvail] = useState(false)
+  const [customAvailError, setCustomAvailError] = useState('')
+
   const supabase = createClient()
 
   useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
@@ -167,10 +227,11 @@ export default function EmployeesTab() {
   async function fetchData() {
     if (!COMPANY_ID) return
     setLoading(true)
-    const [empRes, avRes, rolesRes] = await Promise.all([
+    const [empRes, avRes, rolesRes, caRes] = await Promise.all([
       supabase.from('employees').select('*').eq('company_id', COMPANY_ID).order('primary_role').order('name'),
       supabase.from('availability').select('*').eq('company_id', COMPANY_ID),
       supabase.from('roles').select('*').eq('company_id', COMPANY_ID).order('name'),
+      supabase.from('custom_availability').select('*').eq('company_id', COMPANY_ID).eq('active', true),
     ])
     if (empRes.data) setEmployees(empRes.data)
     if (rolesRes.data) setRoles(rolesRes.data)
@@ -182,6 +243,13 @@ export default function EmployeesTab() {
       })
       setAvailability(map)
     }
+    const caMap: Record<string, CustomAvailability | null> = {}
+    if (caRes.data) {
+      for (const ca of caRes.data as CustomAvailability[]) {
+        caMap[ca.employee_id] = ca
+      }
+    }
+    setCustomAvailability(caMap)
     setLoading(false)
   }
 
@@ -455,6 +523,174 @@ export default function EmployeesTab() {
     fetchData()
   }
 
+  function openCustomAvailModal(emp: Employee) {
+    const existing = customAvailability[emp.id]
+    if (existing && isCustomAvailActive(existing)) {
+      let weekArrays: AvailabilityRow[][]
+      if (existing.type === 'date_limited') {
+        const patterns = (existing.patterns ?? []) as CustomAvailabilityPattern[]
+        weekArrays = [patternsToWeekRows(patterns)]
+      } else {
+        const weeks = ([...((existing.patterns ?? []) as CustomAvailabilityWeek[])])
+          .sort((a, b) => a.week - b.week)
+        weekArrays = weeks.map(w => patternsToWeekRows(w.days ?? []))
+        const targetLen = Math.max(existing.cycle_weeks ?? 1, weekArrays.length, 1)
+        while (weekArrays.length < targetLen) weekArrays.push(emptyWeekRows())
+      }
+      setCustomAvailForm({
+        type: existing.type,
+        end_date: existing.end_date ?? '',
+        cycle_weeks: existing.cycle_weeks ?? 2,
+        cycle_start_date: existing.cycle_start_date ?? '',
+        weeks: weekArrays,
+      })
+      setEditingCustomAvail(existing)
+    } else {
+      setCustomAvailForm({
+        type: 'date_limited',
+        end_date: '',
+        cycle_weeks: 2,
+        cycle_start_date: '',
+        weeks: [emptyWeekRows()],
+      })
+      setEditingCustomAvail(null)
+    }
+    setCustomAvailTarget(emp)
+    setCustomAvailError('')
+  }
+
+  function closeCustomAvailModal() {
+    if (savingCustomAvail || removingCustomAvail) return
+    setCustomAvailTarget(null)
+    setCustomAvailForm(null)
+    setEditingCustomAvail(null)
+    setCustomAvailError('')
+  }
+
+  function setCustomAvailType(next: 'date_limited' | 'rotating') {
+    setCustomAvailForm(prev => {
+      if (!prev) return prev
+      if (next === prev.type) return prev
+      if (next === 'date_limited') {
+        return { ...prev, type: 'date_limited', weeks: [prev.weeks[0] ?? emptyWeekRows()] }
+      }
+      const targetLen = Math.max(prev.cycle_weeks, 1)
+      const weeks = prev.weeks.slice(0, targetLen)
+      while (weeks.length < targetLen) weeks.push(emptyWeekRows())
+      return { ...prev, type: 'rotating', weeks }
+    })
+  }
+
+  function setCycleWeeks(next: number) {
+    setCustomAvailForm(prev => {
+      if (!prev) return prev
+      const clamped = Math.min(8, Math.max(1, Math.floor(next)))
+      const weeks = prev.weeks.slice(0, clamped)
+      while (weeks.length < clamped) weeks.push(emptyWeekRows())
+      return { ...prev, cycle_weeks: clamped, weeks }
+    })
+  }
+
+  function toggleCustomDay(weekIdx: number, day: number) {
+    setCustomAvailForm(prev => {
+      if (!prev) return prev
+      const weeks = prev.weeks.map((week, i) =>
+        i === weekIdx
+          ? week.map(r => r.day === day ? { ...r, active: !r.active } : r)
+          : week,
+      )
+      return { ...prev, weeks }
+    })
+  }
+
+  function updateCustomDayTime(weekIdx: number, day: number, field: 'start_time' | 'end_time', value: string) {
+    setCustomAvailForm(prev => {
+      if (!prev) return prev
+      const weeks = prev.weeks.map((week, i) =>
+        i === weekIdx
+          ? week.map(r => r.day === day ? { ...r, [field]: value } : r)
+          : week,
+      )
+      return { ...prev, weeks }
+    })
+  }
+
+  async function saveCustomAvail() {
+    if (!customAvailTarget || !customAvailForm) return
+    if (!customAvailForm.end_date) {
+      setCustomAvailError('Active-until date is required.')
+      return
+    }
+    if (customAvailForm.type === 'rotating') {
+      if (!customAvailForm.cycle_start_date) {
+        setCustomAvailError('Cycle start date is required for rotating availability.')
+        return
+      }
+      if (customAvailForm.cycle_weeks < 1 || customAvailForm.cycle_weeks > 8) {
+        setCustomAvailError('Cycle must be between 1 and 8 weeks.')
+        return
+      }
+    }
+
+    setSavingCustomAvail(true)
+    setCustomAvailError('')
+
+    let patterns: CustomAvailabilityPattern[] | CustomAvailabilityWeek[]
+    if (customAvailForm.type === 'date_limited') {
+      patterns = weekRowsToPatterns(customAvailForm.weeks[0] ?? emptyWeekRows())
+    } else {
+      patterns = customAvailForm.weeks
+        .slice(0, customAvailForm.cycle_weeks)
+        .map((rows, i) => ({ week: i + 1, days: weekRowsToPatterns(rows) }))
+    }
+
+    const payload = {
+      company_id: COMPANY_ID,
+      employee_id: customAvailTarget.id,
+      type: customAvailForm.type,
+      end_date: customAvailForm.end_date,
+      cycle_weeks: customAvailForm.type === 'rotating' ? customAvailForm.cycle_weeks : null,
+      cycle_start_date: customAvailForm.type === 'rotating' ? customAvailForm.cycle_start_date : null,
+      patterns,
+      active: true,
+    }
+
+    if (editingCustomAvail) {
+      await supabase.from('custom_availability').update(payload).eq('id', editingCustomAvail.id)
+    } else {
+      await supabase.from('custom_availability').insert(payload)
+    }
+
+    const typeLabel = customAvailForm.type === 'rotating' ? 'rotating' : 'date-limited'
+    await logActivity(
+      'custom_availability_set',
+      `${customAvailTarget.name} — custom availability set (${typeLabel}, until ${formatShortDate(customAvailForm.end_date)})`,
+      customAvailTarget.id,
+    )
+
+    setSavingCustomAvail(false)
+    setCustomAvailTarget(null)
+    setCustomAvailForm(null)
+    setEditingCustomAvail(null)
+    await fetchData()
+  }
+
+  async function removeCustomAvail() {
+    if (!editingCustomAvail || !customAvailTarget) return
+    setRemovingCustomAvail(true)
+    await supabase.from('custom_availability').update({ active: false }).eq('id', editingCustomAvail.id)
+    await logActivity(
+      'custom_availability_removed',
+      `${customAvailTarget.name} — custom availability removed, reverting to normal`,
+      customAvailTarget.id,
+    )
+    setRemovingCustomAvail(false)
+    setCustomAvailTarget(null)
+    setCustomAvailForm(null)
+    setEditingCustomAvail(null)
+    await fetchData()
+  }
+
   if (loading) {
     return (
       <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
@@ -523,10 +759,11 @@ export default function EmployeesTab() {
           <colgroup>
             <col style={{ width: '14%' }} />
             <col style={{ width: '7%' }} />
+            <col style={{ width: '5%' }} />
+            <col style={{ width: '8%' }} />
             <col style={{ width: '9%' }} />
             <col style={{ width: '10%' }} />
-            <col style={{ width: '11%' }} />
-            <col style={{ width: '11%' }} />
+            <col style={{ width: '9%' }} />
             <col style={{ width: '12%' }} />
             <col style={{ width: '12%' }} />
             <col style={{ width: '7%' }} />
@@ -536,6 +773,7 @@ export default function EmployeesTab() {
             <tr>
               <th>Employee</th>
               <th>Veteran</th>
+              <th>Custom</th>
               <th>Sex</th>
               <th>Role</th>
               <th>Also Qualifies</th>
@@ -564,6 +802,24 @@ export default function EmployeesTab() {
                   </td>
                   <td style={{ textAlign: 'center' }}>
                     {emp.is_veteran && <VeteranBadge />}
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    {isCustomAvailActive(customAvailability[emp.id]) && (
+                      <span
+                        onClick={(e) => { e.stopPropagation(); openCustomAvailModal(emp) }}
+                        title="Custom availability active — click to view"
+                        style={{
+                          color: 'var(--accent)',
+                          fontSize: 14,
+                          cursor: 'pointer',
+                          fontWeight: 700,
+                          display: 'inline-block',
+                          lineHeight: 1,
+                        }}
+                      >
+                        ✓
+                      </span>
+                    )}
                   </td>
                   <td style={{ textAlign: 'center' }}>
                     {emp.sex && <SexBadge value={emp.sex} />}
@@ -811,6 +1067,65 @@ export default function EmployeesTab() {
                 </select>
               </div>
 
+              {editingEmployee && (() => {
+                const ca = customAvailability[editingEmployee.id]
+                if (isCustomAvailActive(ca)) {
+                  return (
+                    <div style={{
+                      background: 'var(--accent-dim)',
+                      border: '1px solid var(--accent-border)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: '10px 12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      flexWrap: 'wrap',
+                    }}>
+                      <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500, flex: 1, minWidth: 0 }}>
+                        ⚡ Custom availability active until {ca!.end_date ? formatShortDate(ca!.end_date) : '—'}. Normal availability is overridden.
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => editingEmployee && openCustomAvailModal(editingEmployee)}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: 'var(--accent)',
+                          fontSize: 12,
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                          padding: 0,
+                          textDecoration: 'underline',
+                          fontFamily: 'var(--font-body)',
+                        }}
+                      >
+                        Edit custom availability
+                      </button>
+                    </div>
+                  )
+                }
+                return (
+                  <button
+                    type="button"
+                    onClick={() => editingEmployee && openCustomAvailModal(editingEmployee)}
+                    style={{
+                      alignSelf: 'flex-start',
+                      background: 'transparent',
+                      border: '1px dashed var(--border-default)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: '8px 12px',
+                      fontSize: 12,
+                      color: 'var(--text-muted)',
+                      cursor: 'pointer',
+                      fontFamily: 'var(--font-body)',
+                      fontWeight: 500,
+                    }}
+                  >
+                    + Add Custom Availability
+                  </button>
+                )
+              })()}
+
               <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 16, marginTop: 4 }}>
                 <div className="form-label" style={{ marginBottom: 12 }}>Availability</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -862,6 +1177,229 @@ export default function EmployeesTab() {
               <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
                 {saving ? 'Saving...' : 'Save Employee'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Availability Modal */}
+      {customAvailTarget && customAvailForm && (
+        <div
+          onClick={closeCustomAvailModal}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 300,
+            background: 'rgba(0,0,0,0.7)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'var(--bg-surface-1)',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-xl)',
+              padding: 28,
+              width: '100%',
+              maxWidth: 640,
+              maxHeight: '90vh',
+              overflowY: 'auto',
+            }}
+          >
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>
+              {editingCustomAvail ? 'Custom Availability' : 'Set Custom Availability'} — {customAvailTarget.name}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.5 }}>
+              Override an employee&rsquo;s standard weekly availability for a defined period.
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+
+              {/* Type selector */}
+              <div style={{ display: 'flex', gap: 8 }}>
+                {(['date_limited', 'rotating'] as const).map(t => {
+                  const active = customAvailForm.type === t
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setCustomAvailType(t)}
+                      style={{
+                        flex: 1,
+                        textAlign: 'left',
+                        padding: '12px 14px',
+                        borderRadius: 'var(--radius-md)',
+                        border: '1px solid',
+                        background: active ? 'var(--accent-dim)' : 'var(--bg-surface-2)',
+                        borderColor: active ? 'var(--accent-border)' : 'var(--border-default)',
+                        color: active ? 'var(--accent)' : 'var(--text-secondary)',
+                        cursor: 'pointer',
+                        fontFamily: 'var(--font-body)',
+                      }}
+                    >
+                      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
+                        {t === 'date_limited' ? 'Date-Limited' : 'Rotating'}
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.45, fontWeight: 400 }}>
+                        {t === 'date_limited'
+                          ? 'Employee has specific availability until a set date, then reverts to normal.'
+                          : 'Employee follows a repeating weekly pattern until a set date.'}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* End date */}
+              <div className="form-group">
+                <label className="form-label">Active until</label>
+                <input
+                  className="form-input"
+                  type="date"
+                  value={customAvailForm.end_date}
+                  onChange={(e) => setCustomAvailForm(prev => prev ? { ...prev, end_date: e.target.value } : prev)}
+                />
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Normal availability resumes automatically after this date.
+                </div>
+              </div>
+
+              {/* Rotating: cycle settings */}
+              {customAvailForm.type === 'rotating' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div className="form-group">
+                    <label className="form-label">How many weeks in the cycle?</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min={1}
+                      max={8}
+                      value={customAvailForm.cycle_weeks}
+                      onChange={(e) => setCycleWeeks(parseInt(e.target.value) || 1)}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Cycle start date</label>
+                    <input
+                      className="form-input"
+                      type="date"
+                      value={customAvailForm.cycle_start_date}
+                      onChange={(e) => setCustomAvailForm(prev => prev ? { ...prev, cycle_start_date: e.target.value } : prev)}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Week blocks */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {customAvailForm.weeks.map((week, weekIdx) => (
+                  <div
+                    key={weekIdx}
+                    style={{
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: 14,
+                      background: 'var(--bg-surface-2)',
+                    }}
+                  >
+                    <div className="form-label" style={{ marginBottom: 10 }}>
+                      {customAvailForm.type === 'date_limited' ? 'Availability during this period' : `Week ${weekIdx + 1}`}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {week.map(row => (
+                        <div key={row.day} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <button
+                            type="button"
+                            onClick={() => toggleCustomDay(weekIdx, row.day)}
+                            style={{
+                              width: 44,
+                              padding: '4px 0',
+                              borderRadius: 'var(--radius-sm)',
+                              border: '1px solid',
+                              fontSize: 11,
+                              fontFamily: 'var(--font-body)',
+                              fontWeight: 500,
+                              cursor: 'pointer',
+                              background: row.active ? 'var(--accent-dim)' : 'var(--bg-surface-3)',
+                              borderColor: row.active ? 'var(--accent-border)' : 'var(--border-default)',
+                              color: row.active ? 'var(--accent)' : 'var(--text-muted)',
+                              textAlign: 'center',
+                            }}
+                          >
+                            {DAYS[row.day]}
+                          </button>
+                          {row.active ? (
+                            <>
+                              <input
+                                type="time"
+                                className="form-input"
+                                style={{ width: 120 }}
+                                value={row.start_time}
+                                onChange={(e) => updateCustomDayTime(weekIdx, row.day, 'start_time', e.target.value)}
+                              />
+                              <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>to</span>
+                              <input
+                                type="time"
+                                className="form-input"
+                                style={{ width: 120 }}
+                                value={row.end_time}
+                                onChange={(e) => updateCustomDayTime(weekIdx, row.day, 'end_time', e.target.value)}
+                              />
+                            </>
+                          ) : (
+                            <span style={{ fontSize: 12, color: 'var(--text-disabled)' }}>Off</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {customAvailError && (
+              <div style={{ fontSize: 12, color: 'var(--status-blocked-text)', marginTop: 14 }}>
+                {customAvailError}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', alignItems: 'center', marginTop: 22, gap: 8, flexWrap: 'wrap' }}>
+              {editingCustomAvail && (
+                <button
+                  type="button"
+                  onClick={removeCustomAvail}
+                  disabled={removingCustomAvail || savingCustomAvail}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#ef4444',
+                    fontSize: 12,
+                    fontWeight: 500,
+                    cursor: removingCustomAvail || savingCustomAvail ? 'default' : 'pointer',
+                    padding: 0,
+                    fontFamily: 'var(--font-body)',
+                    opacity: removingCustomAvail || savingCustomAvail ? 0.6 : 1,
+                  }}
+                >
+                  {removingCustomAvail ? 'Removing…' : 'Remove Custom Availability'}
+                </button>
+              )}
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={closeCustomAvailModal}
+                  disabled={savingCustomAvail || removingCustomAvail}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={saveCustomAvail}
+                  disabled={savingCustomAvail || removingCustomAvail}
+                >
+                  {savingCustomAvail ? 'Saving…' : (editingCustomAvail ? 'Save Changes' : 'Save Custom Availability')}
+                </button>
+              </div>
             </div>
           </div>
         </div>

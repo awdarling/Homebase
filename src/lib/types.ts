@@ -44,6 +44,30 @@ export interface Availability {
   end_time: string    // HH:MM
 }
 
+export interface CustomAvailabilityPattern {
+  day_of_week: number   // 0=Sunday, 6=Saturday
+  start_time: string    // HH:MM
+  end_time: string      // HH:MM
+}
+
+export interface CustomAvailabilityWeek {
+  week: number          // 1-based
+  days: CustomAvailabilityPattern[]
+}
+
+export interface CustomAvailability {
+  id: string
+  employee_id: string
+  company_id: string
+  type: 'date_limited' | 'rotating'
+  end_date: string | null
+  cycle_weeks: number | null
+  cycle_start_date: string | null
+  patterns: CustomAvailabilityPattern[] | CustomAvailabilityWeek[]
+  active: boolean
+  created_at: string
+}
+
 export interface PartialDayDetail {
   date: string
   type: 'shift_off' | 'custom_hours'
