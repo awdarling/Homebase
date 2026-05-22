@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
         const session = await stripe.checkout.sessions.create({
           customer: params.customer_id,
           payment_method_types: ['card'],
-          ...(params.price_id ? {} : { mode }),
+          mode,
           line_items: [lineItem],
           success_url: `${params.origin}/billing?success=true`,
           cancel_url: `${params.origin}/billing?cancelled=true`,
