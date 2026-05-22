@@ -7,6 +7,7 @@ export interface Company {
   timezone: string
   created_at: string
   onboarding_complete: boolean
+  billing_model: 'subscription' | 'one_time' | null
 }
 
 export interface User {
@@ -365,4 +366,5 @@ export interface BillingInfo {
   billing_email: string | null
   subscription_period_end: string | null
   cancel_at_period_end: boolean | null
+  billing_model: 'subscription' | 'one_time' | null
 }

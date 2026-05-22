@@ -22,11 +22,12 @@ function formatPrice(cents: number) {
 }
 
 const STATUS_STYLES: Record<string, { label: string; color: string; bg: string; border: string }> = {
-  active:   { label: 'Active',   color: 'var(--status-ready-text)',   bg: 'var(--status-ready-bg)',   border: 'var(--status-ready-border)' },
-  inactive: { label: 'Inactive', color: 'var(--status-blocked-text)', bg: 'var(--status-blocked-bg)', border: 'var(--status-blocked-border)' },
-  past_due: { label: 'Past Due', color: 'var(--status-action-text)',  bg: 'var(--status-action-bg)',  border: 'var(--status-action-border)' },
-  trialing: { label: 'Trial',    color: 'var(--status-review-text)',  bg: 'var(--status-review-bg)',  border: 'var(--status-review-border)' },
-  canceled: { label: 'Canceled', color: 'var(--status-blocked-text)', bg: 'var(--status-blocked-bg)', border: 'var(--status-blocked-border)' },
+  active:   { label: 'Active',           color: 'var(--status-ready-text)',   bg: 'var(--status-ready-bg)',   border: 'var(--status-ready-border)' },
+  inactive: { label: 'Inactive',         color: 'var(--status-blocked-text)', bg: 'var(--status-blocked-bg)', border: 'var(--status-blocked-border)' },
+  past_due: { label: 'Past Due',         color: 'var(--status-action-text)',  bg: 'var(--status-action-bg)',  border: 'var(--status-action-border)' },
+  trialing: { label: 'Trial',            color: 'var(--status-review-text)',  bg: 'var(--status-review-bg)',  border: 'var(--status-review-border)' },
+  canceled: { label: 'Canceled',         color: 'var(--status-blocked-text)', bg: 'var(--status-blocked-bg)', border: 'var(--status-blocked-border)' },
+  paid:     { label: 'Payment Complete', color: 'var(--status-ready-text)',   bg: 'var(--status-ready-bg)',   border: 'var(--status-ready-border)' },
 }
 
 function BillingContent() {
@@ -65,7 +66,7 @@ function BillingContent() {
 
     const { data: companyData } = await supabase
       .from('companies')
-      .select('name, stripe_customer_id, stripe_subscription_id, subscription_status, subscription_price, subscription_notes, billing_email, subscription_period_end, cancel_at_period_end')
+      .select('name, stripe_customer_id, stripe_subscription_id, subscription_status, subscription_price, subscription_notes, billing_email, subscription_period_end, cancel_at_period_end, billing_model')
       .eq('id', COMPANY_ID)
       .single()
 
@@ -110,6 +111,7 @@ function BillingContent() {
         amount_cents: billing.subscription_price,
         plan_name: 'Homebase + Aegis',
         plan_description: `Monthly subscription — ${billing.name}`,
+        billing_model: billing?.billing_model ?? 'subscription',
         origin: window.location.origin,
       }),
     })
@@ -152,6 +154,8 @@ function BillingContent() {
   const statusInfo = STATUS_STYLES[billing?.subscription_status ?? 'inactive'] ?? STATUS_STYLES.inactive
   const success = searchParams.get('success')
   const cancelled = searchParams.get('cancelled')
+  const isOneTime = billing?.billing_model === 'one_time'
+  const isPaid = billing?.subscription_status === 'paid'
 
   if (loading) return (
     <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
@@ -210,12 +214,16 @@ function BillingContent() {
               {canSeePricing && billing?.subscription_price ? (
                 <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1, marginBottom: 6 }}>
                   {formatPrice(billing.subscription_price)}
-                  <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>/month</span>
+                  {!isOneTime && (
+                    <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>/month</span>
+                  )}
                 </div>
               ) : canSeePricing ? (
                 <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: 'var(--text-muted)', lineHeight: 1, marginBottom: 6 }}>
                   Not set
-                  <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>/month</span>
+                  {!isOneTime && (
+                    <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>/month</span>
+                  )}
                 </div>
               ) : null}
               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
@@ -235,7 +243,13 @@ function BillingContent() {
             </span>
           </div>
 
-          {billing?.subscription_status === 'past_due' ? (
+          {isOneTime ? (
+            isPaid ? (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.5 }}>
+                Your account is fully activated. Contact Quria Solutions for any billing questions.
+              </div>
+            ) : null
+          ) : billing?.subscription_status === 'past_due' ? (
             <div style={{ fontSize: 12, color: 'var(--status-action-text)', marginBottom: 20 }}>
               Payment failed — update payment method to avoid cancellation
             </div>
@@ -257,7 +271,17 @@ function BillingContent() {
           )}
 
           <div style={{ display: 'flex', gap: 8 }}>
-            {billing?.subscription_status !== 'active' ? (
+            {isOneTime ? (
+              isPaid ? null : (
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={handleStartSubscription}
+                  disabled={actionLoading || !billing?.subscription_price}
+                >
+                  {actionLoading ? 'Loading...' : 'Complete Payment'}
+                </button>
+              )
+            ) : billing?.subscription_status !== 'active' ? (
               <button
                 className="btn btn-primary btn-sm"
                 onClick={handleStartSubscription}

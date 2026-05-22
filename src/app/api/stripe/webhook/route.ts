@@ -55,20 +55,69 @@ export async function POST(request: NextRequest) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session
         const customerId = resolveCustomerId(session.customer)
-        const subscriptionId =
-          typeof session.subscription === 'string'
-            ? session.subscription
-            : session.subscription?.id ?? null
+        const metadataCompanyId =
+          (session.metadata?.company_id as string | undefined) ?? null
 
-        if (customerId && subscriptionId) {
-          await adminSupabase
-            .from('companies')
-            .update({
-              stripe_subscription_id: subscriptionId,
-              subscription_status: 'active',
+        if (session.mode === 'payment') {
+          if (customerId) {
+            await adminSupabase
+              .from('companies')
+              .update({
+                subscription_status: 'paid',
+                stripe_customer_id: customerId,
+              })
+              .eq('stripe_customer_id', customerId)
+          }
+
+          if (metadataCompanyId) {
+            await adminSupabase
+              .from('companies')
+              .update({
+                subscription_status: 'paid',
+                stripe_customer_id: customerId,
+              })
+              .eq('id', metadataCompanyId)
+          }
+
+          let companyIdForLog: string | null = metadataCompanyId
+          if (!companyIdForLog && customerId) {
+            const { data } = await adminSupabase
+              .from('companies')
+              .select('id')
+              .eq('stripe_customer_id', customerId)
+              .maybeSingle()
+            companyIdForLog = (data as { id: string } | null)?.id ?? null
+          }
+
+          if (companyIdForLog) {
+            await adminSupabase.from('activity_log').insert({
+              company_id: companyIdForLog,
+              actor: 'system',
+              action: 'payment_completed',
+              summary: 'One-time payment completed',
             })
-            .eq('stripe_customer_id', customerId)
-          console.log('[stripe-webhook] updated company for customer:', customerId)
+          }
+
+          console.log('[stripe-webhook] one-time payment completed for customer:', customerId)
+          break
+        }
+
+        if (session.mode === 'subscription') {
+          const subscriptionId =
+            typeof session.subscription === 'string'
+              ? session.subscription
+              : session.subscription?.id ?? null
+
+          if (customerId && subscriptionId) {
+            await adminSupabase
+              .from('companies')
+              .update({
+                stripe_subscription_id: subscriptionId,
+                subscription_status: 'active',
+              })
+              .eq('stripe_customer_id', customerId)
+            console.log('[stripe-webhook] updated company for customer:', customerId)
+          }
         }
         break
       }

@@ -105,6 +105,191 @@ function computeChanges(snapshot: ScheduleAssignment[], pending: ScheduleAssignm
   return changes
 }
 
+// ── DownloadMenu ──────────────────────────────────────────────────────────────
+
+function DownloadMenu({ scheduleId, companyId }: { scheduleId: string; companyId: string }) {
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState<'excel' | 'pdf' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDocClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [open])
+
+  async function downloadExcel() {
+    setLoading('excel')
+    setError(null)
+    try {
+      const res = await fetch('/api/schedule/download/excel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scheduleId, companyId }),
+      })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({} as { error?: string })) as { error?: string }
+        throw new Error(json.error || `Request failed (${res.status})`)
+      }
+      const disposition = res.headers.get('Content-Disposition') || ''
+      const match = disposition.match(/filename="?([^"]+)"?/)
+      const filename = match?.[1] ?? `Schedule.xlsx`
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      setOpen(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Download failed')
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  async function downloadPdf() {
+    setLoading('pdf')
+    setError(null)
+    try {
+      const res = await fetch('/api/schedule/download/pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scheduleId, companyId }),
+      })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({} as { error?: string })) as { error?: string }
+        throw new Error(json.error || `Request failed (${res.status})`)
+      }
+      const html = await res.text()
+      const win = window.open('', '_blank')
+      if (!win) {
+        throw new Error('Popup blocked. Allow popups to download the PDF.')
+      }
+      win.document.write(html)
+      win.document.close()
+      setOpen(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Download failed')
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  const isLoading = loading !== null
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+      <button
+        className="btn btn-secondary btn-sm"
+        onClick={() => setOpen(v => !v)}
+        disabled={isLoading}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+      >
+        {isLoading ? (
+          <span style={{
+            width: 11,
+            height: 11,
+            borderRadius: '50%',
+            border: '1.5px solid var(--text-muted)',
+            borderTopColor: 'transparent',
+            animation: 'spin 0.7s linear infinite',
+            display: 'inline-block',
+          }} />
+        ) : null}
+        <span>Download</span>
+        <span style={{ fontSize: 9, opacity: 0.6 }}>▾</span>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute',
+          top: 'calc(100% + 4px)',
+          right: 0,
+          minWidth: 180,
+          background: 'var(--bg-surface-1)',
+          border: '1px solid var(--border-default)',
+          borderRadius: 'var(--radius-md)',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+          zIndex: 50,
+          padding: 4,
+          display: 'flex',
+          flexDirection: 'column',
+        }}>
+          <button
+            onClick={downloadExcel}
+            disabled={isLoading}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              padding: '8px 12px',
+              borderRadius: 'var(--radius-sm)',
+              textAlign: 'left',
+              fontSize: 12,
+              color: 'var(--text-primary)',
+              fontFamily: 'var(--font-body)',
+              cursor: isLoading ? 'default' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+            onMouseEnter={e => { if (!isLoading) (e.currentTarget.style.background = 'var(--bg-surface-2)') }}
+            onMouseLeave={e => { (e.currentTarget.style.background = 'transparent') }}
+          >
+            <span style={{ width: 16, textAlign: 'center' }}>{loading === 'excel' ? '…' : '📥'}</span>
+            <span>Excel (.xlsx)</span>
+          </button>
+          <button
+            onClick={downloadPdf}
+            disabled={isLoading}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              padding: '8px 12px',
+              borderRadius: 'var(--radius-sm)',
+              textAlign: 'left',
+              fontSize: 12,
+              color: 'var(--text-primary)',
+              fontFamily: 'var(--font-body)',
+              cursor: isLoading ? 'default' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+            onMouseEnter={e => { if (!isLoading) (e.currentTarget.style.background = 'var(--bg-surface-2)') }}
+            onMouseLeave={e => { (e.currentTarget.style.background = 'transparent') }}
+          >
+            <span style={{ width: 16, textAlign: 'center' }}>{loading === 'pdf' ? '…' : '📄'}</span>
+            <span>PDF / Print</span>
+          </button>
+        </div>
+      )}
+
+      {error && (
+        <div style={{
+          marginTop: 6,
+          fontSize: 11,
+          color: '#ef4444',
+          maxWidth: 240,
+          textAlign: 'right',
+        }}>
+          {error}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── ScaledContainer ───────────────────────────────────────────────────────────
 
 function ScaledContainer({ children, scale = 0.7 }: { children: React.ReactNode; scale?: number }) {
@@ -644,12 +829,15 @@ function UpcomingCard({
               Delete Schedule
             </button>
           )}
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={onToggle}
-          >
-            {expanded ? 'Collapse' : 'Preview & Edit'}
-          </button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <DownloadMenu scheduleId={schedule.id} companyId={companyId} />
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={onToggle}
+            >
+              {expanded ? 'Collapse' : 'Preview & Edit'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1094,6 +1282,9 @@ export default function SchedulePage() {
                   >
                     Delete Schedule
                   </button>
+                )}
+                {currentSchedule && (
+                  <DownloadMenu scheduleId={currentSchedule.id} companyId={companyId} />
                 )}
                 <button
                   className="btn btn-secondary btn-sm"
