@@ -8,6 +8,7 @@ export interface Company {
   created_at: string
   onboarding_complete: boolean
   billing_model: 'subscription' | 'one_time' | null
+  stripe_price_id: string | null
 }
 
 export interface User {
@@ -367,4 +368,5 @@ export interface BillingInfo {
   subscription_period_end: string | null
   cancel_at_period_end: boolean | null
   billing_model: 'subscription' | 'one_time' | null
+  stripe_price_id: string | null
 }

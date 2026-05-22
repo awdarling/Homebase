@@ -36,25 +36,27 @@ export async function POST(request: NextRequest) {
         const billing_model: 'subscription' | 'one_time' = params.billing_model ?? 'subscription'
         const mode = billing_model === 'one_time' ? 'payment' : 'subscription'
 
-        const lineItem = {
-          price_data: {
-            currency: 'usd',
-            product_data: {
-              name: params.plan_name ?? 'Homebase + Aegis',
-              description: params.plan_description ?? 'Quria Solutions',
-            },
-            unit_amount: params.amount_cents,
-            ...(mode === 'subscription' && {
-              recurring: { interval: 'month' as const },
-            }),
-          },
-          quantity: 1,
-        }
+        const lineItem = params.price_id
+          ? { price: params.price_id, quantity: 1 }
+          : {
+              price_data: {
+                currency: 'usd',
+                product_data: {
+                  name: params.plan_name ?? 'Homebase + Aegis',
+                  description: params.plan_description ?? 'Quria Solutions',
+                },
+                unit_amount: params.amount_cents,
+                ...(mode === 'subscription' && {
+                  recurring: { interval: 'month' as const },
+                }),
+              },
+              quantity: 1,
+            }
 
         const session = await stripe.checkout.sessions.create({
           customer: params.customer_id,
           payment_method_types: ['card'],
-          mode,
+          ...(params.price_id ? {} : { mode }),
           line_items: [lineItem],
           success_url: `${params.origin}/billing?success=true`,
           cancel_url: `${params.origin}/billing?cancelled=true`,

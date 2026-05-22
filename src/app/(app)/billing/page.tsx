@@ -66,7 +66,7 @@ function BillingContent() {
 
     const { data: companyData } = await supabase
       .from('companies')
-      .select('name, stripe_customer_id, stripe_subscription_id, subscription_status, subscription_price, subscription_notes, billing_email, subscription_period_end, cancel_at_period_end, billing_model')
+      .select('name, stripe_customer_id, stripe_subscription_id, subscription_status, subscription_price, subscription_notes, billing_email, subscription_period_end, cancel_at_period_end, billing_model, stripe_price_id')
       .eq('id', COMPANY_ID)
       .single()
 
@@ -112,6 +112,7 @@ function BillingContent() {
         plan_name: 'Homebase + Aegis',
         plan_description: `Monthly subscription — ${billing.name}`,
         billing_model: billing?.billing_model ?? 'subscription',
+        price_id: billing?.stripe_price_id ?? null,
         origin: window.location.origin,
       }),
     })
