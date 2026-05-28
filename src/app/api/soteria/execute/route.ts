@@ -7,6 +7,13 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+function formatEventDate(iso: string | null | undefined): string {
+  if (!iso) return '(no date)'
+  const [y, m, d] = iso.split('-').map(Number)
+  if (!y || !m || !d) return iso
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -201,19 +208,19 @@ export async function POST(request: NextRequest) {
         const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/
         if (!d.name || typeof d.name !== 'string' || !d.name.trim()) {
           return NextResponse.json(
-            { error: 'name is required and must be a non-empty string.' },
+            { error: 'I need a name for this shift.' },
             { status: 400 },
           )
         }
         if (!d.start_time || !HHMM.test(d.start_time)) {
           return NextResponse.json(
-            { error: 'start_time is required and must be HH:MM (24-hour, e.g. 09:00).' },
+            { error: 'I need a start time in HH:MM format (for example 09:00).' },
             { status: 400 },
           )
         }
         if (!d.end_time || !HHMM.test(d.end_time)) {
           return NextResponse.json(
-            { error: 'end_time is required and must be HH:MM (24-hour, e.g. 17:00).' },
+            { error: 'I need an end time in HH:MM format (for example 17:00).' },
             { status: 400 },
           )
         }
@@ -223,7 +230,7 @@ export async function POST(request: NextRequest) {
           !d.days_active.every(n => Number.isInteger(n) && n >= 0 && n <= 6)
         ) {
           return NextResponse.json(
-            { error: 'days_active is required and must be a non-empty array of integers 0–6 (0=Sunday, 6=Saturday).' },
+            { error: 'I need to know which days this shift runs (Sunday through Saturday).' },
             { status: 400 },
           )
         }
@@ -257,7 +264,7 @@ export async function POST(request: NextRequest) {
         }
         if (!d.shift_type_id || typeof d.shift_type_id !== 'string' || !d.shift_type_id.trim()) {
           return NextResponse.json(
-            { error: 'shift_type_id is required.' },
+            { error: 'I need to know which shift this role goes inside. Tell me the shift name.' },
             { status: 400 },
           )
         }
@@ -267,7 +274,7 @@ export async function POST(request: NextRequest) {
           !d.accepted_roles.every(r => typeof r === 'string' && r.trim().length > 0)
         ) {
           return NextResponse.json(
-            { error: 'accepted_roles is required and must be a non-empty array of non-empty role names. The first entry is the preferred role; later entries are fallbacks.' },
+            { error: 'I need at least one role for this slot. The first role you list is the preferred one; any others are fallbacks.' },
             { status: 400 },
           )
         }
@@ -275,7 +282,7 @@ export async function POST(request: NextRequest) {
         const requiredCount = d.required_count ?? 1
         if (!Number.isInteger(requiredCount) || requiredCount < 1) {
           return NextResponse.json(
-            { error: 'required_count must be a positive integer (defaults to 1 if omitted).' },
+            { error: 'The number of people needed for this role must be a whole number of 1 or more.' },
             { status: 400 },
           )
         }
@@ -293,9 +300,9 @@ export async function POST(request: NextRequest) {
             .select('name')
             .eq('company_id', companyId)
             .order('name')
-          const names = (available ?? []).map((s: { name: string }) => s.name).join(', ') || '(none)'
+          const names = (available ?? []).map((s: { name: string }) => s.name).join(', ') || '(none yet)'
           return NextResponse.json(
-            { error: `Shift type ${d.shift_type_id} not found in this company. Available shift types: ${names}.` },
+            { error: `That shift wasn't found in this company. Existing shifts: ${names}.` },
             { status: 400 },
           )
         }
@@ -342,7 +349,7 @@ export async function POST(request: NextRequest) {
         }
         if (!d.id || typeof d.id !== 'string') {
           return NextResponse.json(
-            { error: 'id is required.' },
+            { error: 'I need to know which shift to update.' },
             { status: 400 },
           )
         }
@@ -350,19 +357,19 @@ export async function POST(request: NextRequest) {
         const updates: Record<string, unknown> = {}
         if (d.name !== undefined) {
           if (typeof d.name !== 'string' || !d.name.trim()) {
-            return NextResponse.json({ error: 'name must be a non-empty string when provided.' }, { status: 400 })
+            return NextResponse.json({ error: 'The new shift name needs to be non-empty.' }, { status: 400 })
           }
           updates.name = d.name.trim()
         }
         if (d.start_time !== undefined) {
           if (!HHMM.test(d.start_time)) {
-            return NextResponse.json({ error: 'start_time must be HH:MM (24-hour).' }, { status: 400 })
+            return NextResponse.json({ error: 'Start time must be in HH:MM format (for example 09:00).' }, { status: 400 })
           }
           updates.start_time = d.start_time
         }
         if (d.end_time !== undefined) {
           if (!HHMM.test(d.end_time)) {
-            return NextResponse.json({ error: 'end_time must be HH:MM (24-hour).' }, { status: 400 })
+            return NextResponse.json({ error: 'End time must be in HH:MM format (for example 17:00).' }, { status: 400 })
           }
           updates.end_time = d.end_time
         }
@@ -373,7 +380,7 @@ export async function POST(request: NextRequest) {
             !d.days_active.every(n => Number.isInteger(n) && n >= 0 && n <= 6)
           ) {
             return NextResponse.json(
-              { error: 'days_active must be a non-empty array of integers 0–6 when provided.' },
+              { error: 'I need at least one day of the week (Sunday through Saturday) for this shift.' },
               { status: 400 },
             )
           }
@@ -381,7 +388,7 @@ export async function POST(request: NextRequest) {
         }
         if (Object.keys(updates).length === 0) {
           return NextResponse.json(
-            { error: 'At least one of name, start_time, end_time, days_active must be provided.' },
+            { error: 'Tell me what to change on this shift — name, start time, end time, or days.' },
             { status: 400 },
           )
         }
@@ -393,7 +400,7 @@ export async function POST(request: NextRequest) {
           .eq('company_id', companyId)
           .maybeSingle()
         if (!before) {
-          return NextResponse.json({ error: `Shift type ${d.id} not found in this company.` }, { status: 400 })
+          return NextResponse.json({ error: `That shift wasn't found in this company.` }, { status: 400 })
         }
 
         const { data, error } = await supabase
@@ -425,7 +432,7 @@ export async function POST(request: NextRequest) {
         }
         if (!d.id || typeof d.id !== 'string') {
           return NextResponse.json(
-            { error: 'id is required.' },
+            { error: 'I need to know which role requirement to update.' },
             { status: 400 },
           )
         }
@@ -437,7 +444,7 @@ export async function POST(request: NextRequest) {
             !d.accepted_roles.every(r => typeof r === 'string' && r.trim().length > 0)
           ) {
             return NextResponse.json(
-              { error: 'accepted_roles must be a non-empty array of non-empty role names when provided.' },
+              { error: 'I need at least one role for this slot. The first role you list is the preferred one; any others are fallbacks.' },
               { status: 400 },
             )
           }
@@ -448,7 +455,7 @@ export async function POST(request: NextRequest) {
         if (d.required_count !== undefined) {
           if (!Number.isInteger(d.required_count) || d.required_count < 1) {
             return NextResponse.json(
-              { error: 'required_count must be a positive integer when provided.' },
+              { error: 'The number of people needed for this role must be a whole number of 1 or more.' },
               { status: 400 },
             )
           }
@@ -456,7 +463,7 @@ export async function POST(request: NextRequest) {
         }
         if (Object.keys(updates).length === 0) {
           return NextResponse.json(
-            { error: 'At least one of accepted_roles, required_count must be provided.' },
+            { error: 'Tell me what to change on this role requirement — which roles are accepted, or how many people are needed.' },
             { status: 400 },
           )
         }
@@ -468,7 +475,7 @@ export async function POST(request: NextRequest) {
           .eq('company_id', companyId)
           .maybeSingle()
         if (!before) {
-          return NextResponse.json({ error: `Role requirement ${d.id} not found in this company.` }, { status: 400 })
+          return NextResponse.json({ error: `That role requirement no longer exists in this company.` }, { status: 400 })
         }
 
         const { data, error } = await supabase
@@ -480,13 +487,29 @@ export async function POST(request: NextRequest) {
           .single()
         if (error) throw error
 
+        let stName = '(unknown shift)'
+        const beforeRow = before as { shift_type_id: string | null }
+        if (beforeRow.shift_type_id) {
+          const { data: st } = await supabase
+            .from('shift_types')
+            .select('name')
+            .eq('id', beforeRow.shift_type_id)
+            .eq('company_id', companyId)
+            .maybeSingle()
+          if (st) stName = (st as { name: string }).name
+        }
+        const afterRow = data as { accepted_roles: string[] | null; role: string | null; required_count: number }
+        const rolesText = (afterRow.accepted_roles && afterRow.accepted_roles.length > 0)
+          ? afterRow.accepted_roles.join(' or ')
+          : (afterRow.role ?? '?')
+
         await supabase.from('activity_log').insert({
           company_id: companyId,
           actor: 'soteria',
           action: 'update_role_requirement',
           entity_type: 'shift_requirement',
           entity_id: d.id,
-          summary: `Soteria updated role requirement ${d.id}`,
+          summary: `Soteria updated role requirement on ${stName}: now ${afterRow.required_count}× ${rolesText}`,
           metadata: { before, after: data, changed_fields: Object.keys(updates) },
         })
         return NextResponse.json({ success: true, data })
@@ -495,10 +518,10 @@ export async function POST(request: NextRequest) {
       case 'delete_shift_type': {
         const d = action.data as { id?: string; name?: string }
         if (!d.id || typeof d.id !== 'string') {
-          return NextResponse.json({ error: 'id is required.' }, { status: 400 })
+          return NextResponse.json({ error: 'I need to know which shift to delete.' }, { status: 400 })
         }
         if (!d.name || typeof d.name !== 'string') {
-          return NextResponse.json({ error: 'name is required (used for the activity log entry).' }, { status: 400 })
+          return NextResponse.json({ error: 'I need the shift name to record what was deleted.' }, { status: 400 })
         }
         const { data: existingReqs, error: reqErr } = await supabase
           .from('shift_requirements')
@@ -509,7 +532,7 @@ export async function POST(request: NextRequest) {
         const reqCount = existingReqs?.length ?? 0
         if (reqCount > 0) {
           return NextResponse.json(
-            { error: `Cannot delete shift type — ${reqCount} role requirement${reqCount === 1 ? '' : 's'} still exist. Delete those first.` },
+            { error: `I can't delete ${d.name} yet — it still has ${reqCount} role requirement${reqCount === 1 ? '' : 's'} inside it. Remove those first.` },
             { status: 400 },
           )
         }
@@ -533,7 +556,7 @@ export async function POST(request: NextRequest) {
       case 'delete_role_requirement': {
         const d = action.data as { id?: string }
         if (!d.id || typeof d.id !== 'string') {
-          return NextResponse.json({ error: 'id is required.' }, { status: 400 })
+          return NextResponse.json({ error: 'I need to know which role requirement to delete.' }, { status: 400 })
         }
         const { data: before } = await supabase
           .from('shift_requirements')
@@ -542,10 +565,10 @@ export async function POST(request: NextRequest) {
           .eq('company_id', companyId)
           .maybeSingle()
         if (!before) {
-          return NextResponse.json({ error: `Role requirement ${d.id} not found in this company.` }, { status: 400 })
+          return NextResponse.json({ error: `That role requirement no longer exists in this company.` }, { status: 400 })
         }
         const beforeRow = before as { id: string; shift_type_id: string | null; accepted_roles: string[] | null; role: string | null; required_count: number }
-        let shiftTypeName = '(unknown shift type)'
+        let shiftTypeName = '(unknown shift)'
         if (beforeRow.shift_type_id) {
           const { data: st } = await supabase
             .from('shift_types')
@@ -626,7 +649,7 @@ export async function POST(request: NextRequest) {
         const severity = d.severity ?? 'avoid'
         if (!ALLOWED_SEVERITIES.includes(severity as typeof ALLOWED_SEVERITIES[number])) {
           return NextResponse.json(
-            { error: `Invalid severity "${d.severity}". Must be 'avoid' or 'never'.` },
+            { error: `Severity must be either "avoid" or "never".` },
             { status: 400 },
           )
         }
@@ -638,13 +661,26 @@ export async function POST(request: NextRequest) {
           severity,
         }).select().single()
         if (error) throw error
+
+        const { data: empPair } = await supabase
+          .from('employees')
+          .select('id, name')
+          .eq('company_id', companyId)
+          .in('id', [d.employee_id_1, d.employee_id_2])
+        const nameById = new Map<string, string>(
+          ((empPair ?? []) as { id: string; name: string }[]).map(e => [e.id, e.name])
+        )
+        const name1 = nameById.get(d.employee_id_1) ?? 'an employee'
+        const name2 = nameById.get(d.employee_id_2) ?? 'an employee'
+
         await supabase.from('activity_log').insert({
           company_id: companyId,
           actor: 'soteria',
           action: 'add_conflict',
           entity_type: 'employee_conflict',
           entity_id: data.id,
-          summary: `Soteria added conflict pair`,
+          summary: `Soteria added ${severity} conflict between ${name1} and ${name2}`,
+          metadata: { employee_id_1: d.employee_id_1, employee_id_2: d.employee_id_2, severity, reason: d.reason ?? null },
         })
         return NextResponse.json({ success: true, data })
       }
@@ -728,7 +764,7 @@ export async function POST(request: NextRequest) {
         if (empErr) throw empErr
         if (!emp) {
           return NextResponse.json(
-            { error: 'Employee not found in this company' },
+            { error: `${d.employee_name || 'That employee'} wasn't found in this company.` },
             { status: 404 }
           )
         }
@@ -836,7 +872,7 @@ export async function POST(request: NextRequest) {
         const aegisUrl = process.env.AEGIS_URL
         if (!aegisUrl) {
           return NextResponse.json(
-            { error: 'Aegis URL not configured' },
+            { error: 'The schedule build service isn\'t configured yet. Reach out to support to set this up.' },
             { status: 500 }
           )
         }
@@ -880,7 +916,7 @@ export async function POST(request: NextRequest) {
 
         if (!aegisRes.ok) {
           return NextResponse.json(
-            { error: `Aegis returned ${aegisRes.status}` },
+            { error: `The schedule build service couldn't accept that request. Please try again in a moment.` },
             { status: 502 }
           )
         }
@@ -888,13 +924,787 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true, target_week: d.target_week })
       }
 
+
+      case 'add_role': {
+        const d = action.data as { name?: string; color?: string }
+        const HEX = /^#[0-9A-Fa-f]{6}$/
+        if (!d.name || typeof d.name !== 'string' || !d.name.trim()) {
+          return NextResponse.json({ error: 'I need a name for this role.' }, { status: 400 })
+        }
+        const name = d.name.trim()
+        let color = '#6b7280'
+        if (d.color !== undefined && d.color !== null && d.color !== '') {
+          if (typeof d.color !== 'string' || !HEX.test(d.color)) {
+            return NextResponse.json({ error: 'Color must be a hex value like #10b981.' }, { status: 400 })
+          }
+          color = d.color
+        }
+
+        const { data: existing } = await supabase
+          .from('roles')
+          .select('id, name')
+          .eq('company_id', companyId)
+        const dup = (existing ?? []).find(
+          (r: { name: string }) => r.name.toLowerCase() === name.toLowerCase(),
+        )
+        if (dup) {
+          return NextResponse.json(
+            { error: `A role named "${(dup as { name: string }).name}" already exists. Pick a different name or update the existing role.` },
+            { status: 400 },
+          )
+        }
+
+        const { data, error } = await supabase.from('roles').insert({
+          company_id: companyId,
+          name,
+          color,
+        }).select().single()
+        if (error) throw error
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'add_role',
+          entity_type: 'role',
+          entity_id: data.id,
+          summary: `Soteria added role: ${name}`,
+          metadata: { name, color },
+        })
+        return NextResponse.json({ success: true, data })
+      }
+
+      case 'update_role': {
+        const d = action.data as { id?: string; name?: string; color?: string }
+        const HEX = /^#[0-9A-Fa-f]{6}$/
+        if (!d.id || typeof d.id !== 'string') {
+          return NextResponse.json({ error: 'I need to know which role to update.' }, { status: 400 })
+        }
+        const updates: Record<string, unknown> = {}
+        if (d.name !== undefined) {
+          if (typeof d.name !== 'string' || !d.name.trim()) {
+            return NextResponse.json({ error: 'The new role name needs to be non-empty.' }, { status: 400 })
+          }
+          updates.name = d.name.trim()
+        }
+        if (d.color !== undefined) {
+          if (typeof d.color !== 'string' || !HEX.test(d.color)) {
+            return NextResponse.json({ error: 'Color must be a hex value like #10b981.' }, { status: 400 })
+          }
+          updates.color = d.color
+        }
+        if (Object.keys(updates).length === 0) {
+          return NextResponse.json(
+            { error: 'Tell me what to change on this role — name or color.' },
+            { status: 400 },
+          )
+        }
+
+        const { data: before } = await supabase
+          .from('roles')
+          .select('id, name, color')
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+        if (!before) {
+          return NextResponse.json({ error: `That role wasn't found in this company.` }, { status: 400 })
+        }
+        const beforeRow = before as { id: string; name: string; color: string }
+
+        if (updates.name && (updates.name as string).toLowerCase() !== beforeRow.name.toLowerCase()) {
+          const { data: others } = await supabase
+            .from('roles')
+            .select('id, name')
+            .eq('company_id', companyId)
+            .neq('id', d.id)
+          const dup = (others ?? []).find(
+            (r: { name: string }) => r.name.toLowerCase() === (updates.name as string).toLowerCase(),
+          )
+          if (dup) {
+            return NextResponse.json(
+              { error: `A role named "${(dup as { name: string }).name}" already exists. Pick a different name.` },
+              { status: 400 },
+            )
+          }
+        }
+
+        const { data, error } = await supabase
+          .from('roles')
+          .update(updates)
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .select()
+          .single()
+        if (error) throw error
+        const afterRow = data as { name: string; color: string }
+
+        const cascadeCounts = {
+          employees_primary_role: 0,
+          employees_qualified_roles: 0,
+          shift_req_accepted_roles: 0,
+          shift_req_role_legacy: 0,
+        }
+
+        if (updates.name && beforeRow.name !== afterRow.name) {
+          const oldName = beforeRow.name
+          const newName = afterRow.name
+
+          // 1. employees.primary_role — direct UPDATE WHERE
+          const { data: empPrimary, error: errEP } = await supabase
+            .from('employees')
+            .update({ primary_role: newName })
+            .eq('company_id', companyId)
+            .eq('primary_role', oldName)
+            .select('id')
+          if (errEP) throw errEP
+          cascadeCounts.employees_primary_role = empPrimary?.length ?? 0
+
+          // 2. employees.qualified_roles — fetch + modify + per-row update
+          const { data: empsWithRole, error: errEQ } = await supabase
+            .from('employees')
+            .select('id, qualified_roles')
+            .eq('company_id', companyId)
+            .contains('qualified_roles', [oldName])
+          if (errEQ) throw errEQ
+          for (const emp of (empsWithRole ?? []) as { id: string; qualified_roles: string[] }[]) {
+            const newRoles = emp.qualified_roles.map(r => r === oldName ? newName : r)
+            const { error: errU } = await supabase
+              .from('employees')
+              .update({ qualified_roles: newRoles })
+              .eq('id', emp.id)
+              .eq('company_id', companyId)
+            if (errU) throw errU
+            cascadeCounts.employees_qualified_roles++
+          }
+
+          // 3. shift_requirements.accepted_roles — fetch + modify + per-row update
+          const { data: reqsWithRole, error: errSA } = await supabase
+            .from('shift_requirements')
+            .select('id, accepted_roles')
+            .eq('company_id', companyId)
+            .contains('accepted_roles', [oldName])
+          if (errSA) throw errSA
+          for (const req of (reqsWithRole ?? []) as { id: string; accepted_roles: string[] }[]) {
+            const newAccepted = req.accepted_roles.map(r => r === oldName ? newName : r)
+            const { error: errU } = await supabase
+              .from('shift_requirements')
+              .update({ accepted_roles: newAccepted })
+              .eq('id', req.id)
+              .eq('company_id', companyId)
+            if (errU) throw errU
+            cascadeCounts.shift_req_accepted_roles++
+          }
+
+          // 4. shift_requirements.role — legacy column, direct UPDATE WHERE
+          const { data: reqLegacy, error: errSL } = await supabase
+            .from('shift_requirements')
+            .update({ role: newName })
+            .eq('company_id', companyId)
+            .eq('role', oldName)
+            .select('id')
+          if (errSL) throw errSL
+          cascadeCounts.shift_req_role_legacy = reqLegacy?.length ?? 0
+        }
+
+        const totalCascade =
+          cascadeCounts.employees_primary_role +
+          cascadeCounts.employees_qualified_roles +
+          cascadeCounts.shift_req_accepted_roles +
+          cascadeCounts.shift_req_role_legacy
+        const renameSummary = updates.name
+          ? (beforeRow.name === afterRow.name
+              ? `Soteria updated role: ${afterRow.name}`
+              : `Soteria renamed role: ${beforeRow.name} → ${afterRow.name}${totalCascade > 0 ? ` (updated ${totalCascade} reference${totalCascade === 1 ? '' : 's'})` : ''}`)
+          : `Soteria updated role: ${afterRow.name}`
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'update_role',
+          entity_type: 'role',
+          entity_id: d.id,
+          summary: renameSummary,
+          metadata: { before: beforeRow, after: afterRow, changed_fields: Object.keys(updates), cascade: cascadeCounts },
+        })
+        return NextResponse.json({ success: true, data })
+      }
+
+      case 'delete_role': {
+        const d = action.data as { id?: string; name?: string }
+        if (!d.id || typeof d.id !== 'string') {
+          return NextResponse.json({ error: 'I need to know which role to delete.' }, { status: 400 })
+        }
+        if (!d.name || typeof d.name !== 'string') {
+          return NextResponse.json({ error: 'I need the role name to record what was deleted.' }, { status: 400 })
+        }
+        const name = d.name
+
+        const [
+          { data: empsByPrimary, error: errEP },
+          { data: empsByQualified, error: errEQ },
+          { data: reqsByLegacy, error: errSL },
+          { data: reqsByAccepted, error: errSA },
+        ] = await Promise.all([
+          supabase
+            .from('employees')
+            .select('id, name')
+            .eq('company_id', companyId)
+            .eq('active', true)
+            .eq('primary_role', name),
+          supabase
+            .from('employees')
+            .select('id, name')
+            .eq('company_id', companyId)
+            .eq('active', true)
+            .contains('qualified_roles', [name]),
+          supabase
+            .from('shift_requirements')
+            .select('id')
+            .eq('company_id', companyId)
+            .eq('role', name),
+          supabase
+            .from('shift_requirements')
+            .select('id')
+            .eq('company_id', companyId)
+            .contains('accepted_roles', [name]),
+        ])
+        if (errEP || errEQ || errSL || errSA) throw errEP ?? errEQ ?? errSL ?? errSA
+
+        // Dedupe employees across the two checks
+        const empMap = new Map<string, string>()
+        for (const e of [...(empsByPrimary ?? []), ...(empsByQualified ?? [])] as { id: string; name: string }[]) {
+          empMap.set(e.id, e.name)
+        }
+        const empNames = Array.from(empMap.values())
+
+        // Combine requirement counts (dedupe by id)
+        const reqIds = new Set<string>()
+        for (const r of [...(reqsByLegacy ?? []), ...(reqsByAccepted ?? [])] as { id: string }[]) {
+          reqIds.add(r.id)
+        }
+        const reqCount = reqIds.size
+        if (empNames.length > 0 || reqCount > 0) {
+          const parts: string[] = []
+          if (empNames.length > 0) {
+            const sample = empNames.slice(0, 3).join(', ')
+            const more = empNames.length > 3 ? ` and ${empNames.length - 3} more` : ''
+            parts.push(`${empNames.length} employee${empNames.length === 1 ? ' is' : 's are'} assigned to ${name} (${sample}${more})`)
+          }
+          if (reqCount > 0) {
+            parts.push(`${reqCount} shift role requirement${reqCount === 1 ? '' : 's'} still accept${reqCount === 1 ? 's' : ''} the ${name} role`)
+          }
+          return NextResponse.json(
+            { error: `I can't delete ${name} yet — ${parts.join(' and ')}. Update those first.` },
+            { status: 400 },
+          )
+        }
+
+        const { error } = await supabase
+          .from('roles')
+          .delete()
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+        if (error) throw error
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'delete_role',
+          entity_type: 'role',
+          summary: `Soteria deleted role: ${name}`,
+          metadata: { id: d.id, name },
+        })
+        return NextResponse.json({ success: true })
+      }
+
+      case 'add_wage_rate': {
+        const d = action.data as { role?: string; hourly_rate?: number; rate?: number }
+        if (!d.role || typeof d.role !== 'string' || !d.role.trim()) {
+          return NextResponse.json({ error: 'I need to know which role this wage is for.' }, { status: 400 })
+        }
+        const rate = typeof d.hourly_rate === 'number' ? d.hourly_rate : d.rate
+        if (typeof rate !== 'number' || !isFinite(rate) || rate <= 0) {
+          return NextResponse.json({ error: 'The hourly rate must be a positive number.' }, { status: 400 })
+        }
+        const roleInput = d.role.trim()
+
+        const { data: roles } = await supabase
+          .from('roles')
+          .select('name')
+          .eq('company_id', companyId)
+        const matched = (roles ?? []).find(
+          (r: { name: string }) => r.name.toLowerCase() === roleInput.toLowerCase(),
+        )
+        if (!matched) {
+          const names = (roles ?? []).map((r: { name: string }) => r.name).join(', ') || '(none defined yet)'
+          return NextResponse.json(
+            { error: `I don't see a "${roleInput}" role in this company. Existing roles: ${names}. Add the role first, then set its wage.` },
+            { status: 400 },
+          )
+        }
+        const roleName = (matched as { name: string }).name
+
+        const { data: existingRates } = await supabase
+          .from('wage_rates')
+          .select('id, role')
+          .eq('company_id', companyId)
+        const dup = (existingRates ?? []).find(
+          (w: { role: string }) => w.role.toLowerCase() === roleName.toLowerCase(),
+        )
+        if (dup) {
+          return NextResponse.json(
+            { error: `A wage rate for ${roleName} already exists. Update it instead of adding a new one.` },
+            { status: 400 },
+          )
+        }
+
+        const { data, error } = await supabase.from('wage_rates').insert({
+          company_id: companyId,
+          role: roleName,
+          hourly_rate: rate,
+        }).select().single()
+        if (error) throw error
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'add_wage_rate',
+          entity_type: 'wage_rate',
+          entity_id: data.id,
+          summary: `Soteria set ${roleName} wage to $${rate.toFixed(2)}/hr`,
+          metadata: { role: roleName, hourly_rate: rate },
+        })
+        return NextResponse.json({ success: true, data })
+      }
+
+      case 'update_wage_rate': {
+        const d = action.data as { id?: string; hourly_rate?: number; rate?: number }
+        if (!d.id || typeof d.id !== 'string') {
+          return NextResponse.json({ error: 'I need to know which wage rate to update.' }, { status: 400 })
+        }
+        const rate = typeof d.hourly_rate === 'number' ? d.hourly_rate : d.rate
+        if (typeof rate !== 'number' || !isFinite(rate) || rate <= 0) {
+          return NextResponse.json({ error: 'The hourly rate must be a positive number.' }, { status: 400 })
+        }
+
+        const { data: before } = await supabase
+          .from('wage_rates')
+          .select('id, role, hourly_rate')
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+        if (!before) {
+          return NextResponse.json({ error: `That wage rate wasn't found in this company.` }, { status: 400 })
+        }
+        const beforeRow = before as { id: string; role: string; hourly_rate: number }
+
+        const { data, error } = await supabase
+          .from('wage_rates')
+          .update({ hourly_rate: rate })
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .select()
+          .single()
+        if (error) throw error
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'update_wage_rate',
+          entity_type: 'wage_rate',
+          entity_id: d.id,
+          summary: `Soteria changed ${beforeRow.role} wage from $${Number(beforeRow.hourly_rate).toFixed(2)} to $${rate.toFixed(2)}/hr`,
+          metadata: { role: beforeRow.role, before: beforeRow.hourly_rate, after: rate },
+        })
+        return NextResponse.json({ success: true, data })
+      }
+
+      case 'delete_wage_rate': {
+        const d = action.data as { id?: string }
+        if (!d.id || typeof d.id !== 'string') {
+          return NextResponse.json({ error: 'I need to know which wage rate to delete.' }, { status: 400 })
+        }
+        const { data: before } = await supabase
+          .from('wage_rates')
+          .select('id, role, hourly_rate')
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+        if (!before) {
+          return NextResponse.json({ error: `That wage rate wasn't found in this company.` }, { status: 400 })
+        }
+        const beforeRow = before as { id: string; role: string; hourly_rate: number }
+
+        const { error } = await supabase
+          .from('wage_rates')
+          .delete()
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+        if (error) throw error
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'delete_wage_rate',
+          entity_type: 'wage_rate',
+          summary: `Soteria removed wage rate for ${beforeRow.role}`,
+          metadata: { id: d.id, role: beforeRow.role, hourly_rate: beforeRow.hourly_rate },
+        })
+        return NextResponse.json({ success: true })
+      }
+
+      case 'add_event': {
+        const d = action.data as {
+          event_type?: string
+          title?: string
+          date?: string
+          description?: string | null
+          notes?: string | null
+        }
+        const ALLOWED_EVENT_TYPES = ['holiday', 'special_event', 'party', 'fundraiser', 'closure', 'custom'] as const
+        const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+        if (!d.event_type || !ALLOWED_EVENT_TYPES.includes(d.event_type as typeof ALLOWED_EVENT_TYPES[number])) {
+          return NextResponse.json(
+            { error: `Event type must be one of: ${ALLOWED_EVENT_TYPES.join(', ')}.` },
+            { status: 400 },
+          )
+        }
+        if (!d.title || typeof d.title !== 'string' || !d.title.trim()) {
+          return NextResponse.json({ error: 'I need a title for this event.' }, { status: 400 })
+        }
+        if (!d.date || typeof d.date !== 'string' || !DATE_RE.test(d.date)) {
+          return NextResponse.json({ error: 'I need a date in YYYY-MM-DD format (for example 2026-07-04).' }, { status: 400 })
+        }
+        const title = d.title.trim()
+        const notes = d.notes?.toString().trim() || null
+        const description = d.description ? (d.description.toString().trim() || null) : null
+
+        const { data, error } = await supabase.from('events').insert({
+          company_id: companyId,
+          title,
+          date: d.date,
+          event_type: d.event_type,
+          description,
+          staffing_notes: notes,
+          created_by: 'soteria',
+        }).select().single()
+        if (error) throw error
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'add_event',
+          entity_type: 'event',
+          entity_id: data.id,
+          summary: `Soteria added ${d.event_type}: ${title} on ${formatEventDate(d.date)}`,
+          metadata: { event_type: d.event_type, title, date: d.date, description, notes },
+        })
+        return NextResponse.json({ success: true, data })
+      }
+
+      case 'update_event': {
+        const d = action.data as {
+          id?: string
+          event_type?: string
+          title?: string
+          date?: string
+          description?: string | null
+          notes?: string | null
+        }
+        const ALLOWED_EVENT_TYPES = ['holiday', 'special_event', 'party', 'fundraiser', 'closure', 'custom'] as const
+        const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+        if (!d.id || typeof d.id !== 'string') {
+          return NextResponse.json({ error: 'I need to know which event to update.' }, { status: 400 })
+        }
+        const updates: Record<string, unknown> = {}
+        if (d.event_type !== undefined) {
+          if (!ALLOWED_EVENT_TYPES.includes(d.event_type as typeof ALLOWED_EVENT_TYPES[number])) {
+            return NextResponse.json(
+              { error: `Event type must be one of: ${ALLOWED_EVENT_TYPES.join(', ')}.` },
+              { status: 400 },
+            )
+          }
+          updates.event_type = d.event_type
+        }
+        if (d.title !== undefined) {
+          if (typeof d.title !== 'string' || !d.title.trim()) {
+            return NextResponse.json({ error: 'The new event title needs to be non-empty.' }, { status: 400 })
+          }
+          updates.title = d.title.trim()
+        }
+        if (d.date !== undefined) {
+          if (typeof d.date !== 'string' || !DATE_RE.test(d.date)) {
+            return NextResponse.json({ error: 'Date must be in YYYY-MM-DD format (for example 2026-07-04).' }, { status: 400 })
+          }
+          updates.date = d.date
+        }
+        if (d.notes !== undefined) {
+          updates.staffing_notes = d.notes === null ? null : d.notes.toString().trim() || null
+        }
+        if (d.description !== undefined) {
+          updates.description = d.description === null ? null : d.description.toString().trim() || null
+        }
+        if (Object.keys(updates).length === 0) {
+          return NextResponse.json(
+            { error: 'Tell me what to change on this event — type, title, date, description, or notes.' },
+            { status: 400 },
+          )
+        }
+        updates.updated_at = new Date().toISOString()
+
+        const { data: before } = await supabase
+          .from('events')
+          .select('id, event_type, title, date, staffing_notes')
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+        if (!before) {
+          return NextResponse.json({ error: `That event wasn't found in this company.` }, { status: 400 })
+        }
+        const beforeRow = before as { id: string; event_type: string; title: string; date: string | null; staffing_notes: string | null }
+
+        const { data, error } = await supabase
+          .from('events')
+          .update(updates)
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .select()
+          .single()
+        if (error) throw error
+        const afterRow = data as { event_type: string; title: string; date: string | null }
+
+        let summary: string
+        if (updates.title && beforeRow.title !== afterRow.title) {
+          summary = `Soteria updated event: ${beforeRow.title} → ${afterRow.title} (${formatEventDate(afterRow.date)})`
+        } else {
+          summary = `Soteria updated event: ${afterRow.title} (${formatEventDate(afterRow.date)})`
+        }
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'update_event',
+          entity_type: 'event',
+          entity_id: d.id,
+          summary,
+          metadata: { before: beforeRow, after: data, changed_fields: Object.keys(updates) },
+        })
+        return NextResponse.json({ success: true, data })
+      }
+
+      case 'delete_event': {
+        const d = action.data as { id?: string }
+        if (!d.id || typeof d.id !== 'string') {
+          return NextResponse.json({ error: 'I need to know which event to delete.' }, { status: 400 })
+        }
+        const { data: before } = await supabase
+          .from('events')
+          .select('id, title, event_type, date')
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+        if (!before) {
+          return NextResponse.json({ error: `That event wasn't found in this company.` }, { status: 400 })
+        }
+        const beforeRow = before as { id: string; title: string; event_type: string; date: string | null }
+
+        const { error } = await supabase
+          .from('events')
+          .delete()
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+        if (error) throw error
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'delete_event',
+          entity_type: 'event',
+          summary: `Soteria removed event: ${beforeRow.title}`,
+          metadata: { id: d.id, title: beforeRow.title, event_type: beforeRow.event_type, date: beforeRow.date },
+        })
+        return NextResponse.json({ success: true })
+      }
+
+      case 'update_conflict': {
+        const d = action.data as { id?: string; severity?: string; reason?: string | null }
+        const ALLOWED_SEVERITIES = ['avoid', 'never'] as const
+        if (!d.id || typeof d.id !== 'string') {
+          return NextResponse.json({ error: 'I need to know which conflict to update.' }, { status: 400 })
+        }
+        const updates: Record<string, unknown> = {}
+        if (d.severity !== undefined) {
+          if (!ALLOWED_SEVERITIES.includes(d.severity as typeof ALLOWED_SEVERITIES[number])) {
+            return NextResponse.json({ error: `Severity must be either "avoid" or "never".` }, { status: 400 })
+          }
+          updates.severity = d.severity
+        }
+        if (d.reason !== undefined) {
+          updates.reason = d.reason === null ? null : String(d.reason).trim() || null
+        }
+        if (Object.keys(updates).length === 0) {
+          return NextResponse.json(
+            { error: 'Tell me what to change on this conflict — severity or reason.' },
+            { status: 400 },
+          )
+        }
+
+        const { data: before } = await supabase
+          .from('employee_conflicts')
+          .select('id, employee_id_1, employee_id_2, severity, reason')
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+        if (!before) {
+          return NextResponse.json({ error: `That conflict wasn't found in this company.` }, { status: 400 })
+        }
+        const beforeRow = before as { id: string; employee_id_1: string; employee_id_2: string; severity: string; reason: string | null }
+
+        const { data: empPair } = await supabase
+          .from('employees')
+          .select('id, name')
+          .eq('company_id', companyId)
+          .in('id', [beforeRow.employee_id_1, beforeRow.employee_id_2])
+        const nameById = new Map<string, string>(
+          ((empPair ?? []) as { id: string; name: string }[]).map(e => [e.id, e.name])
+        )
+        const name1 = nameById.get(beforeRow.employee_id_1) ?? 'an employee'
+        const name2 = nameById.get(beforeRow.employee_id_2) ?? 'an employee'
+
+        const { data, error } = await supabase
+          .from('employee_conflicts')
+          .update(updates)
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .select()
+          .single()
+        if (error) throw error
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'update_conflict',
+          entity_type: 'employee_conflict',
+          entity_id: d.id,
+          summary: `Soteria updated conflict between ${name1} and ${name2}`,
+          metadata: { before: beforeRow, after: data, changed_fields: Object.keys(updates) },
+        })
+        return NextResponse.json({ success: true, data })
+      }
+
+      case 'delete_conflict': {
+        const d = action.data as { id?: string }
+        if (!d.id || typeof d.id !== 'string') {
+          return NextResponse.json({ error: 'I need to know which conflict to delete.' }, { status: 400 })
+        }
+        const { data: before } = await supabase
+          .from('employee_conflicts')
+          .select('id, employee_id_1, employee_id_2, severity, reason')
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+        if (!before) {
+          return NextResponse.json({ error: `That conflict wasn't found in this company.` }, { status: 400 })
+        }
+        const beforeRow = before as { id: string; employee_id_1: string; employee_id_2: string; severity: string; reason: string | null }
+
+        const { data: empPair } = await supabase
+          .from('employees')
+          .select('id, name')
+          .eq('company_id', companyId)
+          .in('id', [beforeRow.employee_id_1, beforeRow.employee_id_2])
+        const nameById = new Map<string, string>(
+          ((empPair ?? []) as { id: string; name: string }[]).map(e => [e.id, e.name])
+        )
+        const name1 = nameById.get(beforeRow.employee_id_1) ?? 'an employee'
+        const name2 = nameById.get(beforeRow.employee_id_2) ?? 'an employee'
+
+        const { error } = await supabase
+          .from('employee_conflicts')
+          .delete()
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+        if (error) throw error
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'delete_conflict',
+          entity_type: 'employee_conflict',
+          summary: `Soteria removed conflict between ${name1} and ${name2}`,
+          metadata: { id: d.id, employee_id_1: beforeRow.employee_id_1, employee_id_2: beforeRow.employee_id_2, severity: beforeRow.severity, reason: beforeRow.reason },
+        })
+        return NextResponse.json({ success: true })
+      }
+
+      case 'clear_custom_availability': {
+        const d = action.data as { employee_id?: string; employee_name?: string }
+        if (!d.employee_id || typeof d.employee_id !== 'string') {
+          return NextResponse.json({ error: 'I need to know which employee to clear.' }, { status: 400 })
+        }
+        if (!d.employee_name || typeof d.employee_name !== 'string') {
+          return NextResponse.json({ error: 'I need the employee name for the activity log.' }, { status: 400 })
+        }
+        const employeeName = d.employee_name
+
+        const { data: emp } = await supabase
+          .from('employees')
+          .select('id')
+          .eq('id', d.employee_id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+        if (!emp) {
+          return NextResponse.json(
+            { error: `${employeeName} wasn't found in this company.` },
+            { status: 404 },
+          )
+        }
+
+        const { data: activeRows } = await supabase
+          .from('custom_availability')
+          .select('id')
+          .eq('employee_id', d.employee_id)
+          .eq('company_id', companyId)
+          .eq('active', true)
+          .order('created_at', { ascending: false })
+          .limit(1)
+        const activeRow = (activeRows ?? [])[0] as { id: string } | undefined
+        if (!activeRow) {
+          return NextResponse.json(
+            { error: `${employeeName} doesn't have an active custom availability override.` },
+            { status: 400 },
+          )
+        }
+
+        const { error } = await supabase
+          .from('custom_availability')
+          .update({ active: false })
+          .eq('id', activeRow.id)
+          .eq('company_id', companyId)
+        if (error) throw error
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'custom_availability_removed',
+          entity_type: 'custom_availability',
+          entity_id: d.employee_id,
+          summary: `Soteria cleared custom availability for ${employeeName}`,
+          metadata: { employee_id: d.employee_id, cleared_row_id: activeRow.id },
+        })
+        return NextResponse.json({ success: true })
+      }
+
       default:
-        return NextResponse.json({ error: 'Unknown action type' }, { status: 400 })
+        return NextResponse.json({ error: "I don't know how to do that action yet." }, { status: 400 })
     }
 
   } catch (error) {
     console.error('Soteria execute error:', error)
-    const message = error instanceof Error ? error.message : 'Unknown error'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json(
+      { error: "Something went wrong saving that change. Please try again, or rephrase what you need." },
+      { status: 500 },
+    )
   }
 }

@@ -15,6 +15,7 @@ const supabase = createClient(
 )
 
 async function getCompanyContext(companyId: string) {
+  const today = new Date().toISOString().slice(0, 10)
   const [
     { data: company },
     { data: profile },
@@ -25,6 +26,9 @@ async function getCompanyContext(companyId: string) {
     { data: timeoff },
     { data: conflicts },
     { data: memory },
+    { data: roles },
+    { data: wageRates },
+    { data: events },
   ] = await Promise.all([
     supabase.from('companies').select('*').eq('id', companyId).single(),
     supabase.from('company_profiles').select('*').eq('company_id', companyId).maybeSingle(),
@@ -35,6 +39,9 @@ async function getCompanyContext(companyId: string) {
     supabase.from('time_off_requests').select('*').eq('company_id', companyId).eq('status', 'pending'),
     supabase.from('employee_conflicts').select('*').eq('company_id', companyId),
     supabase.from('soteria_memory').select('*').eq('company_id', companyId).order('created_at', { ascending: false }).limit(50),
+    supabase.from('roles').select('id, name, color').eq('company_id', companyId).order('name'),
+    supabase.from('wage_rates').select('id, role, hourly_rate').eq('company_id', companyId).order('role'),
+    supabase.from('events').select('id, event_type, title, date, description, staffing_notes').eq('company_id', companyId).gte('date', today).order('date').limit(30),
   ])
 
   const employeeCount = employees?.length ?? 0
@@ -50,6 +57,9 @@ async function getCompanyContext(companyId: string) {
     timeoff,
     conflicts,
     memory,
+    roles,
+    wageRates,
+    events,
     isNewCompany,
     summary: {
       employeeCount,
@@ -58,14 +68,24 @@ async function getCompanyContext(companyId: string) {
       policyCount: policies?.length ?? 0,
       pendingTimeOff: timeoff?.length ?? 0,
       conflictCount: conflicts?.length ?? 0,
+      roleCount: roles?.length ?? 0,
+      wageRateCount: wageRates?.length ?? 0,
+      upcomingEventCount: events?.length ?? 0,
     }
   }
 }
 
 function buildSystemPrompt(context: Awaited<ReturnType<typeof getCompanyContext>>) {
-  const { company, profile, employees, shiftTypes, shifts, policies, conflicts, memory, isNewCompany, summary } = context
+  const { company, profile, employees, shiftTypes, shifts, policies, conflicts, memory, roles, wageRates, events, isNewCompany, summary } = context
   const today = new Date().toISOString().slice(0, 10)
   const currentYear = today.slice(0, 4)
+  const formatEventDate = (iso: string | null | undefined): string => {
+    if (!iso) return '(no date)'
+    const [y, m, d] = iso.split('-').map(Number)
+    if (!y || !m || !d) return iso
+    const dt = new Date(y, m - 1, d)
+    return dt.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+  }
 
   const conflictWarnings = () => {
     if (!conflicts || conflicts.length === 0) return ''
@@ -100,7 +120,7 @@ CRITICAL BEHAVIOR RULES:
 - When you learn something important about the manager's preferences or decisions, store it silently by emitting a <memory> tag in your response (see the PROPOSING ACTIONS section below). Memory writes do not require manager confirmation. There is no save_memory action.
 
 RESPONSE LENGTH RULES:
-- Opening message: 1-2 sentences maximum. Warm, brief, human.
+- Opening message (when the manager opens the panel for the first time, or after a long pause): 1-2 sentences, warm and brief. Acknowledge that you can help across employees, shifts, schedules, time off, policies, conflicts, wages, and operational events. Do not list capabilities exhaustively — invite the manager to describe what they need.
 - All other responses: concise and focused. Never more than 3-4 short paragraphs.
 - Ask one question at a time. Never stack multiple questions.
 
@@ -109,11 +129,14 @@ ONBOARDING NEEDED: ${isNewCompany ? 'YES — this company has no data yet' : 'NO
 
 CURRENT DATA SUMMARY:
 - Employees: ${summary.employeeCount}
+- Roles: ${summary.roleCount}
+- Wage rates: ${summary.wageRateCount}
 - Shift types: ${summary.shiftTypeCount}
 - Role requirements: ${summary.shiftCount}
 - Policies: ${summary.policyCount}
 - Pending time-off: ${summary.pendingTimeOff}
 - Conflict pairs: ${summary.conflictCount}
+- Upcoming events (next 30 days+): ${summary.upcomingEventCount}
 ${conflictWarnings()}
 
 ${profile ? `
@@ -157,6 +180,21 @@ ${(() => {
     return `- ${s.shift_name ?? '?'} | ${roles} | ${s.required_count} needed | id: ${s.id}`
   }).join('\n')}\n`
 })()}
+
+${roles && roles.length > 0 ? `
+ROLES:
+${roles.map((r: { id: string; name: string; color: string }) => `- ${r.name} (id: ${r.id}) | color: ${r.color}`).join('\n')}
+` : 'ROLES: None defined yet'}
+
+${wageRates && wageRates.length > 0 ? `
+WAGE RATES:
+${wageRates.map((w: { id: string; role: string; hourly_rate: number }) => `- ${w.role}: $${Number(w.hourly_rate).toFixed(2)}/hr (id: ${w.id})`).join('\n')}
+` : 'WAGE RATES: None defined yet'}
+
+${events && events.length > 0 ? `
+UPCOMING EVENTS (next 30 days+):
+${events.map((e: { id: string; event_type: string; title: string; date: string | null }) => `- ${formatEventDate(e.date)}: ${e.event_type} — ${e.title}  (id: ${e.id})`).join('\n')}
+` : 'UPCOMING EVENTS: None scheduled'}
 
 ${policies && policies.length > 0 ? `
 POLICIES:
@@ -208,6 +246,18 @@ Action types:
 - update_policy — data: { policy_key, policy_value, policy_type?, description? }
 - delete_policy — data: { id, policy_key }
 - add_conflict — data: { employee_id_1, employee_id_2, reason?, severity?: 'avoid' | 'never' } — 'avoid' is a soft conflict (engine deprioritizes co-scheduling but allows it); 'never' is a hard conflict (engine refuses to co-schedule under any circumstances). Defaults to 'avoid' if omitted. Do not emit any other value.
+- update_conflict — data: { id, severity?: 'avoid' | 'never', reason? } — Edits an existing conflict pair. At least one of severity or reason must be provided. severity, if provided, must be 'avoid' or 'never'.
+- delete_conflict — data: { id } — Removes a conflict pair so the engine will once again consider co-scheduling those two employees normally.
+- add_role — data: { name, color? } — Creates a new role in the company role list. color, if provided, must be a hex color like "#10b981". Refuses duplicates by name. After creating, the role is available to assign to employees and to use in shift role requirements.
+- update_role — data: { id, name?, color? } — Edits an existing role. At least one of name or color must be provided. When the name changes, the new name automatically propagates to every employee's primary_role and qualified_roles, and to every shift requirement that accepts the old role. Tell the manager what was updated, including how many references were touched.
+- delete_role — data: { id, name } — Deletes a role. Refuses if any active employee references the role (primary_role or qualified_roles) or if any shift requirement accepts the role. Manager must reassign those first.
+- add_wage_rate — data: { role, hourly_rate } — Sets the default hourly rate for a role. role must match an existing role name (case-insensitive). hourly_rate must be > 0. Refuses if a wage rate already exists for that role — use update_wage_rate instead.
+- update_wage_rate — data: { id, hourly_rate } — Changes the hourly rate for an existing wage_rate row. hourly_rate must be > 0.
+- delete_wage_rate — data: { id } — Removes the default wage rate for a role. Employees without an individual wage will be flagged as missing wage data afterwards.
+- add_event — data: { event_type: 'holiday' | 'special_event' | 'party' | 'fundraiser' | 'closure' | 'custom', title, date, description?, notes? } — Logs an upcoming event Aegis should know about. date must be YYYY-MM-DD. description is a brief explanation of what the event is (for display only). notes maps to operational staffing context the engine reads when staffing that date — use notes when the event affects coverage (e.g. 'pool closed all day, no lifeguards needed' or 'expecting 200 guests, add a Headguard'). Use description for context-only events with no scheduling impact (e.g. 'Manager's birthday').
+- update_event — data: { id, event_type?, title?, date?, description?, notes? } — Edits an existing event. At least one field must be provided. Same validations as add_event for any provided field.
+- delete_event — data: { id } — Removes an event from the company calendar.
+- clear_custom_availability — data: { employee_id, employee_name } — Soft-deletes the employee's active custom availability override, restoring their normal recurring availability immediately.
 - trigger_schedule_build — data: { target_week: "this" | "next", veteran_preference? }
 - batch_create_time_off — data: { requests: [{ employee_id, employee_name, start_date, end_date, time_off_type: "full_day" | "partial", reason?, partial_days?: [{ date, type: "shift_off" | "custom_hours", shift_id?, shift_name?, start_time?, end_time? }] }] } — use this whenever logging time-off for one or more employees; group all TO from a notes block into a single batch.
 - update_availability — data: { employee_id, employee_name, slots: [{ day_of_week, start_time, end_time }], replace_all: boolean } — permanent recurring availability change. replace_all=true wipes existing and inserts new; replace_all=false merges (adds slots for days not already covered).

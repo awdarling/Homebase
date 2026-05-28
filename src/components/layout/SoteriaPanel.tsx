@@ -374,7 +374,7 @@ export default function SoteriaPanel() {
           <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 3 }}>
             Talk to Soteria
           </div>
-          Your operational setup and feedback assistant. Ask questions, get advice, or upload files to set up your team.
+          Your operational assistant — she manages employees, shifts, schedules, time off, policies, and more. Just describe what you need.
           <button onClick={() => setShowTooltip(false)} style={{
             position: 'absolute', top: 6, right: 8, background: 'none',
             border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)',
