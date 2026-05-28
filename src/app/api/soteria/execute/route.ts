@@ -604,36 +604,78 @@ export async function POST(request: NextRequest) {
         const d = action.data as {
           policy_key: string
           policy_value: string
+          policy_value_json?: unknown
           policy_type?: string
           description?: string | null
         }
+
         const existing = await supabase
           .from('policies')
-          .select('id, version')
+          .select('id, version, policy_value, policy_value_json')
           .eq('company_id', companyId)
           .eq('policy_key', d.policy_key)
           .maybeSingle()
+
+        const humanKey = d.policy_key.replace(/_/g, ' ')
+        const hasJson = Object.prototype.hasOwnProperty.call(action.data, 'policy_value_json')
+
+        let entityId: string
+        let beforeJson: unknown = null
+        let beforeValue: string | null = null
+
         if (existing.data) {
-          await supabase.from('policies').update({
+          const row = existing.data as { id: string; version?: number; policy_value: string; policy_value_json: unknown }
+          beforeJson = row.policy_value_json
+          beforeValue = row.policy_value
+          const updates: Record<string, unknown> = {
             policy_value: d.policy_value,
-            version: ((existing.data as { version?: number }).version ?? 1) + 1,
-          }).eq('id', (existing.data as { id: string }).id)
+            version: (row.version ?? 1) + 1,
+          }
+          if (hasJson) updates.policy_value_json = d.policy_value_json ?? null
+          if (d.description !== undefined) updates.description = d.description
+          if (d.policy_type !== undefined) updates.policy_type = d.policy_type
+
+          const { error: upErr } = await supabase
+            .from('policies')
+            .update(updates)
+            .eq('id', row.id)
+            .eq('company_id', companyId)
+          if (upErr) throw upErr
+          entityId = row.id
         } else {
-          await supabase.from('policies').insert({
-            company_id: companyId,
-            policy_key: d.policy_key,
-            policy_value: d.policy_value,
-            policy_type: d.policy_type ?? 'custom',
-            description: d.description ?? null,
-            version: 1,
-          })
+          const { data: inserted, error: insErr } = await supabase
+            .from('policies')
+            .insert({
+              company_id: companyId,
+              policy_key: d.policy_key,
+              policy_value: d.policy_value,
+              policy_value_json: hasJson ? (d.policy_value_json ?? null) : null,
+              policy_type: d.policy_type ?? 'custom',
+              description: d.description ?? null,
+              version: 1,
+            })
+            .select('id')
+            .single()
+          if (insErr) throw insErr
+          entityId = (inserted as { id: string }).id
         }
+
+        const summary = existing.data
+          ? `Soteria changed ${humanKey} from ${beforeValue ?? '(unset)'} to ${d.policy_value}`
+          : `Soteria set ${humanKey} to ${d.policy_value}`
+
         await supabase.from('activity_log').insert({
           company_id: companyId,
           actor: 'soteria',
           action: 'update_policy',
           entity_type: 'policy',
-          summary: `Soteria updated policy: ${d.policy_key} = ${d.policy_value}`,
+          entity_id: entityId,
+          summary,
+          metadata: {
+            policy_key: d.policy_key,
+            before: { policy_value: beforeValue, policy_value_json: beforeJson },
+            after: { policy_value: d.policy_value, policy_value_json: hasJson ? (d.policy_value_json ?? null) : beforeJson },
+          },
         })
         return NextResponse.json({ success: true })
       }

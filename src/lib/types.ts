@@ -256,11 +256,89 @@ export interface Policy {
   company_id: string
   policy_key: string
   policy_value: string
-  policy_value_json: Record<string, unknown> | null
+  policy_value_json: unknown | null
   policy_type: 'hours' | 'fairness' | 'eligibility' | 'overtime' | 'custom'
   description: string | null
   created_at: string
   version: number
+}
+
+// Structured policy_value_json shapes recognized by the Aegis parser
+// (`Aegis/src/lib/constraints/parser.ts`). Modals in src/components/rules
+// write one of these (bare scalar / object) into Policy.policy_value_json.
+
+export type WeekStartDayValue = 'sunday' | 'monday'
+
+export interface AttributeMixValue {
+  attribute: string
+  minimums: Record<string, number>
+  scope?: 'all_shifts' | 'shift_type' | 'specific_shift'
+  scope_target?: string
+}
+
+export type VeteranPreferenceValue =
+  | 'none'
+  | 'prioritize'
+  | 'at_least_one'
+  | 'only'
+
+export type HoursFairnessValue = number // [0, 1]
+
+export type PartialShiftsValue = boolean
+
+export type DoublesPolicyValue = 'never' | 'emergency_only' | 'allow'
+
+export type ConflictResolutionValue = 'fairness_first' | 'minimize_disruption'
+
+export type PolicyCategory =
+  | 'week_start_day'
+  | 'attribute_mix'
+  | 'veteran_preference'
+  | 'hours_fairness'
+  | 'partial_shifts'
+  | 'doubles_policy'
+  | 'conflict_resolution'
+  | 'legacy'
+
+// Mirrors the parser's recognized key sets. Keep these in sync with
+// `Aegis/src/lib/constraints/parser.ts`.
+const POLICY_KEYS_BY_CATEGORY: Record<Exclude<PolicyCategory, 'legacy'>, readonly string[]> = {
+  week_start_day: ['week_start_day', 'first_day_of_week'],
+  attribute_mix: [
+    'attribute_mix',
+    'minimum_attribute_mix',
+    'gender_requirement',
+    'minimum_gender_requirement',
+    'sex_requirement',
+  ],
+  veteran_preference: ['veteran_preference_default', 'veteran_default'],
+  hours_fairness: ['hours_fairness_weight', 'fairness_weight'],
+  partial_shifts: ['partial_shifts_allowed', 'allow_partial_shifts'],
+  doubles_policy: ['doubles_policy', 'double_shifts'],
+  conflict_resolution: ['conflict_resolution_preference', 'conflict_resolution'],
+}
+
+export function categorizePolicy(policy: Policy): PolicyCategory {
+  const key = policy.policy_key
+  for (const [category, keys] of Object.entries(POLICY_KEYS_BY_CATEGORY) as [
+    Exclude<PolicyCategory, 'legacy'>,
+    readonly string[],
+  ][]) {
+    if (keys.includes(key)) return category
+  }
+  return 'legacy'
+}
+
+// Canonical policy_key the modals write when CREATING a new row. When
+// editing an existing row, callers should preserve the row's policy_key.
+export const CANONICAL_POLICY_KEY: Record<Exclude<PolicyCategory, 'legacy'>, string> = {
+  week_start_day: 'week_start_day',
+  attribute_mix: 'attribute_mix',
+  veteran_preference: 'veteran_preference_default',
+  hours_fairness: 'hours_fairness_weight',
+  partial_shifts: 'partial_shifts_allowed',
+  doubles_policy: 'doubles_policy',
+  conflict_resolution: 'conflict_resolution_preference',
 }
 
 export interface ActivityLog {

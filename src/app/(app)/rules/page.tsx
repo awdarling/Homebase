@@ -1,401 +1,524 @@
 'use client'
+
+import { useEffect, useMemo, useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
 import { useCompany } from '@/lib/hooks/useCompany'
 import { useQuria } from '@/lib/hooks/useQuria'
+import { categorizePolicy } from '@/lib/types'
+import type { Policy, PolicyCategory } from '@/lib/types'
+import { CATEGORY_LIST, formatPolicySummary } from '@/lib/rules/categories'
+import { removePolicy } from '@/lib/rules/save'
+import WeekStartDayModal from '@/components/rules/WeekStartDayModal'
+import AttributeMixModal from '@/components/rules/AttributeMixModal'
+import VeteranPreferenceModal from '@/components/rules/VeteranPreferenceModal'
+import HoursFairnessModal from '@/components/rules/HoursFairnessModal'
+import PartialShiftsModal from '@/components/rules/PartialShiftsModal'
+import DoublesPolicyModal from '@/components/rules/DoublesPolicyModal'
+import ConflictResolutionModal from '@/components/rules/ConflictResolutionModal'
+import LegacyPolicyModal from '@/components/rules/LegacyPolicyModal'
 
-import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
-import { logActivity as logActivityFn } from '@/lib/activity'
+const EMPTY_BUCKETS: Record<PolicyCategory, Policy[]> = {
+  week_start_day: [],
+  attribute_mix: [],
+  veteran_preference: [],
+  hours_fairness: [],
+  partial_shifts: [],
+  doubles_policy: [],
+  conflict_resolution: [],
+  legacy: [],
+}
 
-function TrashIcon() {
+function InfoIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="3 6 5 6 21 6" />
-      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-      <path d="M10 11v6" />
-      <path d="M14 11v6" />
-      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
     </svg>
   )
 }
 
-interface Policy {
-  id: string
-  policy_key: string
-  policy_value: string
-  policy_type: string
-  description: string | null
-  version: number
-  created_at: string
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="12" height="12" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+      style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}
+    >
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  )
 }
 
-const CATEGORIES: { id: string; label: string; description: string }[] = [
-  { id: 'time_off',   label: 'Time-Off',   description: 'Rules governing how Aegis handles time-off requests — notice periods, blackout dates, approval logic.' },
-  { id: 'scheduling', label: 'Scheduling',  description: 'Rules about how Aegis builds schedules — fairness, rotation, manager requirements, consecutive days.' },
-  { id: 'swaps',      label: 'Swaps',       description: 'Rules governing shift swaps — which require approval, notice periods, cross-role permissions.' },
-  { id: 'coverage',   label: 'Coverage',    description: 'Rules about minimum staffing — fallback behavior, role overlap requirements, understaffing tolerance.' },
-  { id: 'emergency',  label: 'Emergency',   description: 'Rules for last-minute callouts — how aggressively Aegis contacts alternates, overtime tolerance.' },
-  { id: 'general',    label: 'General',     description: 'Any operational preference that doesn\'t fit the above categories.' },
-]
+type EditTarget =
+  | { kind: 'category'; category: Exclude<PolicyCategory, 'legacy'>; existing: Policy | null }
+  | { kind: 'legacy'; policy: Policy }
+  | null
 
 export default function RulesPage() {
-  const { company, user } = useCompany()
+  const { company, user, loading: companyLoading } = useCompany()
   const { isQuria } = useQuria()
   const COMPANY_ID = company?.id ?? ''
-  const [policies, setPolicies] = useState<Policy[]>([])
+  const supabase = useMemo(() => createClient(), [])
+
+  const [policiesByCategory, setPoliciesByCategory] =
+    useState<Record<PolicyCategory, Policy[]>>(EMPTY_BUCKETS)
   const [loading, setLoading] = useState(true)
-  const [showForm, setShowForm] = useState(false)
-  const [editingPolicy, setEditingPolicy] = useState<Policy | null>(null)
-  const [form, setForm] = useState({ policy_type: 'time_off', policy_key: '', policy_value: '', description: '' })
-  const [formSaving, setFormSaving] = useState(false)
-  const [formError, setFormError] = useState('')
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [editTarget, setEditTarget] = useState<EditTarget>(null)
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
+  const [legacyExpanded, setLegacyExpanded] = useState(false)
+  const [openEngineEffect, setOpenEngineEffect] = useState<string | null>(null)
 
-  const supabase = createClient()
+  useEffect(() => {
+    if (companyLoading) return
+    if (!COMPANY_ID) { setLoading(false); return }
+    void fetchPolicies()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [COMPANY_ID, companyLoading])
 
-  useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
-
-  async function fetchData() {
-    if (!COMPANY_ID) return
+  async function fetchPolicies() {
     setLoading(true)
     const { data } = await supabase
       .from('policies')
       .select('*')
       .eq('company_id', COMPANY_ID)
-      .order('policy_type')
-      .order('created_at')
-    if (data) setPolicies(data)
+      .order('policy_key')
+    const buckets: Record<PolicyCategory, Policy[]> = {
+      week_start_day: [],
+      attribute_mix: [],
+      veteran_preference: [],
+      hours_fairness: [],
+      partial_shifts: [],
+      doubles_policy: [],
+      conflict_resolution: [],
+      legacy: [],
+    }
+    for (const p of (data ?? []) as Policy[]) {
+      buckets[categorizePolicy(p)].push(p)
+    }
+    setPoliciesByCategory(buckets)
     setLoading(false)
   }
 
-  async function logActivity(action: string, summary: string, entityId?: string) {
-    await logActivityFn({
+  async function handleRemove(policy: Policy) {
+    try {
+      await removePolicy({
+        supabase,
+        companyId: COMPANY_ID,
+        policy,
+        summary: `Removed rule: ${policy.policy_key.replace(/_/g, ' ')}`,
+        user: user ? { name: user.name, avatar_url: user.avatar_url } : null,
+        isQuria,
+      })
+      setConfirmRemoveId(null)
+      await fetchPolicies()
+    } catch (e) {
+      console.error('Remove policy failed:', e)
+      setConfirmRemoveId(null)
+    }
+  }
+
+  function modalForCategory(category: Exclude<PolicyCategory, 'legacy'>, existing: Policy | null) {
+    const common = {
+      open: true,
+      existing,
+      companyId: COMPANY_ID,
       supabase,
-      company_id: COMPANY_ID,
-      action,
-      entity_type: 'policy',
-      entity_id: entityId,
-      summary,
+      user: user ? { name: user.name, avatar_url: user.avatar_url } : null,
       isQuria,
-      actorName: user?.name,
-      actorAvatarUrl: user?.avatar_url,
-    })
-  }
-
-  function openAdd() {
-    setEditingPolicy(null)
-    setForm({ policy_type: 'time_off', policy_key: '', policy_value: '', description: '' })
-    setFormError('')
-    setShowForm(true)
-  }
-
-  function openEdit(policy: Policy) {
-    setEditingPolicy(policy)
-    setForm({
-      policy_type: policy.policy_type,
-      policy_key: policy.policy_key.replace(/_/g, ' '),
-      policy_value: policy.policy_value,
-      description: policy.description ?? '',
-    })
-    setFormError('')
-    setShowForm(true)
-  }
-
-  async function handleSave() {
-    if (!form.policy_key.trim()) { setFormError('Rule name is required.'); return }
-    if (!form.policy_value.trim()) { setFormError('Rule value is required.'); return }
-    if (!form.description.trim()) { setFormError('Description is required — Aegis uses this to understand the rule.'); return }
-    setFormSaving(true)
-    setFormError('')
-
-    const payload = {
-      company_id: COMPANY_ID,
-      policy_key: form.policy_key.trim().toLowerCase().replace(/\s+/g, '_'),
-      policy_value: form.policy_value.trim(),
-      policy_type: form.policy_type,
-      description: form.description.trim(),
+      onClose: () => setEditTarget(null),
+      onSaved: async () => { setEditTarget(null); await fetchPolicies() },
     }
-
-    if (editingPolicy) {
-      const { data: current } = await supabase
-        .from('policies')
-        .select('policy_value')
-        .eq('id', editingPolicy.id)
-        .single()
-      const oldValue = (current as { policy_value: string } | null)?.policy_value ?? editingPolicy.policy_value
-
-      await supabase.from('policies').update({
-        ...payload,
-        version: editingPolicy.version + 1,
-      }).eq('id', editingPolicy.id)
-
-      const categoryLabel = CATEGORIES.find(c => c.id === form.policy_type)?.label ?? form.policy_type
-      const keyHumanized = payload.policy_key.replace(/_/g, ' ')
-      await logActivity(
-        'policy_updated',
-        `${categoryLabel} — ${keyHumanized}: ${oldValue} → ${payload.policy_value}`,
-        editingPolicy.id,
-      )
-    } else {
-      const { data } = await supabase.from('policies').insert({
-        ...payload,
-        version: 1,
-      }).select().single()
-      if (data) await logActivity(
-        'policy_created',
-        `Added rule "${form.policy_key}" to ${CATEGORIES.find(c => c.id === form.policy_type)?.label ?? form.policy_type}: ${form.policy_value}`,
-        data.id
-      )
+    switch (category) {
+      case 'week_start_day':     return <WeekStartDayModal     {...common} />
+      case 'attribute_mix':      return <AttributeMixModal     {...common} />
+      case 'veteran_preference': return <VeteranPreferenceModal {...common} />
+      case 'hours_fairness':     return <HoursFairnessModal    {...common} />
+      case 'partial_shifts':     return <PartialShiftsModal    {...common} />
+      case 'doubles_policy':     return <DoublesPolicyModal    {...common} />
+      case 'conflict_resolution':return <ConflictResolutionModal {...common} />
     }
-
-    setFormSaving(false)
-    setShowForm(false)
-    fetchData()
   }
 
-  async function handleDelete(id: string) {
-    const policy = policies.find((p) => p.id === id)
-    await supabase.from('policies').delete().eq('id', id)
-    await logActivity('policy_deleted', `Deleted rule: "${policy?.policy_key?.replace(/_/g, ' ') ?? id}"`, id)
-    setConfirmDeleteId(null)
-    fetchData()
+  if (companyLoading || loading) {
+    return (
+      <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+        Loading rules…
+      </div>
+    )
   }
-
-  const grouped = CATEGORIES.reduce((acc, cat) => {
-    acc[cat.id] = policies.filter((p) => p.policy_type === cat.id)
-    return acc
-  }, {} as Record<string, Policy[]>)
-
-  if (loading) return (
-    <div style={{ padding: '48px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-      Loading rules...
-    </div>
-  )
 
   return (
     <div className="page-content">
       <div className="page-header">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <div className="page-title">Rules</div>
-            <div className="page-subtitle">Behavioral policies Aegis follows when making decisions</div>
-          </div>
-          <button className="btn btn-primary btn-sm" onClick={openAdd}>
-            + Add Rule
-          </button>
-        </div>
+        <div className="page-title">Rules</div>
+        <div className="page-subtitle">Configure how Aegis builds your schedules.</div>
       </div>
 
-      <div style={{
-        background: 'var(--accent-dim)',
-        border: '1px solid var(--accent-border)',
-        borderRadius: 'var(--radius-lg)',
-        padding: '12px 16px',
-        fontSize: 12,
-        color: 'var(--text-secondary)',
-        marginBottom: 28,
-        lineHeight: 1.6,
-      }}>
-        <span style={{ color: 'var(--accent)', fontWeight: 600 }}>Aegis reads every rule on this page.</span>
-        {' '}Rules are organized by function so Aegis knows exactly which policies apply to each decision it makes. Be specific — Aegis follows these precisely.
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-        {CATEGORIES.map((cat) => {
-          const catPolicies = grouped[cat.id] ?? []
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {CATEGORY_LIST.map((cat) => {
+          const rows = policiesByCategory[cat.key]
+          const showInfo = openEngineEffect === cat.key
           return (
-            <div key={cat.id}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
-                <div className="section-label" style={{ margin: 0 }}>{cat.label}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{cat.description}</div>
-              </div>
-              <div style={{
-                background: 'var(--bg-surface-1)',
-                border: '1px solid var(--border-default)',
-                borderRadius: 'var(--radius-lg)',
-                overflow: 'hidden',
-              }}>
-                {catPolicies.length === 0 ? (
-                  <div style={{ padding: '16px 20px' }}>
-                    <div style={{ fontSize: 12, color: 'var(--text-disabled)', fontStyle: 'italic' }}>
-                      No {cat.label.toLowerCase()} rules defined yet.
-                    </div>
-                  </div>
-                ) : catPolicies.map((policy, i) => (
-                  <div key={policy.id} style={{
+            <section
+              key={cat.key}
+              style={{
+                background: 'var(--bg-surface-2)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-xl)',
+                padding: '18px 20px 20px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 6 }}>
+                <h2 style={{
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 16,
+                  fontWeight: 700,
+                  color: 'var(--text-primary)',
+                  margin: 0,
+                  flex: 1,
+                  lineHeight: 1.3,
+                }}>
+                  {cat.label}
+                </h2>
+                <button
+                  onClick={() => setOpenEngineEffect(showInfo ? null : cat.key)}
+                  aria-label={`What does ${cat.label} do?`}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: showInfo ? 'var(--accent)' : 'var(--text-muted)',
+                    cursor: 'pointer',
+                    padding: 4,
                     display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: 16,
-                    padding: '16px 20px',
-                    borderBottom: i < catPolicies.length - 1 ? '1px solid var(--border-subtle)' : 'none',
-                  }}>
-                    {/* Rule name + description */}
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500, marginBottom: 3 }}>
-                        {policy.policy_key.replace(/_/g, ' ')}
-                      </div>
-                      {policy.description && (
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                          {policy.description}
-                        </div>
-                      )}
-                      {policy.version > 1 && (
-                        <div style={{ fontSize: 10, color: 'var(--text-disabled)', marginTop: 4 }}>
-                          v{policy.version}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Value */}
-                    <div style={{
-                      fontFamily: 'var(--font-display)',
-                      fontSize: 15,
-                      fontWeight: 700,
-                      color: 'var(--accent)',
-                      minWidth: 80,
-                      textAlign: 'right',
-                      flexShrink: 0,
-                      paddingTop: 2,
-                    }}>
-                      {policy.policy_value === 'true' ? 'Yes'
-                        : policy.policy_value === 'false' ? 'No'
-                        : policy.policy_value}
-                    </div>
-
-                    {/* Actions */}
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => openEdit(policy)}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => setConfirmDeleteId(policy.id)}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          cursor: 'pointer',
-                          color: 'var(--text-muted)',
-                          padding: '4px',
-                          borderRadius: 'var(--radius-sm)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                        title="Delete rule"
-                      >
-                        <TrashIcon />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                    alignItems: 'center',
+                    marginTop: 2,
+                  }}
+                  title="Show engine effect"
+                  onMouseEnter={() => setOpenEngineEffect(cat.key)}
+                  onMouseLeave={() => setOpenEngineEffect(null)}
+                >
+                  <InfoIcon />
+                </button>
               </div>
-            </div>
+
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+                {cat.description}
+              </div>
+
+              {showInfo && (
+                <div style={{
+                  background: 'var(--accent-dim)',
+                  border: '1px solid var(--accent-border)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '10px 12px',
+                  fontSize: 11,
+                  color: 'var(--text-secondary)',
+                  lineHeight: 1.6,
+                  marginBottom: 12,
+                }}>
+                  <div style={{ color: 'var(--accent)', fontWeight: 600, fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>
+                    Engine Effect
+                  </div>
+                  {cat.engineEffect}
+                </div>
+              )}
+
+              <RulesCategoryBody
+                category={cat.key}
+                singleton={cat.singleton}
+                rows={rows}
+                onAdd={() => setEditTarget({ kind: 'category', category: cat.key, existing: null })}
+                onEdit={(p) => setEditTarget({ kind: 'category', category: cat.key, existing: p })}
+                onConfirmRemove={(id) => setConfirmRemoveId(id)}
+                confirmRemoveId={confirmRemoveId}
+                onCancelRemove={() => setConfirmRemoveId(null)}
+                onRemove={handleRemove}
+              />
+            </section>
           )
         })}
-      </div>
 
-      {/* Confirm delete modal */}
-      {confirmDeleteId && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'var(--bg-surface-1)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-xl)', padding: 28, width: '100%', maxWidth: 380 }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>
-              Delete Rule
-            </div>
-            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.6 }}>
-              This will permanently delete the rule. Aegis will no longer follow it.
-            </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDeleteId(null)}>Cancel</button>
-              <button
-                className="btn btn-sm"
-                onClick={() => handleDelete(confirmDeleteId)}
-                style={{ background: 'var(--status-blocked-bg)', color: 'var(--status-blocked-text)', border: '1px solid var(--status-blocked-border)' }}
-              >
-                Delete Permanently
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        {policiesByCategory.legacy.length > 0 && (
+          <section
+            style={{
+              background: 'var(--bg-surface-2)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-xl)',
+              padding: '14px 20px',
+            }}
+          >
+            <button
+              onClick={() => setLegacyExpanded(v => !v)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: 0,
+                color: 'var(--text-secondary)',
+              }}
+            >
+              <ChevronIcon open={legacyExpanded} />
+              <span style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: 14,
+                fontWeight: 700,
+                color: 'var(--text-primary)',
+              }}>
+                Legacy / Unstructured Rules ({policiesByCategory.legacy.length})
+              </span>
+            </button>
 
-      {/* Add/Edit modal */}
-      {showForm && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div style={{ background: 'var(--bg-surface-1)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-xl)', padding: 28, width: '100%', maxWidth: 500 }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 20 }}>
-              {editingPolicy ? 'Edit Rule' : 'Add Rule'}
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div className="form-group">
-                <label className="form-label">Category</label>
-                <select
-                  className="form-select"
-                  value={form.policy_type}
-                  onChange={(e) => setForm((f) => ({ ...f, policy_type: e.target.value }))}
-                >
-                  {CATEGORIES.map((c) => (
-                    <option key={c.id} value={c.id}>{c.label}</option>
+            {legacyExpanded && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+                  These rules don&rsquo;t match a structured category yet. Edit them in free-text, or remove them and recreate using a structured category above.
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {policiesByCategory.legacy.map((p) => (
+                    <LegacyRow
+                      key={p.id}
+                      policy={p}
+                      onEdit={() => setEditTarget({ kind: 'legacy', policy: p })}
+                      onConfirmRemove={() => setConfirmRemoveId(p.id)}
+                      confirmRemoveId={confirmRemoveId}
+                      onCancelRemove={() => setConfirmRemoveId(null)}
+                      onRemove={handleRemove}
+                    />
                   ))}
-                </select>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                  {CATEGORIES.find((c) => c.id === form.policy_type)?.description}
                 </div>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Rule Name</label>
-                <input
-                  className="form-input"
-                  value={form.policy_key}
-                  onChange={(e) => setForm((f) => ({ ...f, policy_key: e.target.value }))}
-                  placeholder="e.g. Minimum notice period for time-off requests"
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Value</label>
-                <input
-                  className="form-input"
-                  value={form.policy_value}
-                  onChange={(e) => setForm((f) => ({ ...f, policy_value: e.target.value }))}
-                  placeholder="e.g. 7 days, true, never, required"
-                />
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                  Use plain language — true/false for yes/no rules, a number for quantities, or a word like "never" or "required" for behavioral rules.
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Description <span style={{ color: 'var(--status-blocked-text)', fontWeight: 400 }}>*</span></label>
-                <textarea
-                  className="form-input"
-                  rows={3}
-                  value={form.description}
-                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                  placeholder="Explain exactly what this rule means and when Aegis should apply it. Be specific."
-                  style={{ resize: 'vertical' }}
-                />
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                  Required — Aegis reads the description to understand how to apply this rule. Vague descriptions produce vague behavior.
-                </div>
-              </div>
-            </div>
-
-            {formError && (
-              <div style={{ fontSize: 12, color: 'var(--status-blocked-text)', marginTop: 12 }}>
-                {formError}
               </div>
             )}
+          </section>
+        )}
+      </div>
 
-            <div style={{ display: 'flex', gap: 8, marginTop: 20, justifyContent: 'flex-end' }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(false)}>Cancel</button>
-              <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={formSaving}>
-                {formSaving ? 'Saving...' : editingPolicy ? 'Save Changes' : 'Add Rule'}
-              </button>
-            </div>
+      {editTarget?.kind === 'category' && modalForCategory(editTarget.category, editTarget.existing)}
+      {editTarget?.kind === 'legacy' && (
+        <LegacyPolicyModal
+          open
+          existing={editTarget.policy}
+          companyId={COMPANY_ID}
+          supabase={supabase}
+          user={user ? { name: user.name, avatar_url: user.avatar_url } : null}
+          isQuria={isQuria}
+          onClose={() => setEditTarget(null)}
+          onSaved={async () => { setEditTarget(null); await fetchPolicies() }}
+        />
+      )}
+    </div>
+  )
+}
+
+interface CategoryBodyProps {
+  category: Exclude<PolicyCategory, 'legacy'>
+  singleton: boolean
+  rows: Policy[]
+  onAdd: () => void
+  onEdit: (p: Policy) => void
+  onConfirmRemove: (id: string) => void
+  confirmRemoveId: string | null
+  onCancelRemove: () => void
+  onRemove: (p: Policy) => void
+}
+
+function RulesCategoryBody({
+  category, singleton, rows, onAdd, onEdit, onConfirmRemove, confirmRemoveId, onCancelRemove, onRemove,
+}: CategoryBodyProps) {
+  if (rows.length === 0) {
+    return (
+      <div style={{
+        background: 'var(--bg-surface-1)',
+        border: '1px dashed var(--border-default)',
+        borderRadius: 'var(--radius-md)',
+        padding: '14px 16px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+      }}>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+          No rule set. Aegis uses its default.
+        </div>
+        <button
+          onClick={onAdd}
+          style={{
+            background: 'var(--accent)',
+            color: '#000',
+            border: 'none',
+            borderRadius: 'var(--radius-md)',
+            padding: '6px 14px',
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          + Add Rule
+        </button>
+      </div>
+    )
+  }
+
+  const multiple = singleton && rows.length > 1
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {multiple && (
+        <div style={{
+          background: 'var(--status-blocked-bg)',
+          border: '1px solid var(--status-blocked-border)',
+          color: 'var(--status-blocked-text)',
+          borderRadius: 'var(--radius-md)',
+          padding: '8px 12px',
+          fontSize: 11,
+          lineHeight: 1.5,
+        }}>
+          Multiple rules of this type — Aegis uses the most recent. Remove duplicates.
+        </div>
+      )}
+      {rows.map((p) => (
+        <RuleCard
+          key={p.id}
+          policy={p}
+          onEdit={() => onEdit(p)}
+          onConfirmRemove={() => onConfirmRemove(p.id)}
+          confirmRemoveId={confirmRemoveId}
+          onCancelRemove={onCancelRemove}
+          onRemove={onRemove}
+        />
+      ))}
+      {!singleton && (
+        <button
+          onClick={onAdd}
+          style={{
+            alignSelf: 'flex-start',
+            background: 'var(--accent)',
+            color: '#000',
+            border: 'none',
+            borderRadius: 'var(--radius-md)',
+            padding: '6px 14px',
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: 'pointer',
+            marginTop: 4,
+          }}
+        >
+          + Add {category === 'attribute_mix' ? 'Attribute Mix' : 'Rule'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+interface RuleCardProps {
+  policy: Policy
+  onEdit: () => void
+  onConfirmRemove: () => void
+  confirmRemoveId: string | null
+  onCancelRemove: () => void
+  onRemove: (p: Policy) => void
+}
+
+function RuleCard({ policy, onEdit, onConfirmRemove, confirmRemoveId, onCancelRemove, onRemove }: RuleCardProps) {
+  const confirming = confirmRemoveId === policy.id
+  const summary = formatPolicySummary(policy)
+  return (
+    <div style={{
+      background: 'var(--bg-surface-1)',
+      border: '1px solid var(--border-default)',
+      borderRadius: 'var(--radius-md)',
+      padding: '12px 14px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+    }}>
+      <div style={{ flex: 1, fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.5 }}>
+        {summary}
+      </div>
+      {confirming ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Remove this rule?</span>
+          <button
+            className="btn btn-sm"
+            style={{
+              background: 'var(--status-blocked-bg)',
+              color: 'var(--status-blocked-text)',
+              border: '1px solid var(--status-blocked-border)',
+            }}
+            onClick={() => onRemove(policy)}
+          >
+            Yes
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={onCancelRemove}>No</button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button className="btn btn-secondary btn-sm" onClick={onEdit}>Edit</button>
+          <button className="btn btn-secondary btn-sm" onClick={onConfirmRemove}>Remove</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface LegacyRowProps {
+  policy: Policy
+  onEdit: () => void
+  onConfirmRemove: () => void
+  confirmRemoveId: string | null
+  onCancelRemove: () => void
+  onRemove: (p: Policy) => void
+}
+
+function LegacyRow({ policy, onEdit, onConfirmRemove, confirmRemoveId, onCancelRemove, onRemove }: LegacyRowProps) {
+  const confirming = confirmRemoveId === policy.id
+  return (
+    <div style={{
+      background: 'var(--bg-surface-1)',
+      border: '1px solid var(--border-default)',
+      borderRadius: 'var(--radius-md)',
+      padding: '12px 14px',
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 12,
+    }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500, marginBottom: 3 }}>
+          {policy.policy_key.replace(/_/g, ' ')}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+          {policy.policy_value}
+        </div>
+        {policy.description && (
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
+            {policy.description}
           </div>
+        )}
+      </div>
+      {confirming ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Remove this rule?</span>
+          <button
+            className="btn btn-sm"
+            style={{
+              background: 'var(--status-blocked-bg)',
+              color: 'var(--status-blocked-text)',
+              border: '1px solid var(--status-blocked-border)',
+            }}
+            onClick={() => onRemove(policy)}
+          >
+            Yes
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={onCancelRemove}>No</button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button className="btn btn-secondary btn-sm" onClick={onEdit}>Edit</button>
+          <button className="btn btn-secondary btn-sm" onClick={onConfirmRemove}>Remove</button>
         </div>
       )}
     </div>

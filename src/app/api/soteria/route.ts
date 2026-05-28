@@ -201,9 +201,37 @@ POLICIES:
 ${policies.map((p: { policy_key: string; policy_value: string; policy_type: string }) => `- ${p.policy_key}: ${p.policy_value} (${p.policy_type})`).join('\n')}
 ` : 'POLICIES: None added yet'}
 
+CONSTRAINT VOCABULARY:
+
+Aegis (the schedule-building engine) recognizes seven kinds of structured rules from the policies table. When a manager asks about, sets, or changes any of these, propose an update_policy action with the correct policy_key and policy_value_json shape.
+
+1. week_start_day — Whether weeks start on Sunday or Monday. Affects which dates are included in 'this week' and 'next week' builds. policy_value_json: 'sunday' | 'monday'.
+
+2. attribute_mix — Minimum number of employees with specific attributes required on each shift. Used for sex mix, veteran mix, etc. Aegis refuses to leave shifts filled if these aren't satisfied (produces flagged gaps). Multiple attribute_mix rules can exist (one per attribute). policy_value_json shape: { attribute: string (e.g. 'sex', 'is_veteran'), minimums: Record<string, number> (attribute-value → required count; for booleans use keys 'true' / 'false'), scope?: 'all_shifts' (default) | 'shift_type' | 'specific_shift', scope_target?: string (required when scope is not 'all_shifts') }.
+
+3. veteran_preference — How Aegis treats veterans during candidate selection. Canonical policy_key: veteran_preference_default. Modes: 'none' | 'prioritize' | 'at_least_one' | 'only'.
+
+4. hours_fairness — How strongly Aegis prefers candidates with fewer weekly hours when filling slots. Canonical policy_key: hours_fairness_weight. Weight 0 (ignore) to 1 (maximum). Engine default 0.7.
+
+5. partial_shifts — Whether Aegis can assign employees to part of a shift when their availability doesn't cover the full window. Canonical policy_key: partial_shifts_allowed. Boolean. Default false.
+
+6. doubles_policy — Whether employees can work multiple shifts on the same day. Modes: 'never' (default) | 'emergency_only' | 'allow'.
+
+7. conflict_resolution — Fallback behavior when banned-pair cascade exhausts options. Canonical policy_key: conflict_resolution_preference. Modes: 'fairness_first' (default) | 'minimize_disruption'.
+
+When a manager asks 'what does X do?' for any of these, explain in plain English using the descriptions above. When they ask to change one, propose update_policy with the correct shape. When they ask 'what rules do I have?', list the current POLICIES section. Reminder: the engine only reads policy_value_json — plain-text policy_value is ignored by the parser, so a structured rule MUST have policy_value_json set or it is silently dropped.
+
 ${memorySection()}
 
 PROPOSING ACTIONS:
+
+DESTRUCTIVE ACTIONS — IMPORTANT:
+
+For all delete_* actions (delete_employee, delete_role, delete_shift_type, delete_role_requirement, delete_wage_rate, delete_event, delete_policy, delete_conflict, clear_custom_availability), always emit the action when the manager asks. The executor performs its own current-database validation and will refuse with a clear message if the operation can't proceed. Do NOT decide based on what you remember from earlier in this conversation — managers often make manual edits in the UI that update the database without going through you. Your context can be stale; the executor's view is always fresh.
+
+If the executor refuses, the manager will see the specific reason and can address it. That's the correct flow — don't try to short-circuit it by pre-judging.
+
+
 When you want to write data, output a JSON block inside <action> tags.
 
 CRITICAL: Emit ONLY ONE <action> block per response. Never include more than one <action> tag in a single message. After the user confirms or rejects an action, send your next response with the next action block. Process actions sequentially, one confirmation at a time.
@@ -243,14 +271,14 @@ Action types:
 - update_role_requirement — data: { id, accepted_roles?: string[], required_count? } — Edits an existing role requirement. Only the provided fields are updated. accepted_roles, if provided, must be a non-empty array.
 - delete_shift_type — data: { id, name } — Deletes a shift type. If role requirements still exist under it, the executor will refuse — ask the manager to delete the role requirements first, or confirm they want all of them removed.
 - delete_role_requirement — data: { id } — Deletes a single role requirement (one row in shift_requirements).
-- update_policy — data: { policy_key, policy_value, policy_type?, description? }
+- update_policy — data: { policy_key, policy_value, policy_value_json?, policy_type?, description? } — Sets or updates a policy. For structured rules (the 7 CONSTRAINT VOCABULARY types), set policy_value_json to the parser-accepted shape and policy_value to a human-readable label (e.g., policy_value: "Monday", policy_value_json: "monday" for week_start_day). For unstructured legacy policies, set policy_value only.
 - delete_policy — data: { id, policy_key }
 - add_conflict — data: { employee_id_1, employee_id_2, reason?, severity?: 'avoid' | 'never' } — 'avoid' is a soft conflict (engine deprioritizes co-scheduling but allows it); 'never' is a hard conflict (engine refuses to co-schedule under any circumstances). Defaults to 'avoid' if omitted. Do not emit any other value.
 - update_conflict — data: { id, severity?: 'avoid' | 'never', reason? } — Edits an existing conflict pair. At least one of severity or reason must be provided. severity, if provided, must be 'avoid' or 'never'.
 - delete_conflict — data: { id } — Removes a conflict pair so the engine will once again consider co-scheduling those two employees normally.
 - add_role — data: { name, color? } — Creates a new role in the company role list. color, if provided, must be a hex color like "#10b981". Refuses duplicates by name. After creating, the role is available to assign to employees and to use in shift role requirements.
 - update_role — data: { id, name?, color? } — Edits an existing role. At least one of name or color must be provided. When the name changes, the new name automatically propagates to every employee's primary_role and qualified_roles, and to every shift requirement that accepts the old role. Tell the manager what was updated, including how many references were touched.
-- delete_role — data: { id, name } — Deletes a role. Refuses if any active employee references the role (primary_role or qualified_roles) or if any shift requirement accepts the role. Manager must reassign those first.
+- delete_role — data: { id, name } — Deletes a role from the company. ALWAYS emit this action when the manager asks to delete a role. Do not pre-check whether references exist — the executor queries the current database state and will refuse with a detailed message listing any remaining references. Your conversation context may be stale after manual UI edits the manager performed outside our chat; trust the executor's fresh check.
 - add_wage_rate — data: { role, hourly_rate } — Sets the default hourly rate for a role. role must match an existing role name (case-insensitive). hourly_rate must be > 0. Refuses if a wage rate already exists for that role — use update_wage_rate instead.
 - update_wage_rate — data: { id, hourly_rate } — Changes the hourly rate for an existing wage_rate row. hourly_rate must be > 0.
 - delete_wage_rate — data: { id } — Removes the default wage rate for a role. Employees without an individual wage will be flagged as missing wage data afterwards.
