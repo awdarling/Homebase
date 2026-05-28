@@ -110,11 +110,17 @@ export interface ShiftRequirement {
   id: string
   company_id: string
   shift_type_id?: string | null
-  shift_name: string
-  role: string
+  accepted_roles: string[]
   required_count: number
+  /** @deprecated use accepted_roles[0]. Kept for backwards compat with the Aegis engine until Block 3c. */
+  role: string
+  /** @deprecated dormant — engine reads from shift_types until Block 3c. Do not write from new code paths. */
+  shift_name: string
+  /** @deprecated dormant — engine reads from shift_types until Block 3c. Do not write from new code paths. */
   start_time: string
+  /** @deprecated dormant — engine reads from shift_types until Block 3c. Do not write from new code paths. */
   end_time: string
+  /** @deprecated dormant — engine reads from shift_types until Block 3c. Do not write from new code paths. */
   days_active: number[]
 }
 
@@ -182,11 +188,19 @@ export interface ScheduleGap {
   reason: string
 }
 
+export interface FlaggedIssue {
+  type: string
+  severity: 'info' | 'warning' | 'error'
+  message: string
+  metadata?: Record<string, unknown>
+}
+
 export interface ScheduleData {
   assignments: ScheduleAssignment[]
   gaps: ScheduleGap[]
   summary: string
   closed_dates?: string[]
+  flagged_issues?: FlaggedIssue[]
 }
 
 export interface StaffingReport {
@@ -210,7 +224,8 @@ export interface StaffingReport {
   gap_summary: string
   special_notes_applied: string[]
   aegis_notes: string
-  estimated_wages: {
+  /** @deprecated wages now compute-on-read per Block 3a. New writes do not populate this field; legacy rows may still have it. */
+  estimated_wages?: {
     total_estimated: number
     by_employee: Array<{
       employee_id: string
@@ -241,6 +256,7 @@ export interface Policy {
   company_id: string
   policy_key: string
   policy_value: string
+  policy_value_json: Record<string, unknown> | null
   policy_type: 'hours' | 'fairness' | 'eligibility' | 'overtime' | 'custom'
   description: string | null
   created_at: string

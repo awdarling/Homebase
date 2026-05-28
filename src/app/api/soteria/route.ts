@@ -19,6 +19,7 @@ async function getCompanyContext(companyId: string) {
     { data: company },
     { data: profile },
     { data: employees },
+    { data: shiftTypes },
     { data: shifts },
     { data: policies },
     { data: timeoff },
@@ -28,6 +29,7 @@ async function getCompanyContext(companyId: string) {
     supabase.from('companies').select('*').eq('id', companyId).single(),
     supabase.from('company_profiles').select('*').eq('company_id', companyId).maybeSingle(),
     supabase.from('employees').select('*').eq('company_id', companyId).eq('active', true),
+    supabase.from('shift_types').select('*').eq('company_id', companyId).order('name'),
     supabase.from('shift_requirements').select('*').eq('company_id', companyId),
     supabase.from('policies').select('*').eq('company_id', companyId),
     supabase.from('time_off_requests').select('*').eq('company_id', companyId).eq('status', 'pending'),
@@ -42,6 +44,7 @@ async function getCompanyContext(companyId: string) {
     company,
     profile,
     employees,
+    shiftTypes,
     shifts,
     policies,
     timeoff,
@@ -50,6 +53,7 @@ async function getCompanyContext(companyId: string) {
     isNewCompany,
     summary: {
       employeeCount,
+      shiftTypeCount: shiftTypes?.length ?? 0,
       shiftCount: shifts?.length ?? 0,
       policyCount: policies?.length ?? 0,
       pendingTimeOff: timeoff?.length ?? 0,
@@ -59,7 +63,7 @@ async function getCompanyContext(companyId: string) {
 }
 
 function buildSystemPrompt(context: Awaited<ReturnType<typeof getCompanyContext>>) {
-  const { company, profile, employees, shifts, policies, conflicts, memory, isNewCompany, summary } = context
+  const { company, profile, employees, shiftTypes, shifts, policies, conflicts, memory, isNewCompany, summary } = context
   const today = new Date().toISOString().slice(0, 10)
   const currentYear = today.slice(0, 4)
 
@@ -105,7 +109,8 @@ ONBOARDING NEEDED: ${isNewCompany ? 'YES — this company has no data yet' : 'NO
 
 CURRENT DATA SUMMARY:
 - Employees: ${summary.employeeCount}
-- Shift requirements: ${summary.shiftCount}
+- Shift types: ${summary.shiftTypeCount}
+- Role requirements: ${summary.shiftCount}
 - Policies: ${summary.policyCount}
 - Pending time-off: ${summary.pendingTimeOff}
 - Conflict pairs: ${summary.conflictCount}
@@ -126,10 +131,32 @@ EMPLOYEES (${employees.length}):
 ${employees.map((e: { id: string; name: string; primary_role: string; qualified_roles?: string[]; max_weekly_hours: number }) => `- ${e.name} (id: ${e.id}) | ${e.primary_role} | Qualifies: ${e.qualified_roles?.join(', ')} | Max: ${e.max_weekly_hours}h/week`).join('\n')}
 ` : 'EMPLOYEES: None added yet'}
 
-${shifts && shifts.length > 0 ? `
-SHIFT REQUIREMENTS:
-${shifts.map((s: { shift_name: string; role: string; required_count: number; start_time: string; end_time: string }) => `- ${s.shift_name} | ${s.role} | ${s.required_count} needed | ${s.start_time}–${s.end_time}`).join('\n')}
-` : 'SHIFT REQUIREMENTS: None added yet'}
+${shiftTypes && shiftTypes.length > 0 ? `
+SHIFT TYPES (the umbrella shifts — use these IDs when adding role requirements):
+${shiftTypes.map((st: { id: string; name: string; start_time: string; end_time: string; days_active: number[]; active: boolean }) => {
+  const dayLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+  const days = Array.isArray(st.days_active) ? st.days_active.map((d: number) => dayLabels[d] ?? d).join(',') : '?'
+  const reqsForType = (shifts ?? []).filter((s: { shift_type_id?: string | null }) => s.shift_type_id === st.id)
+  const reqLines = reqsForType.length === 0
+    ? '    (no role requirements yet)'
+    : reqsForType.map((r: { id: string; accepted_roles?: string[]; role?: string; required_count: number }) => {
+        const roles = (Array.isArray(r.accepted_roles) && r.accepted_roles.length > 0)
+          ? r.accepted_roles.join(' or ')
+          : (r.role ?? '?')
+        return `    • ${r.required_count}× ${roles}  (requirement id: ${r.id})`
+      }).join('\n')
+  return `- ${st.name} (id: ${st.id}) | ${st.start_time}–${st.end_time} | days: ${days}${st.active ? '' : ' | INACTIVE'}\n${reqLines}`
+}).join('\n')}
+` : 'SHIFT TYPES: None defined yet'}
+
+${(() => {
+  const orphans = (shifts ?? []).filter((s: { shift_type_id?: string | null }) => !s.shift_type_id)
+  if (orphans.length === 0) return ''
+  return `\nORPHAN SHIFT REQUIREMENTS (no shift_type_id — legacy rows, do not add new ones like this):\n${orphans.map((s: { id: string; shift_name?: string; role?: string; accepted_roles?: string[]; required_count: number }) => {
+    const roles = (Array.isArray(s.accepted_roles) && s.accepted_roles.length > 0) ? s.accepted_roles.join(' or ') : (s.role ?? '?')
+    return `- ${s.shift_name ?? '?'} | ${roles} | ${s.required_count} needed | id: ${s.id}`
+  }).join('\n')}\n`
+})()}
 
 ${policies && policies.length > 0 ? `
 POLICIES:
@@ -172,8 +199,12 @@ Action types:
 - delete_employee — data: { id, name }
 - import_employees — data: { employees: [{ name, primary_role, qualified_roles, contact_email?, contact_phone?, max_weekly_hours?, is_veteran? }, ...] }
 - update_profile — data: { business_type?, description?, operating_hours?, peak_periods?, manager_priorities?, special_context? }
-- add_shift — data: { shift_name, role, required_count, start_time, end_time, days_active: number[] } — days_active is REQUIRED and must be a non-empty array of day-of-week integers (0=Sunday … 6=Saturday) indicating which days the shift runs. Never omit it. If the manager has not told you which days the shift runs, ask them before emitting this action.
-- delete_shift — data: { id, shift_name }
+- add_shift_type — data: { name, start_time, end_time, days_active: number[] } — Creates a new shift template (an umbrella shift). Use this when the manager describes a NEW shift that doesn't exist yet. Times are HH:MM. days_active is REQUIRED and must be a non-empty array of integers 0–6 (0=Sunday … 6=Saturday). After creating, follow up by asking what roles should be inside it.
+- add_role_requirement — data: { shift_type_id, accepted_roles: string[], required_count } — Adds a role slot to an existing shift_type. accepted_roles is ordered by preference: the FIRST role is the preferred role; later roles are fallbacks. A single-role slot is just a one-element array. required_count defaults to 1 if omitted.
+- update_shift_type — data: { id, name?, start_time?, end_time?, days_active? } — Edits an existing shift type. Only the provided fields are updated.
+- update_role_requirement — data: { id, accepted_roles?: string[], required_count? } — Edits an existing role requirement. Only the provided fields are updated. accepted_roles, if provided, must be a non-empty array.
+- delete_shift_type — data: { id, name } — Deletes a shift type. If role requirements still exist under it, the executor will refuse — ask the manager to delete the role requirements first, or confirm they want all of them removed.
+- delete_role_requirement — data: { id } — Deletes a single role requirement (one row in shift_requirements).
 - update_policy — data: { policy_key, policy_value, policy_type?, description? }
 - delete_policy — data: { id, policy_key }
 - add_conflict — data: { employee_id_1, employee_id_2, reason?, severity?: 'avoid' | 'never' } — 'avoid' is a soft conflict (engine deprioritizes co-scheduling but allows it); 'never' is a hard conflict (engine refuses to co-schedule under any circumstances). Defaults to 'avoid' if omitted. Do not emit any other value.
@@ -183,6 +214,9 @@ Action types:
 - set_custom_availability — data: { employee_id, employee_name, type: "date_limited" | "rotating", end_date, patterns?: [{ day_of_week, start_time, end_time }], cycle_weeks?, cycle_start_date?, weekly_patterns?: [{ week, days: [{ day_of_week, start_time, end_time }] }] } — temporary override of normal availability until end_date. Use patterns for date_limited; use cycle_weeks + cycle_start_date + weekly_patterns for rotating.
 
 Memory types: preference, decision, context, feedback
+
+SHIFT ARCHITECTURE:
+A shift has TWO levels. A shift_type is the umbrella — it owns the name, the days the shift runs, and the start/end times. Inside a shift_type are role requirements (which roles need to be filled and how many of each). When the manager asks to "add a shift" or "create a new shift", first determine whether they mean a brand-new umbrella (use add_shift_type, then add_role_requirement for each role they list) or adding a role to an existing shift (use add_role_requirement only). If it is unclear, ASK before emitting any action. The list of existing shift types in this company is provided in the SHIFT TYPES section above — use it to disambiguate. Never create a role requirement without a valid shift_type_id from that list. A single role slot is a one-element accepted_roles array; a multi-role slot (e.g. "either a Lifeguard or a Headguard can fill this slot") is a multi-element array ordered by preference, with the preferred role first.
 
 AVAILABILITY NOTES PROCESSING:
 When a manager pastes availability notes for multiple employees, analyze all notes and determine the correct action(s) for each employee:

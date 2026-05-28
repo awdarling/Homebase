@@ -83,14 +83,13 @@ async function recomputeStaffingReport(
   prevReport: StaffingReport | null,
   remainingGapsUnfilled: number,
 ): Promise<StaffingReport> {
-  const [empRes, wageRes] = await Promise.all([
-    supabase.from('employees').select('id, name, primary_role, max_weekly_hours, individual_wage').eq('company_id', companyId).eq('active', true),
-    supabase.from('wage_rates').select('role, hourly_rate').eq('company_id', companyId),
-  ])
+  const empRes = await supabase
+    .from('employees')
+    .select('id, name, primary_role, max_weekly_hours')
+    .eq('company_id', companyId)
+    .eq('active', true)
 
-  const employees = (empRes.data ?? []) as { id: string; name: string; primary_role: string; max_weekly_hours: number; individual_wage: number | null }[]
-  const wageRates = (wageRes.data ?? []) as { role: string; hourly_rate: number }[]
-  const wageByRole = new Map(wageRates.map(w => [w.role, w.hourly_rate]))
+  const employees = (empRes.data ?? []) as { id: string; name: string; primary_role: string; max_weekly_hours: number }[]
 
   // Hours per employee
   const hoursById: Record<string, number> = {}
@@ -105,34 +104,13 @@ async function recomputeStaffingReport(
   const top_contributors = [...allRows].sort((a, b) => b.hours - a.hours).slice(0, 5)
   const bottom_contributors = [...allRows].sort((a, b) => a.hours - b.hours).slice(0, 3)
 
-  // Estimated wages
-  const empById = new Map(employees.map(e => [e.id, e]))
-  const wagesByEmployee: Record<string, { hours: number; pay: number; rate: number; role: string }> = {}
-  for (const a of pending) {
-    const emp = empById.get(a.employee_id)
-    const rate = emp?.individual_wage ?? wageByRole.get(a.role) ?? 0
-    const w = wagesByEmployee[a.employee_id] ?? { hours: 0, pay: 0, rate, role: a.role }
-    w.hours += a.hours ?? 0
-    w.pay += (a.hours ?? 0) * rate
-    w.rate = rate
-    w.role = a.role
-    wagesByEmployee[a.employee_id] = w
-  }
-  const by_employee = Object.entries(wagesByEmployee).map(([id, w]) => ({
-    employee_id: id,
-    employee_name: empById.get(id)?.name ?? 'Unknown',
-    hours: parseFloat(w.hours.toFixed(2)),
-    hourly_rate: w.rate,
-    estimated_pay: parseFloat(w.pay.toFixed(2)),
-  })).sort((a, b) => b.estimated_pay - a.estimated_pay)
-  const total_estimated = parseFloat(by_employee.reduce((s, e) => s + e.estimated_pay, 0).toFixed(2))
-
   // Coverage rate — keep filled vs (filled + remaining unfilled gaps)
   const filled = pending.length
   const totalSlots = filled + remainingGapsUnfilled
   const coverage_rate = totalSlots > 0 ? Math.round((filled / totalSlots) * 100) : 100
 
   // Overtime risk
+  const empById = new Map(employees.map(e => [e.id, e]))
   const overtime_risk = allRows
     .filter(r => r.hours > 36)
     .map(r => {
@@ -154,7 +132,6 @@ async function recomputeStaffingReport(
     gap_summary: prevReport?.gap_summary ?? '',
     special_notes_applied: prevReport?.special_notes_applied ?? [],
     aegis_notes: prevReport?.aegis_notes ?? '',
-    estimated_wages: { total_estimated, by_employee },
   }
 }
 

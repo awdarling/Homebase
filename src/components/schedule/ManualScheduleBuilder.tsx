@@ -473,30 +473,6 @@ export default function ManualScheduleBuilder({
     const top_contributors = contributorList.slice(0, 5)
     const bottom_contributors = [...contributorList].reverse().slice(0, 5)
 
-    const wageByEmployee = new Map<string, { name: string; hours: number; rate: number; pay: number }>()
-    for (const a of assignments) {
-      const { rate } = rateFor(empById.get(a.employee_id))
-      const r = rate ?? 0
-      const cur = wageByEmployee.get(a.employee_id) ?? { name: a.employee_name, hours: 0, rate: r, pay: 0 }
-      cur.hours += a.hours
-      cur.pay += a.hours * r
-      wageByEmployee.set(a.employee_id, cur)
-    }
-    const by_employee: StaffingReport['estimated_wages']['by_employee'] = []
-    let total_estimated = 0
-    wageByEmployee.forEach((v, employee_id) => {
-      const pay = Math.round(v.pay * 100) / 100
-      total_estimated += pay
-      by_employee.push({
-        employee_id,
-        employee_name: v.name,
-        hours: Math.round(v.hours * 10) / 10,
-        hourly_rate: v.rate,
-        estimated_pay: pay,
-      })
-    })
-    total_estimated = Math.round(total_estimated * 100) / 100
-
     const staffing_report: StaffingReport = {
       coverage_rate: coverage,
       top_contributors,
@@ -505,7 +481,6 @@ export default function ManualScheduleBuilder({
       gap_summary: gaps.length > 0 ? `${gaps.length} unfilled requirement${gaps.length === 1 ? '' : 's'}` : 'Fully covered',
       special_notes_applied: [],
       aegis_notes: 'Manually built by manager — Soteria did not review.',
-      estimated_wages: { total_estimated, by_employee },
     }
 
     const data: ScheduleData = {

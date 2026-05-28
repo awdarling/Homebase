@@ -191,14 +191,31 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true })
       }
 
-      case 'add_shift': {
+      case 'add_shift_type': {
         const d = action.data as {
-          shift_name: string
-          role: string
-          required_count?: number
-          start_time: string
-          end_time: string
+          name?: string
+          start_time?: string
+          end_time?: string
           days_active?: number[]
+        }
+        const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/
+        if (!d.name || typeof d.name !== 'string' || !d.name.trim()) {
+          return NextResponse.json(
+            { error: 'name is required and must be a non-empty string.' },
+            { status: 400 },
+          )
+        }
+        if (!d.start_time || !HHMM.test(d.start_time)) {
+          return NextResponse.json(
+            { error: 'start_time is required and must be HH:MM (24-hour, e.g. 09:00).' },
+            { status: 400 },
+          )
+        }
+        if (!d.end_time || !HHMM.test(d.end_time)) {
+          return NextResponse.json(
+            { error: 'end_time is required and must be HH:MM (24-hour, e.g. 17:00).' },
+            { status: 400 },
+          )
         }
         if (
           !Array.isArray(d.days_active) ||
@@ -206,43 +223,356 @@ export async function POST(request: NextRequest) {
           !d.days_active.every(n => Number.isInteger(n) && n >= 0 && n <= 6)
         ) {
           return NextResponse.json(
-            {
-              error:
-                'days_active is required and must be a non-empty array of integers 0–6 (0=Sunday, 6=Saturday). Specify which days of the week this shift runs.',
-            },
+            { error: 'days_active is required and must be a non-empty array of integers 0–6 (0=Sunday, 6=Saturday).' },
             { status: 400 },
           )
         }
-        const { data, error } = await supabase.from('shift_requirements').insert({
+        const name = d.name.trim()
+        const { data, error } = await supabase.from('shift_types').insert({
           company_id: companyId,
-          shift_name: d.shift_name,
-          role: d.role,
-          required_count: d.required_count ?? 1,
+          name,
           start_time: d.start_time,
           end_time: d.end_time,
           days_active: d.days_active,
+          active: true,
         }).select().single()
         if (error) throw error
         await supabase.from('activity_log').insert({
           company_id: companyId,
           actor: 'soteria',
-          action: 'add_shift',
-          entity_type: 'shift_requirement',
+          action: 'add_shift_type',
+          entity_type: 'shift_type',
           entity_id: data.id,
-          summary: `Soteria added shift: ${d.shift_name} — ${d.role}`,
+          summary: `Soteria added shift type: ${name}`,
+          metadata: { name, start_time: d.start_time, end_time: d.end_time, days_active: d.days_active },
         })
         return NextResponse.json({ success: true, data })
       }
 
-      case 'delete_shift': {
-        const d = action.data as { id: string; shift_name: string }
-        await supabase.from('shift_requirements').delete().eq('id', d.id).eq('company_id', companyId)
+      case 'add_role_requirement': {
+        const d = action.data as {
+          shift_type_id?: string
+          accepted_roles?: string[]
+          required_count?: number
+        }
+        if (!d.shift_type_id || typeof d.shift_type_id !== 'string' || !d.shift_type_id.trim()) {
+          return NextResponse.json(
+            { error: 'shift_type_id is required.' },
+            { status: 400 },
+          )
+        }
+        if (
+          !Array.isArray(d.accepted_roles) ||
+          d.accepted_roles.length === 0 ||
+          !d.accepted_roles.every(r => typeof r === 'string' && r.trim().length > 0)
+        ) {
+          return NextResponse.json(
+            { error: 'accepted_roles is required and must be a non-empty array of non-empty role names. The first entry is the preferred role; later entries are fallbacks.' },
+            { status: 400 },
+          )
+        }
+        const cleanedRoles = d.accepted_roles.map(r => r.trim())
+        const requiredCount = d.required_count ?? 1
+        if (!Number.isInteger(requiredCount) || requiredCount < 1) {
+          return NextResponse.json(
+            { error: 'required_count must be a positive integer (defaults to 1 if omitted).' },
+            { status: 400 },
+          )
+        }
+
+        const { data: st, error: stErr } = await supabase
+          .from('shift_types')
+          .select('id, name, start_time, end_time, days_active')
+          .eq('id', d.shift_type_id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+        if (stErr) throw stErr
+        if (!st) {
+          const { data: available } = await supabase
+            .from('shift_types')
+            .select('name')
+            .eq('company_id', companyId)
+            .order('name')
+          const names = (available ?? []).map((s: { name: string }) => s.name).join(', ') || '(none)'
+          return NextResponse.json(
+            { error: `Shift type ${d.shift_type_id} not found in this company. Available shift types: ${names}.` },
+            { status: 400 },
+          )
+        }
+        const stRow = st as { id: string; name: string; start_time: string; end_time: string; days_active: number[] }
+
+        const { data, error } = await supabase.from('shift_requirements').insert({
+          company_id: companyId,
+          shift_type_id: d.shift_type_id,
+          role: cleanedRoles[0],
+          accepted_roles: cleanedRoles,
+          required_count: requiredCount,
+          shift_name: stRow.name,
+          start_time: stRow.start_time,
+          end_time: stRow.end_time,
+          days_active: stRow.days_active,
+        }).select().single()
+        if (error) throw error
+
+        const stName = stRow.name
         await supabase.from('activity_log').insert({
           company_id: companyId,
           actor: 'soteria',
-          action: 'delete_shift',
+          action: 'add_role_requirement',
           entity_type: 'shift_requirement',
-          summary: `Soteria removed shift: ${d.shift_name}`,
+          entity_id: data.id,
+          summary: `Soteria added role requirement: ${requiredCount}× ${cleanedRoles.join(' or ')} to ${stName}`,
+          metadata: {
+            shift_type_id: d.shift_type_id,
+            shift_type_name: stName,
+            accepted_roles: cleanedRoles,
+            required_count: requiredCount,
+          },
+        })
+        return NextResponse.json({ success: true, data })
+      }
+
+      case 'update_shift_type': {
+        const d = action.data as {
+          id?: string
+          name?: string
+          start_time?: string
+          end_time?: string
+          days_active?: number[]
+        }
+        if (!d.id || typeof d.id !== 'string') {
+          return NextResponse.json(
+            { error: 'id is required.' },
+            { status: 400 },
+          )
+        }
+        const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/
+        const updates: Record<string, unknown> = {}
+        if (d.name !== undefined) {
+          if (typeof d.name !== 'string' || !d.name.trim()) {
+            return NextResponse.json({ error: 'name must be a non-empty string when provided.' }, { status: 400 })
+          }
+          updates.name = d.name.trim()
+        }
+        if (d.start_time !== undefined) {
+          if (!HHMM.test(d.start_time)) {
+            return NextResponse.json({ error: 'start_time must be HH:MM (24-hour).' }, { status: 400 })
+          }
+          updates.start_time = d.start_time
+        }
+        if (d.end_time !== undefined) {
+          if (!HHMM.test(d.end_time)) {
+            return NextResponse.json({ error: 'end_time must be HH:MM (24-hour).' }, { status: 400 })
+          }
+          updates.end_time = d.end_time
+        }
+        if (d.days_active !== undefined) {
+          if (
+            !Array.isArray(d.days_active) ||
+            d.days_active.length === 0 ||
+            !d.days_active.every(n => Number.isInteger(n) && n >= 0 && n <= 6)
+          ) {
+            return NextResponse.json(
+              { error: 'days_active must be a non-empty array of integers 0–6 when provided.' },
+              { status: 400 },
+            )
+          }
+          updates.days_active = d.days_active
+        }
+        if (Object.keys(updates).length === 0) {
+          return NextResponse.json(
+            { error: 'At least one of name, start_time, end_time, days_active must be provided.' },
+            { status: 400 },
+          )
+        }
+
+        const { data: before } = await supabase
+          .from('shift_types')
+          .select('*')
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+        if (!before) {
+          return NextResponse.json({ error: `Shift type ${d.id} not found in this company.` }, { status: 400 })
+        }
+
+        const { data, error } = await supabase
+          .from('shift_types')
+          .update(updates)
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .select()
+          .single()
+        if (error) throw error
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'update_shift_type',
+          entity_type: 'shift_type',
+          entity_id: d.id,
+          summary: `Soteria updated shift type: ${(data as { name: string }).name}`,
+          metadata: { before, after: data, changed_fields: Object.keys(updates) },
+        })
+        return NextResponse.json({ success: true, data })
+      }
+
+      case 'update_role_requirement': {
+        const d = action.data as {
+          id?: string
+          accepted_roles?: string[]
+          required_count?: number
+        }
+        if (!d.id || typeof d.id !== 'string') {
+          return NextResponse.json(
+            { error: 'id is required.' },
+            { status: 400 },
+          )
+        }
+        const updates: Record<string, unknown> = {}
+        if (d.accepted_roles !== undefined) {
+          if (
+            !Array.isArray(d.accepted_roles) ||
+            d.accepted_roles.length === 0 ||
+            !d.accepted_roles.every(r => typeof r === 'string' && r.trim().length > 0)
+          ) {
+            return NextResponse.json(
+              { error: 'accepted_roles must be a non-empty array of non-empty role names when provided.' },
+              { status: 400 },
+            )
+          }
+          const cleaned = d.accepted_roles.map(r => r.trim())
+          updates.accepted_roles = cleaned
+          updates.role = cleaned[0]
+        }
+        if (d.required_count !== undefined) {
+          if (!Number.isInteger(d.required_count) || d.required_count < 1) {
+            return NextResponse.json(
+              { error: 'required_count must be a positive integer when provided.' },
+              { status: 400 },
+            )
+          }
+          updates.required_count = d.required_count
+        }
+        if (Object.keys(updates).length === 0) {
+          return NextResponse.json(
+            { error: 'At least one of accepted_roles, required_count must be provided.' },
+            { status: 400 },
+          )
+        }
+
+        const { data: before } = await supabase
+          .from('shift_requirements')
+          .select('*')
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+        if (!before) {
+          return NextResponse.json({ error: `Role requirement ${d.id} not found in this company.` }, { status: 400 })
+        }
+
+        const { data, error } = await supabase
+          .from('shift_requirements')
+          .update(updates)
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .select()
+          .single()
+        if (error) throw error
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'update_role_requirement',
+          entity_type: 'shift_requirement',
+          entity_id: d.id,
+          summary: `Soteria updated role requirement ${d.id}`,
+          metadata: { before, after: data, changed_fields: Object.keys(updates) },
+        })
+        return NextResponse.json({ success: true, data })
+      }
+
+      case 'delete_shift_type': {
+        const d = action.data as { id?: string; name?: string }
+        if (!d.id || typeof d.id !== 'string') {
+          return NextResponse.json({ error: 'id is required.' }, { status: 400 })
+        }
+        if (!d.name || typeof d.name !== 'string') {
+          return NextResponse.json({ error: 'name is required (used for the activity log entry).' }, { status: 400 })
+        }
+        const { data: existingReqs, error: reqErr } = await supabase
+          .from('shift_requirements')
+          .select('id')
+          .eq('shift_type_id', d.id)
+          .eq('company_id', companyId)
+        if (reqErr) throw reqErr
+        const reqCount = existingReqs?.length ?? 0
+        if (reqCount > 0) {
+          return NextResponse.json(
+            { error: `Cannot delete shift type — ${reqCount} role requirement${reqCount === 1 ? '' : 's'} still exist. Delete those first.` },
+            { status: 400 },
+          )
+        }
+        const { error } = await supabase
+          .from('shift_types')
+          .delete()
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+        if (error) throw error
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'delete_shift_type',
+          entity_type: 'shift_type',
+          summary: `Soteria deleted shift type: ${d.name}`,
+          metadata: { id: d.id, name: d.name },
+        })
+        return NextResponse.json({ success: true })
+      }
+
+      case 'delete_role_requirement': {
+        const d = action.data as { id?: string }
+        if (!d.id || typeof d.id !== 'string') {
+          return NextResponse.json({ error: 'id is required.' }, { status: 400 })
+        }
+        const { data: before } = await supabase
+          .from('shift_requirements')
+          .select('id, shift_type_id, accepted_roles, role, required_count')
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+        if (!before) {
+          return NextResponse.json({ error: `Role requirement ${d.id} not found in this company.` }, { status: 400 })
+        }
+        const beforeRow = before as { id: string; shift_type_id: string | null; accepted_roles: string[] | null; role: string | null; required_count: number }
+        let shiftTypeName = '(unknown shift type)'
+        if (beforeRow.shift_type_id) {
+          const { data: st } = await supabase
+            .from('shift_types')
+            .select('name')
+            .eq('id', beforeRow.shift_type_id)
+            .eq('company_id', companyId)
+            .maybeSingle()
+          if (st) shiftTypeName = (st as { name: string }).name
+        }
+        const rolesText = (beforeRow.accepted_roles && beforeRow.accepted_roles.length > 0)
+          ? beforeRow.accepted_roles.join(' or ')
+          : (beforeRow.role ?? '?')
+
+        const { error } = await supabase
+          .from('shift_requirements')
+          .delete()
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+        if (error) throw error
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'delete_role_requirement',
+          entity_type: 'shift_requirement',
+          summary: `Soteria removed role requirement: ${beforeRow.required_count}× ${rolesText} from ${shiftTypeName}`,
+          metadata: { id: d.id, shift_type_id: beforeRow.shift_type_id, shift_type_name: shiftTypeName, accepted_roles: beforeRow.accepted_roles, required_count: beforeRow.required_count },
         })
         return NextResponse.json({ success: true })
       }

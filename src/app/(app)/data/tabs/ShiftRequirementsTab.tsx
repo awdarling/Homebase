@@ -9,6 +9,11 @@ import type { ShiftType, ShiftRequirement } from '@/lib/types'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
+interface RoleOption {
+  id: string
+  name: string
+}
+
 function TrashIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -46,6 +51,7 @@ export default function ShiftRequirementsTab() {
 
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([])
   const [requirements, setRequirements] = useState<ShiftRequirement[]>([])
+  const [roleOptions, setRoleOptions] = useState<RoleOption[]>([])
   const [loading, setLoading] = useState(true)
 
   const [stModal, setStModal] = useState<ShiftTypeModal | null>(null)
@@ -54,7 +60,7 @@ export default function ShiftRequirementsTab() {
   const [stError, setStError] = useState('')
 
   const [reqModal, setReqModal] = useState<RequirementModal | null>(null)
-  const [reqForm, setReqForm] = useState({ role: '', required_count: '1' })
+  const [reqForm, setReqForm] = useState<{ accepted_roles: string[]; required_count: string }>({ accepted_roles: [''], required_count: '1' })
   const [reqSaving, setReqSaving] = useState(false)
   const [reqError, setReqError] = useState('')
 
@@ -65,12 +71,14 @@ export default function ShiftRequirementsTab() {
 
   async function fetchData() {
     setLoading(true)
-    const [stRes, reqRes] = await Promise.all([
+    const [stRes, reqRes, rolesRes] = await Promise.all([
       supabase.from('shift_types').select('*').eq('company_id', COMPANY_ID).order('name'),
       supabase.from('shift_requirements').select('*').eq('company_id', COMPANY_ID).order('role'),
+      supabase.from('roles').select('id, name').eq('company_id', COMPANY_ID).order('name'),
     ])
     if (stRes.data) setShiftTypes(stRes.data)
     if (reqRes.data) setRequirements(reqRes.data)
+    if (rolesRes.data) setRoleOptions(rolesRes.data as RoleOption[])
     setLoading(false)
   }
 
@@ -162,49 +170,81 @@ export default function ShiftRequirementsTab() {
   // ── Requirement handlers ─────────────────────────────────────────────────
 
   function openAddRequirement(shiftTypeId: string) {
-    setReqForm({ role: '', required_count: '1' })
+    setReqForm({ accepted_roles: [''], required_count: '1' })
     setReqError('')
     setReqModal({ mode: 'add', shiftTypeId })
   }
 
   function openEditRequirement(req: ShiftRequirement) {
-    setReqForm({ role: req.role, required_count: String(req.required_count) })
+    const seed = (req.accepted_roles && req.accepted_roles.length > 0)
+      ? [...req.accepted_roles]
+      : [req.role ?? '']
+    setReqForm({ accepted_roles: seed, required_count: String(req.required_count) })
     setReqError('')
     setReqModal({ mode: 'edit', requirement: req })
   }
 
+  function setRoleAtIndex(idx: number, value: string) {
+    setReqForm((f) => {
+      const next = [...f.accepted_roles]
+      next[idx] = value
+      return { ...f, accepted_roles: next }
+    })
+  }
+
+  function addRoleSlot() {
+    setReqForm((f) => ({ ...f, accepted_roles: [...f.accepted_roles, ''] }))
+  }
+
+  function removeRoleAt(idx: number) {
+    setReqForm((f) => {
+      if (f.accepted_roles.length <= 1) return f
+      return { ...f, accepted_roles: f.accepted_roles.filter((_, i) => i !== idx) }
+    })
+  }
+
   async function handleSaveRequirement() {
-    if (!reqForm.role.trim()) { setReqError('Role is required.'); return }
+    const cleaned = reqForm.accepted_roles.map((r) => r.trim()).filter((r) => r.length > 0)
+    if (cleaned.length === 0) { setReqError('Select at least one role.'); return }
+    const seen = new Set<string>()
+    for (const r of cleaned) {
+      if (seen.has(r)) { setReqError(`Duplicate role: ${r}. Each role can only appear once.`); return }
+      seen.add(r)
+    }
     const count = parseInt(reqForm.required_count)
     if (isNaN(count) || count < 1) { setReqError('Slots must be at least 1.'); return }
     setReqSaving(true)
     setReqError('')
+
+    const summaryRoles = cleaned.join(' or ')
 
     if (reqModal?.mode === 'add') {
       const st = shiftTypes.find((s) => s.id === reqModal.shiftTypeId)
       const { data } = await supabase.from('shift_requirements').insert({
         company_id: COMPANY_ID,
         shift_type_id: reqModal.shiftTypeId,
-        shift_name: st?.name ?? '',
-        role: reqForm.role.trim(),
+        role: cleaned[0],
+        accepted_roles: cleaned,
         required_count: count,
+        shift_name: st?.name ?? '',
         start_time: st?.start_time ?? '00:00',
         end_time: st?.end_time ?? '00:00',
         days_active: st?.days_active ?? [],
       }).select().single()
       if (data) await logActivity(
         'shift_requirement_created',
-        `Added ${count} ${reqForm.role} slot(s) to ${st?.name ?? 'shift'}`,
+        `Added ${count} ${summaryRoles} slot(s) to ${st?.name ?? 'shift'}`,
         data.id
       )
     } else if (reqModal?.mode === 'edit') {
       await supabase.from('shift_requirements').update({
-        role: reqForm.role.trim(),
+        role: cleaned[0],
+        accepted_roles: cleaned,
         required_count: count,
       }).eq('id', reqModal.requirement.id)
       await logActivity(
         'shift_requirement_updated',
-        `Updated ${reqForm.role} to ${count} slot(s)`,
+        `Updated ${summaryRoles} to ${count} slot(s)`,
         reqModal.requirement.id
       )
     }
@@ -216,10 +256,13 @@ export default function ShiftRequirementsTab() {
 
   async function handleDeleteRequirement(id: string) {
     const req = requirements.find((r) => r.id === id)
+    const label = (req?.accepted_roles && req.accepted_roles.length > 0)
+      ? req.accepted_roles.join(' or ')
+      : (req?.role ?? 'role')
     await supabase.from('shift_requirements').delete().eq('id', id)
     await logActivity(
       'shift_requirement_deleted',
-      `Removed ${req?.role ?? 'role'} requirement from shift`,
+      `Removed ${label} requirement from shift`,
       id
     )
     setConfirmDeleteReqId(null)
@@ -348,9 +391,28 @@ export default function ShiftRequirementsTab() {
                   </tr>
                 </thead>
                 <tbody>
-                  {reqs.map((req) => (
+                  {reqs.map((req) => {
+                    const roles = (req.accepted_roles && req.accepted_roles.length > 0)
+                      ? req.accepted_roles
+                      : (req.role ? [req.role] : [])
+                    return (
                     <tr key={req.id} onClick={() => openEditRequirement(req)} style={{ cursor: 'pointer' }}>
-                      <td style={{ color: 'var(--text-primary)', fontSize: 13 }}>{req.role}</td>
+                      <td style={{ color: 'var(--text-primary)', fontSize: 13 }}>
+                        {roles.length === 0 ? (
+                          <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>(no role)</span>
+                        ) : roles.length === 1 ? (
+                          roles[0]
+                        ) : (
+                          <>
+                            {roles.map((r, i) => (
+                              <span key={i}>
+                                {i > 0 && <span style={{ color: 'var(--text-muted)' }}> or </span>}
+                                {r}
+                              </span>
+                            ))}
+                          </>
+                        )}
+                      </td>
                       <td>
                         <span style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, color: 'var(--accent)' }}>
                           {req.required_count}
@@ -375,7 +437,8 @@ export default function ShiftRequirementsTab() {
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                   {reqs.length === 0 && (
                     <tr>
                       <td colSpan={3} style={{ color: 'var(--text-disabled)', fontSize: 12, fontStyle: 'italic' }}>
@@ -471,8 +534,69 @@ export default function ShiftRequirementsTab() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div className="form-group">
-                <label className="form-label">Role</label>
-                <input className="form-input" value={reqForm.role} onChange={(e) => setReqForm((f) => ({ ...f, role: e.target.value }))} placeholder="e.g. Lifeguard" />
+                <label className="form-label">Roles</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {reqForm.accepted_roles.map((selected, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <select
+                        className="form-input"
+                        value={selected}
+                        onChange={(e) => setRoleAtIndex(idx, e.target.value)}
+                        style={{ flex: 1 }}
+                      >
+                        <option value="">{idx === 0 ? 'Select preferred role…' : 'Select fallback role…'}</option>
+                        {roleOptions.map((r) => (
+                          <option key={r.id} value={r.name}>{r.name}</option>
+                        ))}
+                        {selected && !roleOptions.some((r) => r.name === selected) && (
+                          <option value={selected}>{selected} (legacy)</option>
+                        )}
+                      </select>
+                      {idx > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => removeRoleAt(idx)}
+                          aria-label="Remove role"
+                          style={{
+                            background: 'transparent',
+                            border: '1px solid var(--border-default)',
+                            borderRadius: 'var(--radius-sm)',
+                            cursor: 'pointer',
+                            color: 'var(--text-muted)',
+                            width: 28,
+                            height: 28,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 14,
+                            lineHeight: 1,
+                          }}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={addRoleSlot}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--accent)',
+                    fontSize: 12,
+                    fontFamily: 'var(--font-body)',
+                    padding: '6px 0 0 0',
+                    alignSelf: 'flex-start',
+                  }}
+                >
+                  + Add another role
+                </button>
+                <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 6, lineHeight: 1.5 }}>
+                  List multiple roles to indicate any of them can fill this slot. The engine prefers the first role listed; later roles are fallbacks.
+                </div>
               </div>
               <div className="form-group">
                 <label className="form-label">Slots Required</label>
