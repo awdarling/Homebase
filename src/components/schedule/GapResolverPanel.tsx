@@ -209,32 +209,10 @@ export default function GapResolverPanel({
 
     const updatedAssignments = [...(schedule.data?.assignments ?? []), newAssignment]
 
-    let updatedReport = schedule.staffing_report
-    if (updatedReport) {
-      const oldUnfilled = (schedule.data?.gaps ?? []).reduce((s, g) => s + Math.max(0, g.required_count - g.filled_count), 0)
-      const newUnfilled = updatedGaps.reduce((s, g) => s + Math.max(0, g.required_count - g.filled_count), 0)
-
-      let newRate = updatedReport.coverage_rate
-      if (oldUnfilled > newUnfilled && updatedReport.coverage_rate < 100) {
-        const frac = updatedReport.coverage_rate / 100
-        const totalRequired = frac < 1 && oldUnfilled > 0
-          ? Math.round(oldUnfilled / (1 - frac))
-          : updatedAssignments.length + newUnfilled
-        newRate = Math.min(100, Math.round(((totalRequired - newUnfilled) / totalRequired) * 100))
-      }
-
-      const existing = updatedReport.top_contributors.find(c => c.employee_id === assignment.employee_id)
-      const newTopContributors = existing
-        ? updatedReport.top_contributors.map(c => c.employee_id === assignment.employee_id ? { ...c, hours: c.hours + hours } : c)
-        : [...updatedReport.top_contributors, { employee_id: assignment.employee_id, name: assignment.employee_name, hours }].sort((a, b) => b.hours - a.hours)
-
-      updatedReport = { ...updatedReport, coverage_rate: newRate, top_contributors: newTopContributors }
-    }
-
     const updatedData = { ...(schedule.data ?? { assignments: [], gaps: [], summary: '' }), assignments: updatedAssignments, gaps: updatedGaps }
 
     const { data: saved } = await supabase.from('schedules')
-      .update({ data: updatedData, staffing_report: updatedReport })
+      .update({ data: updatedData })
       .eq('id', schedule.id).select().single()
 
     fetch('/api/notify-assignment', {
@@ -244,7 +222,7 @@ export default function GapResolverPanel({
     }).catch(() => {})
 
     setAssigning(false)
-    onResolved((saved as Schedule) ?? { ...schedule, data: updatedData, staffing_report: updatedReport })
+    onResolved((saved as Schedule) ?? { ...schedule, data: updatedData })
   }
 
   // ── Search filtering ──────────────────────────────────────────────────────

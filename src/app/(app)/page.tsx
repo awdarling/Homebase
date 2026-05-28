@@ -1,5 +1,6 @@
 'use client'
 import { useCompany } from '@/lib/hooks/useCompany'
+import { useWageBreakdown } from '@/lib/hooks/useWageBreakdown'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
@@ -411,7 +412,14 @@ export default function HomePage() {
   const unfilledSlotsTotal = unfilledGaps.reduce((sum, g) => sum + (g.required_count - g.filled_count), 0)
   const filledSlotsTotal = assignments.length
 
-  const estimatedWages = currentSchedule?.staffing_report?.estimated_wages?.total_estimated ?? null
+  // Compute wages live from current assignments + employees + wage_rates,
+  // rather than reading the snapshot in staffing_report. The snapshot goes
+  // stale on any mid-week edit; the hook is authoritative.
+  const { totals: wageTotals, loading: wagesLoading } = useWageBreakdown({
+    assignments,
+    companyId: COMPANY_ID,
+  })
+  const estimatedWages = currentSchedule && !wagesLoading ? wageTotals.estimated_pay : null
   const coverageRate = currentSchedule?.staffing_report?.coverage_rate
     ?? (currentSchedule
       ? (filledSlotsTotal + unfilledSlotsTotal > 0

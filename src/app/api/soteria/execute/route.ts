@@ -200,6 +200,19 @@ export async function POST(request: NextRequest) {
           end_time: string
           days_active?: number[]
         }
+        if (
+          !Array.isArray(d.days_active) ||
+          d.days_active.length === 0 ||
+          !d.days_active.every(n => Number.isInteger(n) && n >= 0 && n <= 6)
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                'days_active is required and must be a non-empty array of integers 0–6 (0=Sunday, 6=Saturday). Specify which days of the week this shift runs.',
+            },
+            { status: 400 },
+          )
+        }
         const { data, error } = await supabase.from('shift_requirements').insert({
           company_id: companyId,
           shift_name: d.shift_name,
@@ -207,7 +220,7 @@ export async function POST(request: NextRequest) {
           required_count: d.required_count ?? 1,
           start_time: d.start_time,
           end_time: d.end_time,
-          days_active: d.days_active ?? [0, 1, 2, 3, 4, 5, 6],
+          days_active: d.days_active,
         }).select().single()
         if (error) throw error
         await supabase.from('activity_log').insert({
@@ -279,12 +292,20 @@ export async function POST(request: NextRequest) {
           reason?: string | null
           severity?: string
         }
+        const ALLOWED_SEVERITIES = ['avoid', 'never'] as const
+        const severity = d.severity ?? 'avoid'
+        if (!ALLOWED_SEVERITIES.includes(severity as typeof ALLOWED_SEVERITIES[number])) {
+          return NextResponse.json(
+            { error: `Invalid severity "${d.severity}". Must be 'avoid' or 'never'.` },
+            { status: 400 },
+          )
+        }
         const { data, error } = await supabase.from('employee_conflicts').insert({
           company_id: companyId,
           employee_id_1: d.employee_id_1,
           employee_id_2: d.employee_id_2,
           reason: d.reason ?? null,
-          severity: d.severity ?? 'avoid',
+          severity,
         }).select().single()
         if (error) throw error
         await supabase.from('activity_log').insert({

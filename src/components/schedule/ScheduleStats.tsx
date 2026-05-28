@@ -1,5 +1,6 @@
 'use client'
 
+import { useWageBreakdown } from '@/lib/hooks/useWageBreakdown'
 import type { Schedule } from '@/lib/types'
 
 interface ScheduleStatsProps {
@@ -34,10 +35,17 @@ export default function ScheduleStats({ schedule, compact = false }: ScheduleSta
   const report = schedule.staffing_report
   const gaps = schedule.data?.gaps ?? []
   const totalGaps = gaps.length
+  const assignments = schedule.data?.assignments ?? []
+
+  // Live wage compute — replaces the stale staffing_report snapshot.
+  const { totals: wageTotals, loading: wagesLoading } = useWageBreakdown({
+    assignments,
+    companyId: schedule.company_id,
+  })
 
   const coverageRate = report?.coverage_rate ?? null
   const topContributors = report?.top_contributors?.slice(0, 3) ?? []
-  const totalWages = report?.estimated_wages?.total_estimated ?? null
+  const totalWages = wagesLoading ? null : wageTotals.estimated_pay
 
   const weekLabel = `${formatDate(schedule.week_start)} – ${formatDate(schedule.week_end)}`
 

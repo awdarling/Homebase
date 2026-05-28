@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useCompany } from '@/lib/hooks/useCompany'
 import { useQuria } from '@/lib/hooks/useQuria'
 import { useScheduleTemplate } from '@/lib/hooks/useScheduleTemplate'
+import { useWageBreakdown } from '@/lib/hooks/useWageBreakdown'
 import { logActivity as logActivityFn } from '@/lib/activity'
 import ScheduleRenderer from '@/components/schedule/ScheduleRenderer'
 import ScheduleStats from '@/components/schedule/ScheduleStats'
@@ -363,8 +364,17 @@ function ContributorList({
 function HistoryReportDetail({ schedule }: { schedule: Schedule }) {
   const report = schedule.staffing_report
   const gaps = schedule.data?.gaps ?? []
+  const assignments = schedule.data?.assignments ?? []
 
-  if (!report && gaps.length === 0) {
+  // Live wage compute — staffing_report.estimated_wages is no longer the
+  // source of truth for display. We use the same hook the wage breakdown
+  // panel uses so values are consistent across the page.
+  const { rows: wageRows, totals: wageTotals, loading: wagesLoading } = useWageBreakdown({
+    assignments,
+    companyId: schedule.company_id,
+  })
+
+  if (!report && gaps.length === 0 && assignments.length === 0) {
     return (
       <div style={{ padding: '16px 0', fontSize: 12, color: 'var(--text-muted)' }}>
         No staffing report attached to this schedule.
@@ -391,7 +401,9 @@ function HistoryReportDetail({ schedule }: { schedule: Schedule }) {
             },
             {
               label: 'Est. Wages',
-              value: `$${report.estimated_wages.total_estimated.toLocaleString('en-US', { maximumFractionDigits: 0 })}`,
+              value: wagesLoading
+                ? '—'
+                : `$${wageTotals.estimated_pay.toLocaleString('en-US', { maximumFractionDigits: 0 })}`,
               color: 'var(--text-primary)',
             },
           ].map(stat => (
@@ -482,8 +494,15 @@ function HistoryReportDetail({ schedule }: { schedule: Schedule }) {
         </div>
       )}
 
-      {/* Wages by employee */}
-      {report && report.estimated_wages.by_employee.length > 0 && (
+      {/* Wages by employee — computed live from assignments + employees + wage_rates */}
+      {wagesLoading ? (
+        <div>
+          <div className="section-label" style={{ margin: '0 0 8px' }}>Estimated Wages</div>
+          <div style={{ padding: '12px 16px', fontSize: 12, color: 'var(--text-muted)' }}>
+            Loading wage data…
+          </div>
+        </div>
+      ) : wageRows.length > 0 && (
         <div>
           <div className="section-label" style={{ margin: '0 0 8px' }}>Estimated Wages</div>
           <div style={{
@@ -504,18 +523,22 @@ function HistoryReportDetail({ schedule }: { schedule: Schedule }) {
                 </div>
               ))}
             </div>
-            {report.estimated_wages.by_employee.map((e, i) => (
-              <div key={e.employee_id} style={{
+            {wageRows.map((r, i) => (
+              <div key={r.employee_id} style={{
                 display: 'grid',
                 gridTemplateColumns: '1fr 56px 80px 100px',
                 padding: '10px 16px',
-                borderBottom: i < report.estimated_wages.by_employee.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+                borderBottom: i < wageRows.length - 1 ? '1px solid var(--border-subtle)' : 'none',
               }}>
-                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{e.employee_name}</span>
-                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{e.hours}h</span>
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>${e.hourly_rate.toFixed(2)}/hr</span>
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{r.employee_name}</span>
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{r.total_hours}h</span>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  {r.hourly_rate != null ? `$${r.hourly_rate.toFixed(2)}/hr` : '—'}
+                </span>
                 <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-                  ${e.estimated_pay.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {r.estimated_pay != null
+                    ? `$${r.estimated_pay.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : '—'}
                 </span>
               </div>
             ))}
@@ -535,7 +558,7 @@ function HistoryReportDetail({ schedule }: { schedule: Schedule }) {
                 Total
               </span>
               <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'var(--font-display)' }}>
-                ${report.estimated_wages.total_estimated.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                ${wageTotals.estimated_pay.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
           </div>
