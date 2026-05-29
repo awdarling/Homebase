@@ -308,6 +308,10 @@ export async function POST(request: NextRequest) {
         }
         const stRow = st as { id: string; name: string; start_time: string; end_time: string; days_active: number[] }
 
+        // days_active is dormant on shift_requirements — Aegis ignores it
+        // (see Aegis/src/lib/engine/canvas.ts). Written here to keep the
+        // column self-consistent at write time. Do not allow Soteria to
+        // mutate it independently.
         const { data, error } = await supabase.from('shift_requirements').insert({
           company_id: companyId,
           shift_type_id: d.shift_type_id,

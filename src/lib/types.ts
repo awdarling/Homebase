@@ -114,13 +114,29 @@ export interface ShiftRequirement {
   required_count: number
   /** @deprecated use accepted_roles[0]. Kept for backwards compat with the Aegis engine until Block 3c. */
   role: string
-  /** @deprecated dormant — engine reads from shift_types until Block 3c. Do not write from new code paths. */
+  /**
+   * @deprecated DO NOT READ. The Aegis engine ignores this field —
+   * shift_types.name is the sole source of truth.
+   * Column scheduled for removal in Block 3d.
+   */
   shift_name: string
-  /** @deprecated dormant — engine reads from shift_types until Block 3c. Do not write from new code paths. */
+  /**
+   * @deprecated DO NOT READ. The Aegis engine ignores this field —
+   * shift_types.start_time is the sole source of truth.
+   * Column scheduled for removal in Block 3d.
+   */
   start_time: string
-  /** @deprecated dormant — engine reads from shift_types until Block 3c. Do not write from new code paths. */
+  /**
+   * @deprecated DO NOT READ. The Aegis engine ignores this field —
+   * shift_types.end_time is the sole source of truth.
+   * Column scheduled for removal in Block 3d.
+   */
   end_time: string
-  /** @deprecated dormant — engine reads from shift_types until Block 3c. Do not write from new code paths. */
+  /**
+   * @deprecated DO NOT READ. The Aegis engine ignores this field —
+   * shift_types.days_active is the sole source of truth.
+   * Column scheduled for removal in Block 3d.
+   */
   days_active: number[]
 }
 
