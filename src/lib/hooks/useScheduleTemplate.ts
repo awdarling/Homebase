@@ -47,8 +47,13 @@ export function useScheduleTemplate() {
   const saveTemplate = useCallback(async (next: ScheduleTemplate) => {
     if (!companyId) return
 
+    // Strip empty id so the gen_random_uuid() default fires on first insert.
+    // The unique constraint on company_id still routes upsert correctly:
+    // existing rows are matched by company_id and updated regardless of id.
+    const { id, ...rest } = next
+    const base = id ? next : rest
     const payload = {
-      ...next,
+      ...base,
       company_id: companyId,
       updated_at: new Date().toISOString(),
     }
