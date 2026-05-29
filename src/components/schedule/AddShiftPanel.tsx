@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { ScheduleAssignment, ScheduleTemplate } from '@/lib/types'
+import { parseYMD, toYMD, formatYMD } from '@/lib/utils/dates'
 
 interface AddShiftPanelProps {
   companyId: string
@@ -33,10 +34,10 @@ interface RoleRow {
 }
 
 function getWeekDates(weekStart: string): string[] {
+  const start = parseYMD(weekStart)
   return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(weekStart)
-    d.setDate(d.getDate() + i)
-    return d.toISOString().split('T')[0]
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i)
+    return toYMD(d)
   })
 }
 
@@ -134,9 +135,9 @@ export default function AddShiftPanel({
     if (!role) { setError('Pick a role.'); return }
     if (!selectedShift) { setError('Selected shift not found.'); return }
 
-    const dayOfWeek = new Date(date).getDay()
+    const dayOfWeek = parseYMD(date).getDay()
     if (!selectedShift.days_active.includes(dayOfWeek)) {
-      setError(`The ${shiftName} shift does not run on ${new Date(date).toLocaleDateString('en-US', { weekday: 'long' })}.`)
+      setError(`The ${shiftName} shift does not run on ${formatYMD(date, { weekday: 'long' })}.`)
       return
     }
 

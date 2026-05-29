@@ -13,6 +13,7 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core'
 import type { Schedule, ScheduleTemplate, ScheduleAssignment, ColumnConfig, RowConfig } from '@/lib/types'
+import { parseYMD, toYMD } from '@/lib/utils/dates'
 
 interface ScheduleRendererProps {
   schedule: Schedule
@@ -33,10 +34,10 @@ const FONT_SIZES = {
 }
 
 function getWeekDates(weekStart: string): string[] {
+  const start = parseYMD(weekStart)
   return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(weekStart)
-    d.setDate(d.getDate() + i)
-    return d.toISOString().split('T')[0]
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i)
+    return toYMD(d)
   })
 }
 
@@ -336,7 +337,7 @@ function DayHeader({
         fontSize: 15, fontWeight: 800,
         color: '#ffffff', lineHeight: 1, marginTop: 3,
       }}>
-        {new Date(date).getDate()}
+        {parseYMD(date).getDate()}
       </div>
       {closed ? (
         <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
@@ -470,7 +471,7 @@ function ShiftRowsDayColumns({
 
   const colByDate = new Map<string, ColumnConfig>()
   weekDates.forEach(date => {
-    const dayOfWeek = new Date(date).getDay()
+    const dayOfWeek = parseYMD(date).getDay()
     const col = visibleCols.find(c => c.day === dayOfWeek)
     if (col) colByDate.set(date, col)
   })
@@ -495,7 +496,7 @@ function ShiftRowsDayColumns({
   }
 
   const orderedDates = visibleCols
-    .map(col => weekDates.find(d => new Date(d).getDay() === col.day))
+    .map(col => weekDates.find(d => parseYMD(d).getDay() === col.day))
     .filter((d): d is string => d !== undefined)
 
   const LABEL_COL_WIDTH = 110
