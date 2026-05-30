@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { logActivity } from '@/lib/activity'
 import type { Schedule, ScheduleGap, ScheduleAssignment } from '@/lib/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -53,6 +54,24 @@ function computeHours(start: string, end: string): number {
   return Math.max(0, ((eh * 60 + em) - (sh * 60 + sm)) / 60)
 }
 
+// Mirrors the server-side template in src/app/api/notify-assignment/route.ts.
+// Keep in lockstep so the preview the manager sees matches the SMS that
+// actually goes out.
+function buildAssignmentSmsPreview(args: {
+  employee_name: string
+  shift_name: string
+  role: string
+  date: string
+  start_time: string
+  end_time: string
+}): string {
+  const [y, mo, da] = args.date.split('-').map(Number)
+  const dateStr = new Date(y, mo - 1, da).toLocaleDateString('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric',
+  })
+  return `Hi ${args.employee_name}, you've been added to the ${args.shift_name} shift (${args.role}, ${args.start_time}–${args.end_time}) on ${dateStr} by your manager. See you then!`
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function GapResolverPanel({
@@ -82,6 +101,21 @@ export default function GapResolverPanel({
   const [soteraResult, setSoteraResult] = useState<SoteraResult | null>(null)
   const [pendingAssignment, setPendingAssignment] = useState<PendingAssignment | null>(null)
   const [assigning, setAssigning] = useState(false)
+
+  // Notify-confirm state — gates the SMS behind explicit manager approval.
+  // After the schedule write succeeds we hold the saved schedule + the
+  // assignment context here while the manager decides whether to notify.
+  const [notifyPhase, setNotifyPhase] = useState<'idle' | 'confirm' | 'sending'>('idle')
+  const [notifyError, setNotifyError] = useState<string | null>(null)
+  const [savedSchedule, setSavedSchedule] = useState<Schedule | null>(null)
+  const [notifyContext, setNotifyContext] = useState<{
+    employee_id: string
+    employee_name: string
+    role: string
+    contact_phone: string | null
+    start_time: string
+    end_time: string
+  } | null>(null)
 
   const [y, mo, d] = gap.date.split('-').map(Number)
   const gapDayOfWeek = new Date(y, mo - 1, d).getDay()
@@ -185,6 +219,12 @@ export default function GapResolverPanel({
   }
 
   // ── DB write ──────────────────────────────────────────────────────────────
+  //
+  // The schedule mutation happens here. The SMS notification does NOT — it is
+  // gated behind a separate manager-confirm step (handleNotifySend / handleNotifySkip)
+  // because the manager's click on "Confirm Assignment" is consent to add the
+  // employee to the shift, not consent to text them. See Soteria notify-warning
+  // safety guard (Phase 2).
 
   async function handleAssign(assignment: PendingAssignment) {
     setAssigning(true)
@@ -215,14 +255,89 @@ export default function GapResolverPanel({
       .update({ data: updatedData })
       .eq('id', schedule.id).select().single()
 
-    fetch('/api/notify-assignment', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ employee_id: assignment.employee_id, shift_name: gap.shift_name, role: assignment.role, date: gap.date, start_time, end_time, company_id: companyId }),
-    }).catch(() => {})
+    const savedScheduleRow = (saved as Schedule) ?? { ...schedule, data: updatedData }
 
     setAssigning(false)
-    onResolved((saved as Schedule) ?? { ...schedule, data: updatedData })
+    setSavedSchedule(savedScheduleRow)
+    setNotifyContext({
+      employee_id: assignment.employee_id,
+      employee_name: assignment.employee_name,
+      role: assignment.role,
+      contact_phone: assignment.contact_phone,
+      start_time,
+      end_time,
+    })
+    setSoteraPhase('idle')
+    setSoteraResult(null)
+    setNotifyError(null)
+    setNotifyPhase('confirm')
+  }
+
+  // ── Notify confirm ────────────────────────────────────────────────────────
+
+  function finishAndClose() {
+    const next = savedSchedule
+    setNotifyPhase('idle')
+    setNotifyContext(null)
+    setSavedSchedule(null)
+    if (next) onResolved(next)
+  }
+
+  async function handleNotifySend() {
+    if (!notifyContext || !savedSchedule) return
+    setNotifyPhase('sending')
+    setNotifyError(null)
+    try {
+      const res = await fetch('/api/notify-assignment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employee_id: notifyContext.employee_id,
+          shift_name: gap.shift_name,
+          role: notifyContext.role,
+          date: gap.date,
+          start_time: notifyContext.start_time,
+          end_time: notifyContext.end_time,
+          company_id: companyId,
+        }),
+      })
+      const json = await res.json().catch(() => ({})) as { success?: boolean; message?: string }
+      if (!res.ok || json.success === false) {
+        setNotifyError(json.message ?? `Notification failed (${res.status})`)
+        setNotifyPhase('confirm')
+        return
+      }
+      finishAndClose()
+    } catch (err) {
+      setNotifyError(err instanceof Error ? err.message : 'Network error')
+      setNotifyPhase('confirm')
+    }
+  }
+
+  async function handleNotifySkip() {
+    if (!notifyContext) { finishAndClose(); return }
+    try {
+      await logActivity({
+        supabase,
+        company_id: companyId,
+        action: 'notification_suppressed',
+        entity_type: 'employee',
+        entity_id: notifyContext.employee_id,
+        summary: `Manager declined to notify ${notifyContext.employee_name} about new ${gap.shift_name} assignment on ${gap.date}`,
+        metadata: {
+          would_have_notified: notifyContext.employee_id,
+          would_have_notified_name: notifyContext.employee_name,
+          reason: 'manager_dismissed_confirm',
+          original_trigger: 'gap_resolver_assignment',
+          shift_name: gap.shift_name,
+          role: notifyContext.role,
+          date: gap.date,
+        },
+      })
+    } catch {
+      // Logging failure should not block closing the panel.
+    }
+    finishAndClose()
   }
 
   // ── Search filtering ──────────────────────────────────────────────────────
@@ -273,8 +388,77 @@ export default function GapResolverPanel({
         {/* Body */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
 
+          {/* ── Notify confirm overlay ── */}
+          {notifyPhase !== 'idle' && notifyContext && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{
+                padding: '16px',
+                background: 'var(--bg-surface-2)',
+                border: '1px solid var(--border-default)',
+                borderRadius: 'var(--radius-lg)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                    ✓ Assignment saved
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 10 }}>
+                  Notify <strong style={{ color: 'var(--text-primary)' }}>{notifyContext.employee_name}</strong>{' '}
+                  about this assignment?
+                </div>
+                {notifyContext.contact_phone ? (
+                  <div style={{
+                    padding: '10px 12px',
+                    background: 'var(--bg-surface-1)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-md)',
+                    fontSize: 12,
+                    color: 'var(--text-secondary)',
+                    fontStyle: 'italic',
+                    lineHeight: 1.55,
+                    marginBottom: 14,
+                  }}>
+                    SMS to {notifyContext.contact_phone}: &ldquo;{buildAssignmentSmsPreview({
+                      employee_name: notifyContext.employee_name,
+                      shift_name: gap.shift_name,
+                      role: notifyContext.role,
+                      date: gap.date,
+                      start_time: notifyContext.start_time,
+                      end_time: notifyContext.end_time,
+                    })}&rdquo;
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12, color: '#ca8a04', marginBottom: 14 }}>
+                    No phone number on file for this employee — sending will be skipped server-side.
+                  </div>
+                )}
+                {notifyError && (
+                  <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 10 }}>
+                    {notifyError}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleNotifySkip}
+                    disabled={notifyPhase === 'sending'}
+                  >
+                    Skip notification
+                  </button>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={handleNotifySend}
+                    disabled={notifyPhase === 'sending' || !notifyContext.contact_phone}
+                  >
+                    {notifyPhase === 'sending' ? 'Sending...' : 'Send SMS'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* ── Soteria overlay ── */}
-          {soteraPhase !== 'idle' && (
+          {notifyPhase === 'idle' && soteraPhase !== 'idle' && (
             <div style={{ marginBottom: 20 }}>
               {soteraPhase === 'validating' ? (
                 <div style={{ padding: '20px 16px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
@@ -348,7 +532,7 @@ export default function GapResolverPanel({
                       </div>
                       <button
                         className="btn btn-sm btn-primary"
-                        disabled={soteraPhase !== 'idle'}
+                        disabled={soteraPhase !== 'idle' || notifyPhase !== 'idle'}
                         onClick={() => triggerSoteria({ employee_id: c.id, employee_name: c.name, role: gap.role, contact_phone: c.contact_phone })}
                         style={{ flexShrink: 0 }}
                       >
@@ -424,7 +608,7 @@ export default function GapResolverPanel({
               {/* Submit */}
               <button
                 className="btn btn-secondary btn-sm"
-                disabled={!customEmployee || soteraPhase !== 'idle'}
+                disabled={!customEmployee || soteraPhase !== 'idle' || notifyPhase !== 'idle'}
                 onClick={() => customEmployee && triggerSoteria({ employee_id: customEmployee.id, employee_name: customEmployee.name, role: customRole, contact_phone: null })}
                 style={{ alignSelf: 'flex-start' }}
               >

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createClient as createServerSupabase } from '@/lib/supabase/server'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -17,6 +18,27 @@ export async function POST(req: NextRequest) {
     end_time: string
     company_id: string
   }
+
+  // ── Auth check ──────────────────────────────────────────────────────────
+  // Notifications must always be authorized by a manager in the requesting
+  // company. Without this gate, anyone could spam Twilio with arbitrary
+  // employee assignments. See notify-warning safety guard (Phase 2).
+  const ssr = await createServerSupabase()
+  const { data: { user } } = await ssr.auth.getUser()
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const { data: userRow } = await ssr
+    .from('users')
+    .select('company_id, email')
+    .eq('id', user.id)
+    .single()
+  const userRecord = userRow as { company_id: string; email: string | null } | null
+  if (!userRecord || userRecord.company_id !== company_id) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+  const approvedById = user.id
+  const approvedByEmail = userRecord.email ?? null
 
   // Load employee
   const { data: employee } = await supabase
@@ -56,12 +78,16 @@ export async function POST(req: NextRequest) {
   if (!accountSid || !authToken || !fromNumber) {
     await supabase.from('activity_log').insert({
       company_id,
-      actor: 'system',
+      actor: 'manager',
       action: 'assignment_notification_skipped',
       entity_type: 'employee',
       entity_id: employee_id,
       summary: `SMS notification skipped for ${employee.name} — Twilio not configured`,
-      metadata: { shift_name, role, date },
+      metadata: {
+        shift_name, role, date,
+        approved_by: approvedById,
+        approved_by_email: approvedByEmail,
+      },
     })
     return NextResponse.json({ success: false, message: 'Twilio credentials not configured' })
   }
@@ -88,14 +114,19 @@ export async function POST(req: NextRequest) {
 
   await supabase.from('activity_log').insert({
     company_id,
-    actor: 'system',
+    actor: 'manager',
     action: twilioRes.ok ? 'assignment_notification_sent' : 'assignment_notification_failed',
     entity_type: 'employee',
     entity_id: employee_id,
     summary: twilioRes.ok
       ? `SMS sent to ${employee.name}: ${shift_name} (${role}) on ${date}`
       : `SMS failed for ${employee.name}: ${twilioData.message ?? 'Unknown Twilio error'}`,
-    metadata: { shift_name, role, date, twilio_sid: twilioData.sid ?? null },
+    metadata: {
+      shift_name, role, date,
+      twilio_sid: twilioData.sid ?? null,
+      approved_by: approvedById,
+      approved_by_email: approvedByEmail,
+    },
   })
 
   return NextResponse.json({
