@@ -106,7 +106,7 @@ create table schedules (
   week_end date not null,
   generated_at timestamptz not null default now(),
   generated_by text not null default 'aegis' check (generated_by in ('aegis', 'manager')),
-  status text not null default 'draft' check (status in ('draft', 'published')),
+  status text not null default 'draft' check (status in ('draft', 'published', 'distributed')),
   data jsonb not null default '{}'
 );
 

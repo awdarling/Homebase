@@ -11,16 +11,21 @@ export type ActionType =
   | 'confirm_distribution'
   | 'request_additional_batch'
 
+// Mirrors the live aegis_action_tokens schema (Aegis-side migration 015 +
+// follow-ups). issued_to_* are the manager identity captured at token-mint
+// time; dispatchers use issued_to_user_id for decided_by attribution.
 export type TokenRow = {
   id: string
+  company_id: string | null
   token_hash: string
   action_type: ActionType
   payload: Record<string, unknown>
-  company_id: string | null
-  employee_id: string | null
+  issued_to_email: string | null
+  issued_to_employee_id: string | null
+  issued_to_user_id: string | null
+  issued_at: string
   expires_at: string
   consumed_at: string | null
-  created_at: string
 }
 
 export type VerifyResult =

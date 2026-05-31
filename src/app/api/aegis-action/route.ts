@@ -254,7 +254,7 @@ export async function POST(request: NextRequest) {
   }
 
   const { row } = consumed
-  const dispatch = await dispatchAction(row.action_type, row.payload, supabase)
+  const dispatch = await dispatchAction(row, supabase)
 
   if (!dispatch.ok) {
     return htmlResponse(errorPage('failed', dispatch.message), 500)
