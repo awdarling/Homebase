@@ -33,7 +33,10 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
 
   const pathname = request.nextUrl.pathname
-  const isPublic = pathname.startsWith('/login') || pathname.startsWith('/reset-password')
+  const isPublic =
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/reset-password') ||
+    pathname === '/api/aegis-action'
 
   if (!user && !isPublic) {
     return NextResponse.redirect(new URL('/login', request.url))
