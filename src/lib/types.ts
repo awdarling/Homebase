@@ -273,7 +273,7 @@ export interface Policy {
   policy_key: string
   policy_value: string
   policy_value_json: unknown | null
-  policy_type: 'hours' | 'fairness' | 'eligibility' | 'overtime' | 'custom'
+  policy_type: 'hours' | 'fairness' | 'eligibility' | 'overtime' | 'custom' | 'time_off'
   description: string | null
   created_at: string
   version: number

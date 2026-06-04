@@ -8,6 +8,7 @@ import { categorizePolicy } from '@/lib/types'
 import type { Policy, PolicyCategory } from '@/lib/types'
 import { CATEGORY_LIST, formatPolicySummary } from '@/lib/rules/categories'
 import { removePolicy } from '@/lib/rules/save'
+import TimeOffManagementSection from '@/components/rules/TimeOffManagementSection'
 import WeekStartDayModal from '@/components/rules/WeekStartDayModal'
 import AttributeMixModal from '@/components/rules/AttributeMixModal'
 import VeteranPreferenceModal from '@/components/rules/VeteranPreferenceModal'
@@ -63,6 +64,7 @@ export default function RulesPage() {
 
   const [policiesByCategory, setPoliciesByCategory] =
     useState<Record<PolicyCategory, Policy[]>>(EMPTY_BUCKETS)
+  const [timeOffPolicies, setTimeOffPolicies] = useState<Policy[]>([])
   const [loading, setLoading] = useState(true)
   const [editTarget, setEditTarget] = useState<EditTarget>(null)
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
@@ -93,10 +95,20 @@ export default function RulesPage() {
       conflict_resolution: [],
       legacy: [],
     }
+    const timeOff: Policy[] = []
     for (const p of (data ?? []) as Policy[]) {
+      if (
+        p.policy_type === 'time_off' ||
+        p.policy_key === 'max_consecutive_days_off' ||
+        p.policy_key === 'min_notice_period_days'
+      ) {
+        timeOff.push(p)
+        continue
+      }
       buckets[categorizePolicy(p)].push(p)
     }
     setPoliciesByCategory(buckets)
+    setTimeOffPolicies(timeOff)
     setLoading(false)
   }
 
@@ -156,6 +168,15 @@ export default function RulesPage() {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <TimeOffManagementSection
+          policies={timeOffPolicies}
+          companyId={COMPANY_ID}
+          supabase={supabase}
+          user={user ? { name: user.name, avatar_url: user.avatar_url } : null}
+          isQuria={isQuria}
+          onChanged={fetchPolicies}
+        />
+
         {CATEGORY_LIST.map((cat) => {
           const rows = policiesByCategory[cat.key]
           const showInfo = openEngineEffect === cat.key
