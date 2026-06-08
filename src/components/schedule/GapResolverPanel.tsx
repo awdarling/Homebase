@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { logActivity } from '@/lib/activity'
+import { computeHours } from '@/lib/schedule/hours'
 import type { Schedule, ScheduleGap, ScheduleAssignment } from '@/lib/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -46,12 +47,6 @@ function formatGapDate(d: string) {
   return new Date(y, m - 1, day).toLocaleDateString('en-US', {
     weekday: 'short', month: 'short', day: 'numeric',
   })
-}
-
-function computeHours(start: string, end: string): number {
-  const [sh, sm] = start.split(':').map(Number)
-  const [eh, em] = end.split(':').map(Number)
-  return Math.max(0, ((eh * 60 + em) - (sh * 60 + sm)) / 60)
 }
 
 // Mirrors the server-side template in src/app/api/notify-assignment/route.ts.

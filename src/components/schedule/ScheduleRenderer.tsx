@@ -14,6 +14,7 @@ import {
 } from '@dnd-kit/core'
 import type { Schedule, ScheduleTemplate, ScheduleAssignment, ColumnConfig, RowConfig } from '@/lib/types'
 import { parseYMD, toYMD } from '@/lib/utils/dates'
+import { resolveAssignmentForSlot } from '@/lib/schedule/resolveAssignment'
 
 interface ScheduleRendererProps {
   schedule: Schedule
@@ -522,7 +523,7 @@ function ShiftRowsDayColumns({
         a.date === source.date
       ) {
         moved = true
-        return { ...a, shift_name: targetShift, date: targetDate }
+        return resolveAssignmentForSlot(a, targetShift, targetDate, assignments)
       }
       return a
     })

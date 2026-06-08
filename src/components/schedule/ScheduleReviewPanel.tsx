@@ -2,7 +2,8 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { Schedule, ScheduleAssignment, StaffingReport } from '@/lib/types'
+import { resolveAssignmentForSlot } from '@/lib/schedule/resolveAssignment'
+import type { Schedule, ScheduleAssignment, ShiftType, StaffingReport } from '@/lib/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -189,15 +190,26 @@ export default function ScheduleReviewPanel({
     setPhase('saving')
     setError(null)
     try {
+      const { data: shiftTypesData, error: shiftTypesErr } = await supabase
+        .from('shift_types')
+        .select('name, start_time, end_time')
+        .eq('company_id', companyId)
+      if (shiftTypesErr) throw shiftTypesErr
+      const shiftTypes = (shiftTypesData ?? []) as Pick<ShiftType, 'name' | 'start_time' | 'end_time'>[]
+
+      const normalizedAssignments = pendingAssignments.map(a =>
+        resolveAssignmentForSlot(a, a.shift_name, a.date, pendingAssignments, shiftTypes),
+      )
+
       const remainingUnfilled = (schedule.data?.gaps ?? []).reduce(
         (s, g) => s + Math.max(0, g.required_count - g.filled_count), 0,
       )
       const newReport = await recomputeStaffingReport(
-        supabase, companyId, pendingAssignments, originalAssignments, schedule.staffing_report, remainingUnfilled,
+        supabase, companyId, normalizedAssignments, originalAssignments, schedule.staffing_report, remainingUnfilled,
       )
       const newData = {
         ...(schedule.data ?? { assignments: [], gaps: [], summary: '' }),
-        assignments: pendingAssignments,
+        assignments: normalizedAssignments,
       }
 
       const { data: saved, error: updateErr } = await supabase

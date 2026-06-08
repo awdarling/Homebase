@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { computeHours } from '@/lib/schedule/hours'
 import type {
   Employee,
   Schedule,
@@ -67,12 +68,6 @@ function shortRangeLabel(range: WeekRange): string {
 
 function longRangeLabel(range: WeekRange): string {
   return `${range.days[0].monthDay} – ${range.days[6].monthDay}`
-}
-
-function computeHours(start: string, end: string): number {
-  const [sh, sm] = start.split(':').map(Number)
-  const [eh, em] = end.split(':').map(Number)
-  return Math.max(0, ((eh * 60 + em) - (sh * 60 + sm)) / 60)
 }
 
 function formatCurrency(n: number): string {
