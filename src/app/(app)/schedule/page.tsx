@@ -10,6 +10,7 @@ import { logActivity as logActivityFn } from '@/lib/activity'
 import ScheduleRenderer from '@/components/schedule/ScheduleRenderer'
 import ScheduleStats from '@/components/schedule/ScheduleStats'
 import GapResolverPanel from '@/components/schedule/GapResolverPanel'
+import CoverageFlags from '@/components/schedule/CoverageFlags'
 import TemplateEditorPanel from '@/components/schedule/TemplateEditorPanel'
 import ScheduleReviewPanel, { type ScheduleChange } from '@/components/schedule/ScheduleReviewPanel'
 import AddShiftPanel from '@/components/schedule/AddShiftPanel'
@@ -473,6 +474,9 @@ function HistoryReportDetail({ schedule }: { schedule: Schedule }) {
           </div>
         </div>
       )}
+
+      {/* Concurrent sex-coverage flags — manager review items */}
+      <CoverageFlags flaggedIssues={schedule.data?.flagged_issues} />
 
       {/* Top + Bottom contributors */}
       {report && (report.top_contributors.length > 0 || (report.bottom_contributors?.length ?? 0) > 0) && (
@@ -1382,6 +1386,11 @@ export default function SchedulePage() {
                 gaps={currentGaps}
                 onResolve={gap => setResolveTarget({ gap, scheduleId: currentSchedule.id })}
               />
+            )}
+
+            {/* Concurrent sex-coverage flags — manager review items */}
+            {!isEditingCurrent && (
+              <CoverageFlags flaggedIssues={currentSchedule.data?.flagged_issues} />
             )}
 
             {template && (
