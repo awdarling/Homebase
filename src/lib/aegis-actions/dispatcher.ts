@@ -1,17 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { TokenRow } from './tokens'
-import { postToAegisInternal, AegisInternalError, AegisInternalConfigError } from '@/lib/aegis-internal'
+import { postToAegisInternal, AegisInternalConfigError } from '@/lib/aegis-internal'
+import { decideTimeOffRequest } from '@/lib/time-off/decide'
 
 export type DispatchResult = { ok: boolean; message: string }
 
 // ── Aegis response shapes ────────────────────────────────────────────────────
 // These mirror what the Aegis /internal/* endpoints return. Kept narrow on
 // purpose — any extra fields the Aegis side adds are ignored.
-
-type NotifyToDecisionResponse = {
-  channel?: 'sms' | 'email' | 'none'
-  sent_to?: string | null
-}
 
 type DistributeScheduleResponse = {
   sent?: number
@@ -110,107 +106,26 @@ async function handleTimeOffDecision(
   const employee_name = strOrNull(payload.employee_name) ?? 'employee'
   const start_date = strOrNull(payload.start_date)
   const end_date = strOrNull(payload.end_date)
-  const dateRange = formatDateRange(start_date, end_date)
 
   if (!time_off_request_id) {
     return { ok: false, message: 'This link is missing the time-off request id. Approve from Homebase instead.' }
   }
 
-  // Guarded update: only succeeds if still pending. Avoids overwriting a
-  // prior decision (e.g., manager double-clicked Approve then Deny links).
-  const { data: updated, error: updateErr } = await supabase
-    .from('time_off_requests')
-    .update({
-      status: decision,
-      decided_at: new Date().toISOString(),
-      decided_by: row.issued_to_user_id,
-    })
-    .eq('id', time_off_request_id)
-    .eq('status', 'pending')
-    .select('id, status')
-    .maybeSingle()
-
-  if (updateErr) {
-    return { ok: false, message: `Could not record decision: ${updateErr.message}` }
-  }
-
-  if (!updated) {
-    // Either the row doesn't exist or it was already decided. Re-read to find out.
-    const { data: existing } = await supabase
-      .from('time_off_requests')
-      .select('status')
-      .eq('id', time_off_request_id)
-      .maybeSingle()
-    if (!existing) {
-      return { ok: false, message: 'Time-off request not found. It may have been deleted.' }
-    }
-    const status = (existing as { status: string }).status
-    return {
-      ok: false,
-      message: `This request was already ${status} — no change made. Open Homebase to see the current state.`,
-    }
-  }
-
-  const actionLabel = decision === 'approved' ? 'Approved' : 'Denied'
-  await logDecision(supabase, {
-    company_id: row.company_id,
-    action: `time_off_${decision}`,
-    entity_type: 'time_off_request',
-    entity_id: time_off_request_id,
-    summary: `${actionLabel} time-off for ${employee_name}: ${dateRange}`,
-    metadata: {
-      decided_by: row.issued_to_user_id,
-      decided_by_email: row.issued_to_email,
-      source: 'magic_link',
-      decision,
-      start_date,
-      end_date,
-    },
+  // Delegate to the shared helper so the magic-link path and the in-tab
+  // Homebase path record decisions identically (guarded update + decided_by,
+  // activity log, fire-and-tolerate employee notification, manager message).
+  const result = await decideTimeOffRequest({
+    supabase,
+    timeOffRequestId: time_off_request_id,
+    decision,
+    companyId: row.company_id,
+    decidedBy: { userId: row.issued_to_user_id, email: row.issued_to_email },
+    source: 'magic_link',
+    employeeName: employee_name,
+    startDate: start_date,
+    endDate: end_date,
   })
-
-  // Fire downstream Aegis workflow. If it fails, the DB decision stands —
-  // the manager sees a partial-success message and a delivery-failed activity
-  // log entry is written so they can verify later.
-  try {
-    const resp = await postToAegisInternal<NotifyToDecisionResponse>(
-      '/internal/notify-to-decision',
-      { time_off_request_id, decision },
-    )
-    const channel = resp.channel && resp.channel !== 'none' ? resp.channel : null
-    const verb = decision === 'approved' ? 'approved' : 'denied'
-    const message = channel
-      ? `Time-off ${verb} for ${employee_name}. They've been notified via ${channel}.`
-      : `Time-off ${verb} for ${employee_name}. No notification channel was available — they'll see the update in Homebase.`
-    return { ok: true, message }
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err)
-    await logAegisDeliveryFailure(supabase, {
-      company_id: row.company_id,
-      entity_type: 'time_off_request',
-      entity_id: time_off_request_id,
-      aegis_endpoint: '/internal/notify-to-decision',
-      error: errMsg,
-      issued_to_user_id: row.issued_to_user_id,
-      issued_to_email: row.issued_to_email,
-    })
-    const verb = decision === 'approved' ? 'approved' : 'denied'
-    if (err instanceof AegisInternalConfigError) {
-      return {
-        ok: true,
-        message: `Time-off ${verb} for ${employee_name}. Notification delivery is not configured yet — please verify in Homebase.`,
-      }
-    }
-    if (err instanceof AegisInternalError) {
-      return {
-        ok: true,
-        message: `Time-off ${verb} for ${employee_name}. Could not deliver notification — please verify in Homebase.`,
-      }
-    }
-    return {
-      ok: true,
-      message: `Time-off ${verb} for ${employee_name}. Could not deliver notification — please verify in Homebase.`,
-    }
-  }
+  return { ok: result.ok, message: result.message }
 }
 
 // ── Schedule distribution ────────────────────────────────────────────────────

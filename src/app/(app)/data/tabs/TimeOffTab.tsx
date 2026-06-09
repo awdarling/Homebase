@@ -168,6 +168,9 @@ export default function TimeOffTab() {
   const [form, setForm] = useState({ employee_id: '', start_date: '', end_date: '', reason: '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // Manager-facing toast for approve/deny results (incl. employee-notify status).
+  const [notice, setNotice] = useState('')
+  const [decidingId, setDecidingId] = useState<string | null>(null)
 
   // ── Time-off mode + type ──────────────────────────────────────────────────
   const [toMode, setToMode] = useState<'single' | 'multi'>('single')
@@ -227,17 +230,29 @@ export default function TimeOffTab() {
     })
   }
 
+  // Routes through POST /api/time-off-decision so the in-tab path is identical
+  // to the email magic-link path: guarded update + decided_by (from the server
+  // auth cookie), activity log, and the employee notification — none of which a
+  // client component can do directly. The returned message (incl. how the
+  // employee was notified) surfaces as a toast.
   async function handleDecision(req: TORequest, decision: 'approved' | 'denied') {
-    await supabase
-      .from('time_off_requests')
-      .update({ status: decision, decided_at: new Date().toISOString() })
-      .eq('id', req.id)
-    await logActivity(
-      `time_off_${decision}`,
-      `${decision.charAt(0).toUpperCase() + decision.slice(1)} time-off for ${req.employee?.name ?? 'employee'}: ${formatDate(req.start_date)} – ${formatDate(req.end_date)}`,
-      req.id
-    )
-    fetchData()
+    if (decidingId) return
+    setDecidingId(req.id)
+    setNotice('')
+    try {
+      const res = await fetch('/api/time-off-decision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeOffRequestId: req.id, decision }),
+      })
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; message?: string } | null
+      setNotice(data?.message ?? (res.ok ? 'Decision saved.' : 'Something went wrong recording that decision.'))
+    } catch {
+      setNotice('Could not reach the server — the decision was not recorded. Please try again.')
+    } finally {
+      setDecidingId(null)
+      fetchData()
+    }
   }
 
   async function handleDelete(req: TORequest) {
@@ -470,6 +485,39 @@ export default function TimeOffTab() {
 
   return (
     <div>
+      {notice && (
+        <div
+          role="status"
+          style={{
+            marginBottom: 12,
+            padding: '10px 14px',
+            borderRadius: 'var(--radius-lg)',
+            background: 'var(--bg-surface-1)',
+            border: '1px solid var(--border-default)',
+            color: 'var(--text-primary)',
+            fontSize: 13,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+          }}
+        >
+          <span style={{ flex: 1 }}>{notice}</span>
+          <button
+            onClick={() => setNotice('')}
+            aria-label="Dismiss"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              fontSize: 16,
+              lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
         {(['all', 'pending', 'approved', 'denied'] as const).map((f) => (
           <button
@@ -547,21 +595,27 @@ export default function TimeOffTab() {
                         <button
                           className="btn btn-sm"
                           onClick={() => handleDecision(req, 'approved')}
+                          disabled={decidingId !== null}
                           style={{
                             background: 'var(--status-ready-bg)',
                             color: 'var(--status-ready-text)',
                             border: '1px solid var(--status-ready-border)',
+                            opacity: decidingId !== null ? 0.6 : 1,
+                            cursor: decidingId !== null ? 'default' : 'pointer',
                           }}
                         >
-                          Approve
+                          {decidingId === req.id ? 'Saving…' : 'Approve'}
                         </button>
                         <button
                           className="btn btn-sm"
                           onClick={() => handleDecision(req, 'denied')}
+                          disabled={decidingId !== null}
                           style={{
                             background: 'var(--status-blocked-bg)',
                             color: 'var(--status-blocked-text)',
                             border: '1px solid var(--status-blocked-border)',
+                            opacity: decidingId !== null ? 0.6 : 1,
+                            cursor: decidingId !== null ? 'default' : 'pointer',
                           }}
                         >
                           Deny
