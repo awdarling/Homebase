@@ -14,6 +14,9 @@ Homebase is Quria Solutions' manager-facing control platform: Next.js 14 (App Ro
 - Deep reference — single source of truth lives in the Aegis repo (read the relevant one before working in that area): `~/Desktop/Aegis/docs/03_Homebase_Reference.md`, `~/Desktop/Aegis/docs/02_Database_Schema.md`, `~/Desktop/Aegis/docs/06_Supplemental_Reference.md`.
 - Live trackers (in the Aegis repo): `~/Desktop/Aegis/EMAIL_WORKFLOWS_TRACKER.md`, `~/Desktop/Aegis/SCHEMA_DRIFT_LOG.md`, `~/Desktop/Aegis/TEST_IDENTITIES.md`.
 
+## Design north-star (self-align to this)
+The post-sprint direction is the **Forward Build Sequence (Phases 1–4)** in `~/Desktop/Aegis/DEV_ROADMAP.md`: (1) harden & fix the live product, (2) complete the comms loop, (3) configurable correct rules, (4) experience & leverage. **End-state vision:** Homebase is the manager command center — data + rules that actually drive the engine (fairness/conflicts/coverage/doubles wired), schedules that persist and download cleanly, one-click TO/availability approval, coverage flags with suggested swaps, and natural-language admin via Soteria — paired with Aegis as a conversational AI assistant manager running the employee side over email. Thesis: config-over-code multi-tenancy, a deterministic auditable engine, flag-don't-force with humans in final authority — secure enough to sell. Full statement in `~/Desktop/Aegis/docs/01_Business_Overview.md` §1.5.
+
 ## Hard rules (do not violate)
 - **Diagnose before fixing.** Explain the plan in plain English BEFORE editing. No blind fixes.
 - **Supabase:** anon key client-side (respects RLS), service-role server-side. **RLS gotcha:** a missing `public.users` row, or `users.id` not matching `auth.users.id`, returns empty everywhere → infinite loading.
@@ -28,15 +31,15 @@ Homebase is Quria Solutions' manager-facing control platform: Next.js 14 (App Ro
 
 ## Key paths
 - Pages: `src/app/(app)/` (home, data, rules, schedule, activity, access, billing).
-- **Schedule editor: `src/app/(app)/schedule/page.tsx`** — SCHED-EDIT-1 lives here (manual edits not persisting to `schedules.data.assignments`).
-- Data tabs: `src/app/(app)/data/tabs/` (Employees, Time Off, Shifts, Conflicts, …). The in-tab TO approve path is the S3 sprint target.
+- **Schedule editor: `src/app/(app)/schedule/page.tsx`** — SCHED-EDIT-1 fixed here (`f28cb30`): manual moves now persist via the shared `src/lib/schedule/resolveAssignment.ts` + `hours.ts`. `src/components/schedule/CoverageFlags.tsx` renders `unsatisfied_sex_coverage` flags (mounted in three views here: HistoryReportDetail, current-week, UpcomingCard preview).
+- Data tabs: `src/app/(app)/data/tabs/` (Employees, Time Off, Shifts, Conflicts, …). The in-tab TO approve path (S3) now goes through `POST /api/time-off-decision` → shared `src/lib/time-off/decide.ts` (sets `decided_by`, notifies employee, manager toast).
 - Soteria: `src/app/api/soteria/{route,execute,validate-schedule,validate-assignment}`.
 - Stripe: `src/app/api/stripe/{route,webhook}` (amounts in cents; live vs test mode).
 - Aegis bridge: `src/app/api/notify-day-closure`. Hooks: `src/lib/hooks/{useCompany,useQuria}.ts`.
 
 ## Deploy & danger zones
 - Push to `main` → Vercel auto-deploys. After env-var changes, redeploy manually. Read the diff before pushing.
-- **SCHED-EDIT-1 is OPEN:** a manually edited schedule must NOT be distributed (distribute reads stale hours).
+- **SCHED-EDIT-1 is RESOLVED** (`f28cb30`, live-verified 2026-06-09): manual moves persist corrected hours to `schedules.data.assignments`. (Live `distribute` against real Watermark data is still gated by DELIV-1 + manager coordination — the data axis is now correct, but the fan-out rules stand.)
 - Schedule delete is quria_admin/owner only and permanent.
 - Never print or commit secrets (Supabase, Stripe, Anthropic keys live in Vercel env vars).
 
