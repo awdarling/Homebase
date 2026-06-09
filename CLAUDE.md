@@ -2,6 +2,12 @@
 
 Homebase is Quria Solutions' manager-facing control platform: Next.js 14 (App Router) on Vercel, TypeScript, Supabase. It's where managers structure data, set rules, review AI output, and keep oversight; the **Soteria** assistant is embedded. **Aegis** (separate repo, `~/Desktop/Aegis`) is the external AI manager. Live client: Watermark Country Club (launched June 5, 2026).
 
+## Session protocol (do this every session — non-negotiable)
+1. **At session start, read first:** `~/Desktop/Aegis/DEV_ROADMAP.md` (live sprint + Logging Protocol) and the trackers — `~/Desktop/Aegis/EMAIL_WORKFLOWS_TRACKER.md`, `~/Desktop/Aegis/SCHEMA_DRIFT_LOG.md`, `~/Desktop/Aegis/TEST_IDENTITIES.md`. Self-brief from these before touching anything.
+2. **Fix-now bias:** if a fix is in scope and safe — diagnosed, surgical, `tsc`-clean, and not a production write/push/deploy — do it this session. Don't log it for "later".
+3. **Defer only with a logged reason:** when a fix is unsafe to do now (rippling/large change, needs Alexander's decision, or writes production / deploys), say why in plain English and log it in the right doc. Never silently drop it, and never sweep a large change blind.
+4. **At session end, write it all back:** every finding, decision, new bug, and schema surprise goes into the right doc — roadmap status + Session Log entry, the trackers, `~/Desktop/Aegis/SCHEMA_DRIFT_LOG.md`, and the `~/Desktop/Aegis/docs/` reference when behavior changed. **If it wasn't logged, it isn't done.**
+
 ## Read before you act
 @~/Desktop/Aegis/DEV_ROADMAP.md
 - The roadmap is the single shared sprint/progress doc (it lives in the Aegis repo; imported here by absolute path so both repos see the same live state — you'll approve the cross-repo import once). Treat its Current Sprint as the priority.
@@ -11,10 +17,11 @@ Homebase is Quria Solutions' manager-facing control platform: Next.js 14 (App Ro
 ## Hard rules (do not violate)
 - **Diagnose before fixing.** Explain the plan in plain English BEFORE editing. No blind fixes.
 - **Supabase:** anon key client-side (respects RLS), service-role server-side. **RLS gotcha:** a missing `public.users` row, or `users.id` not matching `auth.users.id`, returns empty everywhere → infinite loading.
-- **Verify column names against `information_schema` before writes.** `src/db/types.ts` is INCOMPLETE (omits `employees.sex`, `shift_requirements.accepted_roles`). Log new findings in `SCHEMA_DRIFT_LOG.md`.
+- **Verify column names against `information_schema` before writes.** Homebase's types live in `src/lib/types.ts` (there is NO `src/db/types.ts` in this repo). Don't trust types as the schema of record — the Aegis engine's `src/db/types.ts` notably omits `employees.sex` and `shift_requirements.accepted_roles`. Log new findings in `SCHEMA_DRIFT_LOG.md`.
 - **Dates:** NEVER `new Date('YYYY-MM-DD')` for display (UTC-midnight shifts the day back). Use `split('-')` + `new Date(y, m-1, d)`.
 - **Soteria:** exactly ONE `<action>` per response; keep `max_tokens` 8192 (truncation silently breaks the parser). `add_conflict` severity is `'avoid'`/`'never'`; `add_shift` must set `accepted_roles` (NOT NULL, mirror `role`).
 - **No orphan outputs:** every AI or manual change lands as valid, visible Homebase state within the constraints.
+- **Configuration over code:** the engine/platform is generic and multi-tenant; client behavior is driven by their Supabase data + the constraint vocabulary, never by client-specific code. Accommodating a client is a data/config operation, not an engine change. Per-client rules are toggleable (e.g. sex_coverage on/off). If a client needs something the vocabulary can't express, that's a product conversation — never a quiet engine patch.
 - `AEGIS_URL` must be the Railway prod URL; outbound links point to `homebase-nine-phi.vercel.app` (NEVER the dead `homebase-liart`).
 - Compile clean: `npx tsc --noEmit`, zero errors. **Show the full diff before any push.**
 
