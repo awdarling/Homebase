@@ -928,6 +928,13 @@ function UpcomingCard({
             <CurrentScheduleGaps gaps={gaps} onResolve={onResolveGap} />
           )}
 
+          {/* Concurrent sex-coverage flags — manager review items (this is the
+              upcoming-week preview the manager reviews before distributing; the
+              flag was previously only in the current-week view + history detail) */}
+          {!isEditing && (
+            <CoverageFlags flaggedIssues={schedule.data?.flagged_issues} />
+          )}
+
           {/* Renderer */}
           <ScheduleRenderer
             schedule={schedule}
