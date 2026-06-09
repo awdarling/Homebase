@@ -202,19 +202,47 @@ export interface ScheduleGap {
   required_count: number
   filled_count: number
   reason: string
+  // Aegis writes these into schedules.data.gaps but Homebase's type historically
+  // omitted them (drift). Optional so existing readers are unaffected; present so
+  // the manager-facing gap reason can be surfaced. NOTE: the engine also writes
+  // `per_employee_dispositions: EmployeeDisposition[]` — intentionally NOT modelled
+  // here yet (needs the EmployeeDisposition type ported from Aegis; see PART B report).
+  description?: string
+  start_time?: string
+  end_time?: string
 }
 
-export interface FlaggedIssue {
-  type: string
-  severity: 'info' | 'warning' | 'error'
-  message: string
-  metadata?: Record<string, unknown>
-}
+// Mirrors Aegis's `FlaggedIssue` (src/workflows/schedule-build.ts) — the engine
+// is the producer; this is the consumer copy. Discriminated union: the
+// shift-scoped variant carries `shift_name`; the concurrent-coverage variant has
+// NO shift_name and carries its time window in metadata (a coverage gap can
+// straddle shifts). Keep in lockstep with the Aegis definition.
+export type FlaggedIssue =
+  | {
+      type: 'unsatisfied_attribute_mix'
+      date: string
+      shift_name: string
+      description: string
+      metadata: Record<string, unknown>
+    }
+  | {
+      type: 'unsatisfied_sex_coverage'
+      date: string
+      description: string
+      metadata: {
+        time_window: { start: string; end: string }
+        missing_sex: string
+        on_duty: Array<{ name: string; role: string; sex: string }>
+      }
+    }
 
 export interface ScheduleData {
   assignments: ScheduleAssignment[]
   gaps: ScheduleGap[]
-  summary: string
+  // Optional: the Aegis engine writes data as {assignments, gaps, flagged_issues?}
+  // and does NOT populate `summary` — only Homebase's Soteria-review save path does.
+  // Made optional to match reality (the lone reader already null-guards).
+  summary?: string
   closed_dates?: string[]
   flagged_issues?: FlaggedIssue[]
 }
