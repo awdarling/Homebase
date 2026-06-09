@@ -23,6 +23,7 @@ Homebase is Quria Solutions' manager-facing control platform: Next.js 14 (App Ro
 - **No orphan outputs:** every AI or manual change lands as valid, visible Homebase state within the constraints.
 - **Configuration over code:** the engine/platform is generic and multi-tenant; client behavior is driven by their Supabase data + the constraint vocabulary, never by client-specific code. Accommodating a client is a data/config operation, not an engine change. Per-client rules are toggleable (e.g. sex_coverage on/off). If a client needs something the vocabulary can't express, that's a product conversation — never a quiet engine patch.
 - `AEGIS_URL` must be the Railway prod URL; outbound links point to `homebase-nine-phi.vercel.app` (NEVER the dead `homebase-liart`).
+- **No secrets or sensitive identifiers in committed files — reference docs included.** Names and architecture only. Real credential VALUES (API keys, auth tokens, Supabase/Stripe keys) AND sensitive identifiers (Twilio Account/Messaging-Service SIDs, project refs) never go in any tracked file. Use placeholders (`AC••• — see Vercel env / password manager`); real values live in env vars / the password manager. GitHub push-protection will block the push if you violate this (it happened in Aegis — see the 2026-06-09 Session Log in `~/Desktop/Aegis/DEV_ROADMAP.md`).
 - Compile clean: `npx tsc --noEmit`, zero errors. **Show the full diff before any push.**
 
 ## Key paths
