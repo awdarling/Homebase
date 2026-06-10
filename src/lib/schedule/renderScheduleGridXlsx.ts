@@ -1,62 +1,85 @@
-import * as XLSX from 'xlsx'
-import type { ScheduleGrid } from './buildScheduleGrid'
+import ExcelJS from 'exceljs'
+import type { ScheduleGrid, GridCell, GridColumn } from './buildScheduleGrid'
 
-// Note on styling: the SheetJS community build does not write cell styles
-// (fills/fonts) into the produced .xlsx. We still attach `s` style hints —
-// any reader that does honor them (the paid xlsx-style fork, Excel-side
-// conditional formatting workflows) will pick them up — but the visual
-// distinction we rely on for unfilled / closed cells is the CELL TEXT
-// itself (e.g. "UNFILLED — Lifeguard", "CLOSED — Memorial Day"), not the
-// fill colour. Borders and merges DO render in the community build.
+// Why exceljs and not the SheetJS community build:
+// the community `xlsx` build silently drops cell styles (fills/fonts) when it
+// writes the .xlsx — so the gap-red / closed-grey / dark headers we attach
+// never reached the file, and the only visual signal was the cell TEXT. exceljs
+// writes real fills, fonts, borders, merges, frozen panes, column widths, and
+// row heights, so the downloaded sheet now looks like the in-app grid. The cell
+// TEXT still carries the meaning ("UNFILLED — Lifeguard", "CLOSED — …") so the
+// sheet is legible even in monochrome.
+//
+// This renderer walks the SAME `ScheduleGrid` that the print/PDF HTML renderer
+// walks (see buildScheduleGrid.ts), so the two downloads stay in lockstep on
+// shifts, roles, employee names, gaps and closures.
 
-const HDR_CORNER_STYLE = {
-  fill: { patternType: 'solid', fgColor: { rgb: '1A1A2E' } },
-  font: { color: { rgb: 'FFFFFF' }, bold: true, sz: 12 },
-  alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
+// ── Palette (ARGB; the leading FF is the alpha/opacity byte exceljs expects) ──
+const C = {
+  headerDark: 'FF1A1A2E',
+  headerDay: 'FF2A2A4E',
+  shiftLabel: 'FFF0F0F4',
+  filled: 'FFF4F4F8',
+  empty: 'FFFFFFFF',
+  gapFill: 'FFFDECEC',
+  gapText: 'FFB91C1C',
+  closedFill: 'FFEEEEEE',
+  closedText: 'FF666666',
+  white: 'FFFFFFFF',
+  ink: 'FF1A1A2E',
+  muted: 'FF666666',
+  gridline: 'FFDDDDDD',
+} as const
+
+interface CellStyle {
+  fill?: string
+  fontColor?: string
+  bold?: boolean
+  italic?: boolean
+  size?: number
+  hAlign?: 'left' | 'center' | 'right'
+  vAlign?: 'top' | 'middle' | 'bottom'
+  border?: boolean
 }
 
-const HDR_DAY_STYLE = {
-  fill: { patternType: 'solid', fgColor: { rgb: '2A2A4E' } },
-  font: { color: { rgb: 'FFFFFF' }, bold: true, sz: 11 },
-  alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
+function thin(): Partial<ExcelJS.Border> {
+  return { style: 'thin', color: { argb: C.gridline } }
 }
 
-const SHIFT_LABEL_STYLE = {
-  fill: { patternType: 'solid', fgColor: { rgb: 'F0F0F4' } },
-  font: { color: { rgb: '1A1A2E' }, bold: true, sz: 10 },
-  alignment: { vertical: 'center', horizontal: 'left', wrapText: true },
+function applyStyle(cell: ExcelJS.Cell, s: CellStyle): void {
+  if (s.fill) {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: s.fill } }
+  }
+  cell.font = {
+    color: { argb: s.fontColor ?? C.ink },
+    bold: s.bold ?? false,
+    italic: s.italic ?? false,
+    size: s.size ?? 10,
+  }
+  cell.alignment = {
+    vertical: s.vAlign ?? 'top',
+    horizontal: s.hAlign ?? 'left',
+    wrapText: true,
+  }
+  if (s.border) {
+    cell.border = { top: thin(), left: thin(), bottom: thin(), right: thin() }
+  }
 }
 
-const FILLED_STYLE = {
-  fill: { patternType: 'solid', fgColor: { rgb: 'F4F4F8' } },
-  font: { color: { rgb: '1A1A2E' }, sz: 10 },
-  alignment: { vertical: 'top', horizontal: 'left', wrapText: true },
-}
+const STYLE = {
+  title: { fill: C.headerDark, fontColor: C.white, bold: true, size: 12, hAlign: 'center', vAlign: 'middle' } as CellStyle,
+  dayHeader: { fill: C.headerDay, fontColor: C.white, bold: true, size: 11, hAlign: 'center', vAlign: 'middle', border: true } as CellStyle,
+  cornerHeader: { fill: C.headerDark, fontColor: C.white, bold: true, size: 11, hAlign: 'center', vAlign: 'middle', border: true } as CellStyle,
+  shiftLabel: { fill: C.shiftLabel, fontColor: C.ink, bold: true, size: 10, hAlign: 'left', vAlign: 'middle', border: true } as CellStyle,
+  filled: { fill: C.filled, fontColor: C.ink, size: 10, hAlign: 'left', vAlign: 'top', border: true } as CellStyle,
+  empty: { fill: C.empty, hAlign: 'left', vAlign: 'top', border: true } as CellStyle,
+  gap: { fill: C.gapFill, fontColor: C.gapText, bold: true, size: 10, hAlign: 'left', vAlign: 'top', border: true } as CellStyle,
+  closed: { fill: C.closedFill, fontColor: C.closedText, italic: true, size: 10, hAlign: 'center', vAlign: 'middle', border: true } as CellStyle,
+  footer: { fontColor: C.muted, italic: true, size: 9, hAlign: 'left', vAlign: 'middle' } as CellStyle,
+} as const
 
-const EMPTY_STYLE = {
-  fill: { patternType: 'solid', fgColor: { rgb: 'FFFFFF' } },
-  alignment: { vertical: 'top', horizontal: 'left', wrapText: true },
-}
-
-const GAP_STYLE = {
-  fill: { patternType: 'solid', fgColor: { rgb: 'FDECEC' } },
-  font: { color: { rgb: 'B91C1C' }, bold: true, sz: 10 },
-  alignment: { vertical: 'top', horizontal: 'left', wrapText: true },
-}
-
-const CLOSED_STYLE = {
-  fill: { patternType: 'solid', fgColor: { rgb: 'EEEEEE' } },
-  font: { color: { rgb: '666666' }, italic: true, sz: 10 },
-  alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
-}
-
-const FOOTER_STYLE = {
-  font: { color: { rgb: '666666' }, sz: 9, italic: true },
-  alignment: { vertical: 'center', horizontal: 'left' },
-}
-
-function cellTextForGrid(cell: import('./buildScheduleGrid').GridCell, gapRoleLabel: (role: string) => string): string {
-  if (cell.kind === 'closed') return ''  // closed cells render via merge; only the top cell shows text
+function cellTextForGrid(cell: GridCell, gapRoleLabel: (role: string) => string): string {
+  if (cell.kind === 'closed') return '' // closed cells render via merge; only the top cell shows text
   if (cell.kind === 'empty') return ''
   const lines: string[] = [...cell.employeeDisplayNames]
   if (cell.kind === 'gap' || cell.kind === 'partial') {
@@ -65,151 +88,109 @@ function cellTextForGrid(cell: import('./buildScheduleGrid').GridCell, gapRoleLa
   return lines.join('\n')
 }
 
-// Layout:
+// Layout (1-indexed sheet rows):
 //   Row 1: company name + week range (merged across all columns)
 //   Row 2: empty spacer
-//   Row 3: corner cell + day-of-week headers (with date subscript)
-//   Row 4..: one row per visible shift; col 0 is the shift label
-//   Final row: generated-at timestamp + "Aegis" footer
-export function renderScheduleGridXlsx(grid: ScheduleGrid): Buffer {
+//   Row 3: corner "Shift" cell + day-of-week headers (with date subscript)
+//   Row 4..: one row per visible shift; col A is the shift label
+//   Final row: generated-at timestamp + "Aegis" footer (merged)
+export async function renderScheduleGridXlsx(grid: ScheduleGrid): Promise<Buffer> {
   const totalCols = 1 + grid.columns.length
 
-  type Cell = { v: string; s?: Record<string, unknown> }
-  const rows: Cell[][] = []
+  const wb = new ExcelJS.Workbook()
+  wb.creator = 'Aegis'
+  wb.created = new Date(grid.generatedAt)
+  const ws = wb.addWorksheet('Schedule', {
+    views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }],
+  })
 
-  // Title row
-  const titleRow: Cell[] = Array.from({ length: totalCols }, () => ({ v: '', s: HDR_CORNER_STYLE }))
-  titleRow[0] = { v: `${grid.companyName} — Week of ${grid.weekRangeLabel}`, s: HDR_CORNER_STYLE }
-  rows.push(titleRow)
+  // Column widths: shift label wider, day columns ~100px.
+  ws.getColumn(1).width = 18
+  for (let c = 2; c <= totalCols; c++) ws.getColumn(c).width = 16
 
-  // Spacer
-  rows.push(Array.from({ length: totalCols }, () => ({ v: '' })))
+  // ── Row 1: title ──
+  const titleRow = ws.addRow([`${grid.companyName} — Week of ${grid.weekRangeLabel}`, ...Array(totalCols - 1).fill('')])
+  titleRow.height = 28
+  applyStyle(titleRow.getCell(1), STYLE.title)
+  ws.mergeCells(1, 1, 1, totalCols)
 
-  // Day headers
-  const headerRow: Cell[] = [{ v: 'Shift', s: HDR_CORNER_STYLE }]
-  for (const col of grid.columns) {
-    headerRow.push({ v: `${col.dayLabel}\n${col.shortDate}`, s: HDR_DAY_STYLE })
-  }
-  rows.push(headerRow)
+  // ── Row 2: spacer ──
+  const spacer = ws.addRow(Array(totalCols).fill(''))
+  spacer.height = 8
 
-  // Shift rows
-  const merges: XLSX.Range[] = []
-  // Title merge spans the whole title row.
-  merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: totalCols - 1 } })
+  // ── Row 3: day headers ──
+  const headerVals = ['Shift', ...grid.columns.map(col => `${col.dayLabel}\n${col.shortDate}`)]
+  const headerRow = ws.addRow(headerVals)
+  headerRow.height = 32
+  applyStyle(headerRow.getCell(1), STYLE.cornerHeader)
+  grid.columns.forEach((_, i) => applyStyle(headerRow.getCell(i + 2), STYLE.dayHeader))
 
-  const SHIFT_ROW_OFFSET = 3  // 0-indexed row where shift data starts
-
-  // We need to detect contiguous closed cells per column so we can vertically
-  // merge them. The simplest case: a whole column is closed (every cell in
-  // the column has kind === 'closed'). For now we handle that case — partial
-  // closures aren't a real-world scenario yet.
-  for (let rIdx = 0; rIdx < grid.rows.length; rIdx++) {
-    const row = grid.rows[rIdx]
-    const sheetRowIdx = SHIFT_ROW_OFFSET + rIdx
-    const shiftLabelText = row.meta ? `${row.label}\n${row.meta}` : row.label
-    const xlsxRow: Cell[] = [{ v: shiftLabelText, s: SHIFT_LABEL_STYLE }]
-    for (const cell of row.cells) {
-      let style: Record<string, unknown>
-      let text: string
+  // ── Shift rows ──
+  const SHIFT_FIRST_SHEET_ROW = 4 // 1-indexed row of the first shift row
+  grid.rows.forEach((row, rIdx) => {
+    const labelText = row.meta ? `${row.label}\n${row.meta}` : row.label
+    const values: string[] = [labelText]
+    for (let cIdx = 0; cIdx < row.cells.length; cIdx++) {
+      const cell = row.cells[cIdx]
       switch (cell.kind) {
         case 'closed':
-          style = CLOSED_STYLE
-          // Top row gets the label; subsequent rows are blanked and will be
-          // hidden under the vertical merge.
-          text = rIdx === 0 ? closureCellLabel(grid.columns[xlsxRow.length - 1]) : ''
+          // Only the first (top) shift row shows the closure label; lower rows
+          // are blank and hidden under the vertical merge.
+          values.push(rIdx === 0 ? closureCellLabel(grid.columns[cIdx]) : '')
           break
         case 'gap':
-          style = GAP_STYLE
-          text = cellTextForGrid(cell, role => `UNFILLED — ${role}`.trim())
-          break
         case 'partial':
-          style = GAP_STYLE
-          text = cellTextForGrid(cell, role => `UNFILLED — ${role}`.trim())
+          values.push(cellTextForGrid(cell, role => `UNFILLED — ${role}`.trim()))
           break
         case 'filled':
-          style = FILLED_STYLE
-          text = cellTextForGrid(cell, () => '')
+          values.push(cellTextForGrid(cell, () => ''))
           break
         case 'empty':
         default:
-          style = EMPTY_STYLE
-          text = ''
+          values.push('')
           break
       }
-      xlsxRow.push({ v: text, s: style })
     }
-    rows.push(xlsxRow)
-  }
+    const xlsxRow = ws.addRow(values)
+    xlsxRow.height = 60
+    applyStyle(xlsxRow.getCell(1), STYLE.shiftLabel)
+    row.cells.forEach((cell, cIdx) => {
+      const target = xlsxRow.getCell(cIdx + 2)
+      switch (cell.kind) {
+        case 'closed': applyStyle(target, STYLE.closed); break
+        case 'gap':
+        case 'partial': applyStyle(target, STYLE.gap); break
+        case 'filled': applyStyle(target, STYLE.filled); break
+        default: applyStyle(target, STYLE.empty); break
+      }
+    })
+  })
 
-  // Vertical merge for each fully-closed column.
+  // Vertical merge for each fully-closed column (so the closure label spans the
+  // whole column, matching the in-app render).
   grid.columns.forEach((col, cIdx) => {
     if (!col.isClosed) return
-    const sheetCol = cIdx + 1  // shift-label column is col 0
-    merges.push({
-      s: { r: SHIFT_ROW_OFFSET, c: sheetCol },
-      e: { r: SHIFT_ROW_OFFSET + grid.rows.length - 1, c: sheetCol },
-    })
+    const sheetCol = cIdx + 2 // col A is the shift label
+    ws.mergeCells(
+      SHIFT_FIRST_SHEET_ROW,
+      sheetCol,
+      SHIFT_FIRST_SHEET_ROW + grid.rows.length - 1,
+      sheetCol,
+    )
   })
 
-  // Footer
-  const footerRow: Cell[] = Array.from({ length: totalCols }, () => ({ v: '' }))
+  // ── Footer ──
   const footerLabel = `Generated ${formatGeneratedAt(grid.generatedAt)} — Aegis`
-  footerRow[0] = { v: footerLabel, s: FOOTER_STYLE }
-  rows.push(footerRow)
-  // Merge footer across all columns.
-  merges.push({
-    s: { r: rows.length - 1, c: 0 },
-    e: { r: rows.length - 1, c: totalCols - 1 },
-  })
+  const footerRow = ws.addRow([footerLabel, ...Array(totalCols - 1).fill('')])
+  footerRow.height = 18
+  applyStyle(footerRow.getCell(1), STYLE.footer)
+  ws.mergeCells(footerRow.number, 1, footerRow.number, totalCols)
 
-  // Build sheet.
-  const aoa = rows.map(r => r.map(c => c.v))
-  const ws = XLSX.utils.aoa_to_sheet(aoa)
-
-  // Re-attach style hints.
-  rows.forEach((row, rIdx) => {
-    row.forEach((cell, cIdx) => {
-      if (!cell.s) return
-      const addr = XLSX.utils.encode_cell({ r: rIdx, c: cIdx })
-      const existing = ws[addr] ?? { t: 's', v: cell.v }
-      ws[addr] = { ...existing, t: 's', v: cell.v, s: cell.s }
-    })
-  })
-
-  ws['!cols'] = [
-    { wch: 18 },  // shift label
-    ...grid.columns.map(() => ({ wch: 16 })),  // ~100px per day column
-  ]
-
-  // Row heights: title, spacer, header, shift rows (taller for stacked names), footer.
-  ws['!rows'] = [
-    { hpt: 28 },
-    { hpt: 8 },
-    { hpt: 32 },
-    ...grid.rows.map(() => ({ hpt: 60 })),
-    { hpt: 18 },
-  ]
-
-  ws['!merges'] = merges
-
-  // Freeze row 1 (day headers) and column A (shift names). SheetJS doesn't
-  // expose typed freeze panes in this community build, so we set the
-  // properties as untyped fields on the sheet — Excel honours them on open.
-
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, 'Schedule')
-
-  // Persist a freeze hint via the sheet's pane definitions. The community
-  // build will keep it in the workbook XML; Excel honours it on open.
-  // Freeze at the header row (row 4 = SHIFT_ROW_OFFSET + 1, 1-indexed) and
-  // at column B (after the shift-label column).
-  ;(ws as Record<string, unknown>)['!freeze'] = { xSplit: 1, ySplit: SHIFT_ROW_OFFSET + 1 }
-
-  const out = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
-  return out
+  const buf = await wb.xlsx.writeBuffer()
+  return Buffer.from(buf as ArrayBuffer)
 }
 
-function closureCellLabel(col: import('./buildScheduleGrid').GridColumn): string {
+function closureCellLabel(col: GridColumn): string {
   if (!col.isClosed) return ''
   return col.closureTitle ? `CLOSED — ${col.closureTitle}` : 'CLOSED'
 }
