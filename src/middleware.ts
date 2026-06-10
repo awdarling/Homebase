@@ -36,7 +36,8 @@ export async function middleware(request: NextRequest) {
   const isPublic =
     pathname.startsWith('/login') ||
     pathname.startsWith('/reset-password') ||
-    pathname === '/api/aegis-action'
+    pathname === '/api/aegis-action' ||
+    pathname === '/api/stripe/webhook'
 
   if (!user && !isPublic) {
     return NextResponse.redirect(new URL('/login', request.url))
