@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
   const events = (eventsRes.data ?? []) as EventRow[]
 
   const grid = buildScheduleGrid({ schedule, template, companyName, shifts, events })
-  const buffer = renderScheduleGridXlsx(grid)
+  const buffer = await renderScheduleGridXlsx(grid)
   const filename = `Schedule_${schedule.week_start}.xlsx`
 
   return new NextResponse(new Uint8Array(buffer), {
