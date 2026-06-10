@@ -273,6 +273,47 @@ async function main() {
     `Excel + PDF/HTML agree on the Sunday closure`,
   )
 
+  // ── DOWNLOAD-500 regression: real-shaped ScheduleData the original fixture
+  //    never had. Both renderers must handle each WITHOUT throwing. Before the
+  //    null-guard fix, case (1) threw in buildScheduleGrid (.trim() on null),
+  //    500-ing BOTH the Excel and PDF downloads. ──────────────────────────────
+  const mkSchedule = (data: Schedule['data']): Schedule => ({
+    id: 'sched-real', company_id: COMPANY_ID,
+    week_start: '2026-06-01', week_end: '2026-06-07',
+    status: 'draft', generated_by: 'smoke', generated_at: '2026-06-01T00:00:00.000Z',
+    approved_at: null, distributed_at: null, data, staffing_report: null,
+  })
+  async function rendersClean(label: string, schedule: Schedule, evs: EventRow[] = []) {
+    try {
+      const g = buildScheduleGrid({ schedule, template: TEMPLATE, companyName: COMPANY_NAME, shifts: SHIFTS, events: evs })
+      const xlsxBuf2 = await renderScheduleGridXlsx(g)
+      const html2 = renderScheduleGridHtml(g)
+      expect(xlsxBuf2.byteLength > 0 && html2.length > 0, `real-shaped: ${label} → Excel + PDF both render (no throw)`)
+    } catch (e) {
+      console.error(`✗ real-shaped: ${label} THREW → ${e instanceof Error ? e.message : e}`)
+      process.exit(1)
+    }
+  }
+  // (1) null/empty employee_name — the DOWNLOAD-500 prime suspect.
+  await rendersClean('null + empty employee_name', mkSchedule({
+    assignments: [
+      { date: '2026-06-01', employee_id: 'e1', employee_name: null as unknown as string, shift_name: 'AM Weekday', role: 'Lifeguard', start_time: '11:30', end_time: '15:30', hours: 4 },
+      { date: '2026-06-02', employee_id: 'e2', employee_name: '', shift_name: 'AM Weekday', role: 'Lifeguard', start_time: '11:30', end_time: '15:30', hours: 4 },
+    ],
+    gaps: [], summary: '', closed_dates: [],
+  }))
+  // (2) an all-gaps day (no assignments, an unfilled requirement).
+  await rendersClean('all-gaps day', mkSchedule({
+    assignments: [],
+    gaps: [{ date: '2026-06-04', shift_name: 'AM Weekday', role: 'Lifeguard', required_count: 2, filled_count: 0, reason: 'no candidates' }],
+    summary: '', closed_dates: [],
+  }))
+  // (3) a completely empty schedule (no assignments, no gaps).
+  await rendersClean('empty schedule (no assignments, no gaps)', mkSchedule({ assignments: [], gaps: [], summary: '', closed_dates: [] }))
+  // (4) multiple closed days.
+  await rendersClean('multiple closed days', mkSchedule({ assignments: [], gaps: [], summary: '', closed_dates: ['2026-06-01', '2026-06-04', '2026-06-07'] }),
+    [{ date: '2026-06-01', title: 'Holiday A' }, { date: '2026-06-07', title: 'Holiday B' }])
+
   console.log('\n✓ All smoke-schedule-grid-download assertions passed')
 }
 

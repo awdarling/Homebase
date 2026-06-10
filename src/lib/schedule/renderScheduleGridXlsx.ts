@@ -81,7 +81,7 @@ const STYLE = {
 function cellTextForGrid(cell: GridCell, gapRoleLabel: (role: string) => string): string {
   if (cell.kind === 'closed') return '' // closed cells render via merge; only the top cell shows text
   if (cell.kind === 'empty') return ''
-  const lines: string[] = [...cell.employeeDisplayNames]
+  const lines: string[] = [...(cell.employeeDisplayNames ?? [])]
   if (cell.kind === 'gap' || cell.kind === 'partial') {
     lines.push(gapRoleLabel(cell.gapRole ?? ''))
   }
@@ -99,7 +99,11 @@ export async function renderScheduleGridXlsx(grid: ScheduleGrid): Promise<Buffer
 
   const wb = new ExcelJS.Workbook()
   wb.creator = 'Aegis'
-  wb.created = new Date(grid.generatedAt)
+  // Guard the workbook timestamp: exceljs serializes wb.created via
+  // .toISOString(), which throws "Invalid time value" on an Invalid Date.
+  // Fall back to now if generatedAt is missing/malformed.
+  const created = new Date(grid.generatedAt)
+  wb.created = isNaN(created.getTime()) ? new Date() : created
   const ws = wb.addWorksheet('Schedule', {
     views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }],
   })
