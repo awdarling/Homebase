@@ -55,16 +55,22 @@ export async function POST(req: NextRequest) {
   const shifts = (shiftsRes.data ?? []) as ShiftMeta[]
   const events = (eventsRes.data ?? []) as EventRow[]
 
-  const grid = buildScheduleGrid({ schedule, template, companyName, shifts, events })
-  const buffer = await renderScheduleGridXlsx(grid)
-  const filename = `Schedule_${schedule.week_start}.xlsx`
+  try {
+    const grid = buildScheduleGrid({ schedule, template, companyName, shifts, events })
+    const buffer = await renderScheduleGridXlsx(grid)
+    const filename = `Schedule_${schedule.week_start}.xlsx`
 
-  return new NextResponse(new Uint8Array(buffer), {
-    status: 200,
-    headers: {
-      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-      'Content-Length': String(buffer.length),
-    },
-  })
+    return new NextResponse(new Uint8Array(buffer), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Length': String(buffer.length),
+      },
+    })
+  } catch (err) {
+    // Surface the real cause in the logs instead of a blind 500.
+    console.error('[download-error] Excel schedule download failed:', err instanceof Error ? err.stack : err)
+    return NextResponse.json({ error: 'Failed to generate the schedule download.' }, { status: 500 })
+  }
 }

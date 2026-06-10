@@ -55,11 +55,17 @@ export async function POST(req: NextRequest) {
   const shifts = (shiftsRes.data ?? []) as ShiftMeta[]
   const events = (eventsRes.data ?? []) as EventRow[]
 
-  const grid = buildScheduleGrid({ schedule, template, companyName, shifts, events })
-  const html = renderScheduleGridHtml(grid)
+  try {
+    const grid = buildScheduleGrid({ schedule, template, companyName, shifts, events })
+    const html = renderScheduleGridHtml(grid)
 
-  return new NextResponse(html, {
-    status: 200,
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
-  })
+    return new NextResponse(html, {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    })
+  } catch (err) {
+    // Surface the real cause in the logs instead of a blind 500.
+    console.error('[download-error] PDF schedule download failed:', err instanceof Error ? err.stack : err)
+    return NextResponse.json({ error: 'Failed to generate the schedule download.' }, { status: 500 })
+  }
 }

@@ -58,8 +58,8 @@ export function renderScheduleGridHtml(grid: ScheduleGrid): string {
       if (cell.kind === 'empty') {
         return `<td class="cell cell-empty"></td>`
       }
-      const employeeLines = cell.employeeDisplayNames
-        .map(n => `<div class="cell-name">${escapeHtml(n)}</div>`)
+      const employeeLines = (cell.employeeDisplayNames ?? [])
+        .map(n => `<div class="cell-name">${escapeHtml(n ?? '')}</div>`)
         .join('')
       if (cell.kind === 'filled') {
         return `<td class="cell cell-filled">${employeeLines}</td>`

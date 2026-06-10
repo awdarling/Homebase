@@ -116,21 +116,26 @@ function weekRangeLabel(start: string, end: string): string {
 function buildDisplayNameMap(assignments: ScheduleAssignment[]): Map<string, string> {
   const firstNameCounts = new Map<string, Set<string>>()  // first → set of employee_id
   for (const a of assignments) {
-    const first = a.employee_name.trim().split(/\s+/)[0] ?? a.employee_name
+    // Real data can carry a null/blank employee_name (e.g. a manual-edit
+    // residue). Normalize before any string op so it can't throw — for valid
+    // names this is identical to the previous behavior.
+    const name = (a.employee_name ?? '').trim()
+    const first = name.split(/\s+/)[0] ?? name
     if (!firstNameCounts.has(first)) firstNameCounts.set(first, new Set())
     firstNameCounts.get(first)!.add(a.employee_id)
   }
   const out = new Map<string, string>()
   for (const a of assignments) {
     if (out.has(a.employee_id)) continue
-    const parts = a.employee_name.trim().split(/\s+/)
-    const first = parts[0] ?? a.employee_name
+    const name = (a.employee_name ?? '').trim()
+    const parts = name.split(/\s+/)
+    const first = parts[0] ?? name
     const collides = (firstNameCounts.get(first)?.size ?? 0) > 1
     if (collides && parts.length > 1) {
-      const lastInitial = parts[parts.length - 1][0]
+      const lastInitial = parts[parts.length - 1][0] ?? ''
       out.set(a.employee_id, `${first} ${lastInitial}.`)
     } else {
-      out.set(a.employee_id, first || a.employee_name)
+      out.set(a.employee_id, first || name)
     }
   }
   return out
@@ -248,8 +253,8 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
       const gap = gapByKey.get(key)
       const names = asgs
         .slice()
-        .sort((a, b) => a.employee_name.localeCompare(b.employee_name))
-        .map(a => displayName.get(a.employee_id) ?? a.employee_name)
+        .sort((a, b) => (a.employee_name ?? '').localeCompare(b.employee_name ?? ''))
+        .map(a => displayName.get(a.employee_id) ?? a.employee_name ?? '')
       const unfilled = gap ? (gap.required_count - gap.filled_count) : 0
       let kind: CellKind
       if (asgs.length === 0 && unfilled === 0) kind = 'empty'
