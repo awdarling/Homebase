@@ -3,7 +3,9 @@ import * as path from 'path'
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local') })
 
 import * as fs from 'fs'
+import * as os from 'os'
 import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 import type { Schedule, ScheduleTemplate } from '../src/lib/types'
 import {
   buildScheduleGrid,
@@ -170,76 +172,108 @@ expect(
   `Audrey renders as bare first name (got ${JSON.stringify(audreyCell.employeeDisplayNames)})`,
 )
 
-// ── Excel formatter ──────────────────────────────────────────────────────────
+// ── Excel formatter (exceljs; renderer is now async) ─────────────────────────
 
-const xlsxBuf = renderScheduleGridXlsx(grid)
-expect(xlsxBuf.byteLength > 0, `xlsx buffer is non-empty (${xlsxBuf.byteLength} bytes)`)
+async function main() {
+  const xlsxBuf = await renderScheduleGridXlsx(grid)
+  expect(xlsxBuf.byteLength > 0, `xlsx buffer is non-empty (${xlsxBuf.byteLength} bytes)`)
 
-const tmpXlsx = path.resolve(process.cwd(), 'tmp-smoke-schedule-grid.xlsx')
-fs.writeFileSync(tmpXlsx, xlsxBuf)
+  const tmpXlsx = path.join(os.tmpdir(), `tmp-smoke-schedule-grid-${process.pid}.xlsx`)
+  fs.writeFileSync(tmpXlsx, xlsxBuf)
 
-const wb = XLSX.read(xlsxBuf, { type: 'buffer' })
-expect(wb.SheetNames.includes('Schedule'), `workbook has 'Schedule' sheet`)
-const ws = wb.Sheets['Schedule']
+  // Read the exceljs-written workbook back with SheetJS to confirm the file is a
+  // valid, standard .xlsx and that the logical content (values + merges) survived.
+  const wb = XLSX.read(xlsxBuf, { type: 'buffer' })
+  expect(wb.SheetNames.includes('Schedule'), `workbook has 'Schedule' sheet`)
+  const ws = wb.Sheets['Schedule']
 
-// Row 0 is the title row (merged).
-expect(
-  String(ws['A1']?.v ?? '').startsWith('Watermark Country Club — Week of'),
-  `A1 contains company-name + week-range header (got "${String(ws['A1']?.v ?? '')}")`,
-)
+  // Row 0 is the title row (merged).
+  expect(
+    String(ws['A1']?.v ?? '').startsWith('Watermark Country Club — Week of'),
+    `A1 contains company-name + week-range header (got "${String(ws['A1']?.v ?? '')}")`,
+  )
 
-// Row 2 is the day-header row: A3='Shift', B3='Monday\nJun 1', ..., H3='Sunday\nJun 7'.
-expect(String(ws['A3']?.v ?? '') === 'Shift', `A3='Shift' (got "${String(ws['A3']?.v ?? '')}")`)
-expect(
-  String(ws['B3']?.v ?? '').startsWith('Monday'),
-  `B3 day-header is Monday (got "${String(ws['B3']?.v ?? '')}")`,
-)
-expect(
-  String(ws['H3']?.v ?? '').startsWith('Sunday'),
-  `H3 day-header is Sunday (got "${String(ws['H3']?.v ?? '')}")`,
-)
+  // Row 2 is the day-header row: A3='Shift', B3='Monday\nJun 1', ..., H3='Sunday\nJun 7'.
+  expect(String(ws['A3']?.v ?? '') === 'Shift', `A3='Shift' (got "${String(ws['A3']?.v ?? '')}")`)
+  expect(
+    String(ws['B3']?.v ?? '').startsWith('Monday'),
+    `B3 day-header is Monday (got "${String(ws['B3']?.v ?? '')}")`,
+  )
+  expect(
+    String(ws['H3']?.v ?? '').startsWith('Sunday'),
+    `H3 day-header is Sunday (got "${String(ws['H3']?.v ?? '')}")`,
+  )
 
-// Row 3 is first shift (AM Weekday). A4 contains 'AM Weekday'.
-expect(String(ws['A4']?.v ?? '').startsWith('AM Weekday'), `A4 shift label is 'AM Weekday'`)
-// E4 is Thursday cell for AM Weekday → should contain 'UNFILLED — Lifeguard'.
-expect(
-  String(ws['E4']?.v ?? '').includes('UNFILLED'),
-  `E4 (Thursday AM Weekday) contains 'UNFILLED' (got "${String(ws['E4']?.v ?? '')}")`,
-)
-expect(
-  String(ws['E4']?.v ?? '').includes('Lifeguard'),
-  `E4 (Thursday AM Weekday) contains role 'Lifeguard'`,
-)
+  // Row 3 is first shift (AM Weekday). A4 contains 'AM Weekday'.
+  expect(String(ws['A4']?.v ?? '').startsWith('AM Weekday'), `A4 shift label is 'AM Weekday'`)
+  // E4 is Thursday cell for AM Weekday → should contain 'UNFILLED — Lifeguard'.
+  expect(
+    String(ws['E4']?.v ?? '').includes('UNFILLED'),
+    `E4 (Thursday AM Weekday) contains 'UNFILLED' (got "${String(ws['E4']?.v ?? '')}")`,
+  )
+  expect(
+    String(ws['E4']?.v ?? '').includes('Lifeguard'),
+    `E4 (Thursday AM Weekday) contains role 'Lifeguard'`,
+  )
 
-// H4 is Sunday closed-day cell for the first shift row — should contain CLOSED — Memorial Day.
-expect(
-  String(ws['H4']?.v ?? '').includes('CLOSED'),
-  `H4 (Sun, first row) contains 'CLOSED' (got "${String(ws['H4']?.v ?? '')}")`,
-)
-expect(
-  String(ws['H4']?.v ?? '').includes('Memorial Day'),
-  `H4 includes event title 'Memorial Day'`,
-)
+  // H4 is Sunday closed-day cell for the first shift row — should contain CLOSED — Memorial Day.
+  expect(
+    String(ws['H4']?.v ?? '').includes('CLOSED'),
+    `H4 (Sun, first row) contains 'CLOSED' (got "${String(ws['H4']?.v ?? '')}")`,
+  )
+  expect(
+    String(ws['H4']?.v ?? '').includes('Memorial Day'),
+    `H4 includes event title 'Memorial Day'`,
+  )
 
-// Closed-day vertical merge: rows 3..7 (0-indexed) of column 7 should be merged.
-const merges = ws['!merges'] ?? []
-const sundayClosureMerge = merges.find(m => m.s.c === 7 && m.e.c === 7 && m.s.r === 3 && m.e.r === 7)
-expect(!!sundayClosureMerge, `Sunday closure column has a vertical merge across all 5 shift rows`)
+  // Closed-day vertical merge: rows 3..7 (0-indexed) of column 7 should be merged.
+  const merges = ws['!merges'] ?? []
+  const sundayClosureMerge = merges.find(m => m.s.c === 7 && m.e.c === 7 && m.s.r === 3 && m.e.r === 7)
+  expect(!!sundayClosureMerge, `Sunday closure column has a vertical merge across all 5 shift rows`)
 
-fs.unlinkSync(tmpXlsx)
+  // exceljs-specific: confirm real cell styling now reaches the file (the whole
+  // point of the swap — the SheetJS community build dropped these). Re-read with
+  // exceljs so we can inspect fills/fonts/freeze that SheetJS does not surface.
+  const ewb = new ExcelJS.Workbook()
+  await ewb.xlsx.readFile(tmpXlsx)
+  const ews = ewb.getWorksheet('Schedule')!
+  const titleFill = (ews.getCell('A1').fill as ExcelJS.FillPattern)
+  expect(titleFill?.type === 'pattern' && !!titleFill.fgColor?.argb, `A1 has a real solid fill (got ${JSON.stringify(titleFill?.fgColor)})`)
+  const gapCell = ews.getCell('E4')
+  const gapFill = (gapCell.fill as ExcelJS.FillPattern)
+  expect(gapFill?.fgColor?.argb === 'FFFDECEC', `E4 gap cell has the red gap fill (got ${gapFill?.fgColor?.argb})`)
+  expect((gapCell.font?.color?.argb) === 'FFB91C1C', `E4 gap text is red (got ${gapCell.font?.color?.argb})`)
+  const frozen = ews.views?.[0]
+  expect(frozen?.state === 'frozen' && frozen.xSplit === 1 && frozen.ySplit === 3, `header row + label column are frozen (got ${JSON.stringify(frozen)})`)
 
-// ── HTML formatter ───────────────────────────────────────────────────────────
+  try { fs.unlinkSync(tmpXlsx) } catch { /* best-effort cleanup */ }
 
-const html = renderScheduleGridHtml(grid)
-expect(html.includes('<!DOCTYPE html>'), `HTML output is a full document`)
-expect(html.includes('Watermark Country Club'), `HTML contains company name`)
-expect(html.includes('Week of Jun 1–7, 2026'), `HTML contains week-range label`)
-expect(html.includes('UNFILLED — Lifeguard'), `HTML contains gap text 'UNFILLED — Lifeguard'`)
-expect(html.includes('CLOSED — Memorial Day'), `HTML contains closure label 'CLOSED — Memorial Day'`)
-expect(html.includes('Kori') && html.includes('Ally'), `HTML contains employee first names in cells`)
-expect(html.includes('@media print'), `HTML has print CSS rules`)
-expect(html.includes('size: landscape'), `HTML print CSS is landscape`)
-expect(html.includes('rowspan="5"'), `HTML closure cell uses rowspan=5 (one per shift row)`)
-expect(html.includes('— Aegis'), `HTML footer mentions Aegis attribution`)
+  // ── HTML formatter (PDF path renders from this same HTML) ──────────────────
 
-console.log('\n✓ All smoke-schedule-grid-download assertions passed')
+  const html = renderScheduleGridHtml(grid)
+  expect(html.includes('<!DOCTYPE html>'), `HTML output is a full document`)
+  expect(html.includes('Watermark Country Club'), `HTML contains company name`)
+  expect(html.includes('Week of Jun 1–7, 2026'), `HTML contains week-range label`)
+  expect(html.includes('UNFILLED — Lifeguard'), `HTML contains gap text 'UNFILLED — Lifeguard'`)
+  expect(html.includes('CLOSED — Memorial Day'), `HTML contains closure label 'CLOSED — Memorial Day'`)
+  expect(html.includes('Kori') && html.includes('Ally'), `HTML contains employee first names in cells`)
+  expect(html.includes('@media print'), `HTML has print CSS rules`)
+  expect(html.includes('size: landscape'), `HTML print CSS is landscape`)
+  expect(html.includes('rowspan="5"'), `HTML closure cell uses rowspan=5 (one per shift row)`)
+  expect(html.includes('— Aegis'), `HTML footer mentions Aegis attribution`)
+
+  // Cross-formatter parity: the same grid drives both downloads, so the gap and
+  // closure text that appears in the Excel cells must also appear in the PDF/HTML.
+  expect(
+    String(ws['E4']?.v ?? '').includes('Lifeguard') && html.includes('UNFILLED — Lifeguard'),
+    `Excel + PDF/HTML agree on the Thursday Lifeguard gap`,
+  )
+  expect(
+    String(ws['H4']?.v ?? '').includes('Memorial Day') && html.includes('CLOSED — Memorial Day'),
+    `Excel + PDF/HTML agree on the Sunday closure`,
+  )
+
+  console.log('\n✓ All smoke-schedule-grid-download assertions passed')
+}
+
+main().catch(err => { console.error(err); process.exit(1) })
