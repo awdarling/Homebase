@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createClient as createServerSupabase } from '@/lib/supabase/server'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -13,6 +14,21 @@ export async function POST(request: NextRequest) {
 
     if (!company_id) {
       return NextResponse.json({ success: false, message: 'company_id is required.' }, { status: 400 })
+    }
+
+    // Standard auth guard: caller must be signed in and belong to the company they query.
+    const ssr = await createServerSupabase()
+    const { data: { user } } = await ssr.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ success: false, message: 'Unauthorized' }, { status: 401 })
+    }
+    const { data: userRow } = await ssr
+      .from('users')
+      .select('company_id')
+      .eq('id', user.id)
+      .single()
+    if (!userRow || (userRow as { company_id: string }).company_id !== company_id) {
+      return NextResponse.json({ success: false, message: 'Forbidden' }, { status: 403 })
     }
 
     const { data } = await supabase

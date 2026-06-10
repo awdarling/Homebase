@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createClient as createServerSupabase } from '@/lib/supabase/server'
 import { withAnthropicRetry } from '@/lib/anthropic-retry'
 
 console.log('[soteria] API key present:', !!process.env.ANTHROPIC_API_KEY)
@@ -27,6 +28,21 @@ export async function POST(req: NextRequest) {
   }
 
   const { company_id, schedule_id, employee_id, employee_name, role_override, shift_name, date, start_time, end_time } = body
+
+  // Standard auth guard: caller must be signed in and belong to the company they query.
+  const ssr = await createServerSupabase()
+  const { data: { user } } = await ssr.auth.getUser()
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const { data: userRow } = await ssr
+    .from('users')
+    .select('company_id')
+    .eq('id', user.id)
+    .single()
+  if (!userRow || (userRow as { company_id: string }).company_id !== company_id) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   // Load everything in parallel
   const [
