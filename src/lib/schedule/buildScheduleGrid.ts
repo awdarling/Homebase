@@ -160,10 +160,14 @@ const DAY_INDEX: Record<string, number> = {
   sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
 }
 
-function compactDaysLabel(days: string[]): string {
+function compactDaysLabel(days: ReadonlyArray<string | number>): string {
   const indices = days
-    .map(d => DAY_INDEX[d.toLowerCase()])
-    .filter(i => typeof i === 'number')
+    // The real `shift_types.days_active` column is number[] (0–6 day indices),
+    // even though ShiftMeta types it as string[]. Calling `.toLowerCase()` on a
+    // number is what 500'd the schedule download. Handle BOTH shapes safely:
+    // a number is already a day index; a string ('monday') maps via DAY_INDEX.
+    .map(d => (typeof d === 'number' ? d : DAY_INDEX[String(d ?? '').toLowerCase()]))
+    .filter((i): i is number => typeof i === 'number' && i >= 0 && i <= 6)
     .sort((a, b) => a - b)
   if (indices.length === 0) return ''
   // Detect contiguous Mon–Fri or Sat–Sun ranges.

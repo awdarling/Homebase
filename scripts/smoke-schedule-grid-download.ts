@@ -283,9 +283,9 @@ async function main() {
     status: 'draft', generated_by: 'smoke', generated_at: '2026-06-01T00:00:00.000Z',
     approved_at: null, distributed_at: null, data, staffing_report: null,
   })
-  async function rendersClean(label: string, schedule: Schedule, evs: EventRow[] = []) {
+  async function rendersClean(label: string, schedule: Schedule, evs: EventRow[] = [], shifts: ShiftMeta[] = SHIFTS) {
     try {
-      const g = buildScheduleGrid({ schedule, template: TEMPLATE, companyName: COMPANY_NAME, shifts: SHIFTS, events: evs })
+      const g = buildScheduleGrid({ schedule, template: TEMPLATE, companyName: COMPANY_NAME, shifts, events: evs })
       const xlsxBuf2 = await renderScheduleGridXlsx(g)
       const html2 = renderScheduleGridHtml(g)
       expect(xlsxBuf2.byteLength > 0 && html2.length > 0, `real-shaped: ${label} → Excel + PDF both render (no throw)`)
@@ -313,6 +313,19 @@ async function main() {
   // (4) multiple closed days.
   await rendersClean('multiple closed days', mkSchedule({ assignments: [], gaps: [], summary: '', closed_dates: ['2026-06-01', '2026-06-04', '2026-06-07'] }),
     [{ date: '2026-06-01', title: 'Holiday A' }, { date: '2026-06-07', title: 'Holiday B' }])
+  // (5) NON-STRING days_active — the real `shift_types.days_active` is number[]
+  //     (day indices), not the string[] the type claims. Before the fix this
+  //     threw `e.toLowerCase is not a function` inside compactDaysLabel's .map,
+  //     500-ing both downloads.
+  const numericDaysShifts = [
+    { name: 'AM Weekday', start_time: '11:30', end_time: '15:30', days_active: [1, 2, 3, 4, 5] as unknown as string[] },
+  ] satisfies ShiftMeta[]
+  await rendersClean('numeric days_active (number[] not string[])', mkSchedule({
+    assignments: [
+      { date: '2026-06-01', employee_id: 'e1', employee_name: 'Audrey Miller', shift_name: 'AM Weekday', role: 'Lifeguard', start_time: '11:30', end_time: '15:30', hours: 4 },
+    ],
+    gaps: [], summary: '', closed_dates: [],
+  }), [], numericDaysShifts)
 
   console.log('\n✓ All smoke-schedule-grid-download assertions passed')
 }
