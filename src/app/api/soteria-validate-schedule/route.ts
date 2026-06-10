@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createClient as createServerSupabase } from '@/lib/supabase/server'
 import { withAnthropicRetry } from '@/lib/anthropic-retry'
 import type { ScheduleAssignment } from '@/lib/types'
 
@@ -62,6 +63,21 @@ export async function POST(req: NextRequest) {
   }
 
   const { company_id, schedule_id, proposed_assignments, changes } = body
+
+  // Standard auth guard: caller must be signed in and belong to the company they query.
+  const ssr = await createServerSupabase()
+  const { data: { user } } = await ssr.auth.getUser()
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const { data: userRow } = await ssr
+    .from('users')
+    .select('company_id')
+    .eq('id', user.id)
+    .single()
+  if (!userRow || (userRow as { company_id: string }).company_id !== company_id) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   // Distinct employee_ids that appear in any change
   const touchedEmployeeIds = Array.from(new Set(
