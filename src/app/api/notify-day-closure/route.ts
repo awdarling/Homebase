@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
     .select('id, company_id, data')
     .eq('id', scheduleId)
     .eq('company_id', companyId)
+    .is('deleted_at', null)
     .single()
 
   if (scheduleErr || !scheduleRow) {

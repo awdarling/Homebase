@@ -92,6 +92,7 @@ const SCHEDULE: Schedule = {
   generated_at: '2026-06-01T00:00:00.000Z',
   approved_at: null,
   distributed_at: null,
+  deleted_at: null,
   data: {
     assignments: ASSIGNMENTS,
     gaps: GAPS,
@@ -281,7 +282,7 @@ async function main() {
     id: 'sched-real', company_id: COMPANY_ID,
     week_start: '2026-06-01', week_end: '2026-06-07',
     status: 'draft', generated_by: 'smoke', generated_at: '2026-06-01T00:00:00.000Z',
-    approved_at: null, distributed_at: null, data, staffing_report: null,
+    approved_at: null, distributed_at: null, deleted_at: null, data, staffing_report: null,
   })
   async function rendersClean(label: string, schedule: Schedule, evs: EventRow[] = []) {
     try {

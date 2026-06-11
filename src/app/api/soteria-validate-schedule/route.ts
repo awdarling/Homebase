@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
       .select('employee_id_1, employee_id_2, severity, reason')
       .eq('company_id', company_id),
     supabase.from('policies').select('policy_key, policy_value, description').eq('company_id', company_id),
-    supabase.from('schedules').select('week_start, week_end').eq('id', schedule_id).single(),
+    supabase.from('schedules').select('week_start, week_end').eq('id', schedule_id).is('deleted_at', null).single(),
   ])
 
   const empById = new Map<string, { id: string; name: string; primary_role: string; qualified_roles: string[]; max_weekly_hours: number }>()

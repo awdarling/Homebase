@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
     .select('*')
     .eq('id', scheduleId)
     .eq('company_id', companyId)
+    .is('deleted_at', null)
     .single()
   if (scheduleErr || !scheduleRow) {
     return NextResponse.json({ error: 'Schedule not found' }, { status: 404 })

@@ -33,6 +33,7 @@ function formatDayDate(d: string): string {
 }
 
 const CLOSE_DAY_PHRASE = 'yes, i want to close this day'
+const DELETE_DISTRIBUTED_PHRASE = 'yes, delete this distributed schedule'
 
 function isoToday(): string {
   return new Date().toLocaleDateString('en-CA')
@@ -580,11 +581,15 @@ function HistoryCard({
   template,
   expanded,
   onToggle,
+  canDelete,
+  onDelete,
 }: {
   schedule: Schedule
   template: ScheduleTemplate
   expanded: boolean
   onToggle: () => void
+  canDelete: boolean
+  onDelete: () => void
 }) {
   const weekLabel = `${formatDateLong(schedule.week_start)} – ${formatDateLong(schedule.week_end)}`
 
@@ -619,13 +624,30 @@ function HistoryCard({
           </div>
           <ScheduleStats schedule={schedule} compact />
         </div>
-        <button
-          className="btn btn-secondary btn-sm"
-          onClick={onToggle}
-          style={{ flexShrink: 0 }}
-        >
-          {expanded ? 'Collapse' : 'View'}
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+          {canDelete && (
+            <button
+              onClick={onDelete}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#ef4444',
+                fontSize: 11,
+                cursor: 'pointer',
+                padding: 0,
+                fontFamily: 'var(--font-body)',
+              }}
+            >
+              Delete Schedule
+            </button>
+          )}
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={onToggle}
+          >
+            {expanded ? 'Collapse' : 'View'}
+          </button>
+        </div>
       </div>
 
       {/* Expanded panel */}
@@ -966,7 +988,15 @@ export default function SchedulePage() {
   const { company, user } = useCompany()
   const { isQuria } = useQuria()
   const companyId = company?.id ?? ''
-  const canDeleteSchedule = isQuria || user?.role === 'owner'
+  const userRole = user?.role
+  // UX hint only — the /api/schedule/delete route is the real gate.
+  // Temporal rule (company tz, enforced server-side): managers may delete
+  // current+upcoming; owners/quria may also delete past schedules.
+  function canDeleteScheduleFor(schedule: Schedule): boolean {
+    if (isQuria || userRole === 'owner') return true
+    if (userRole === 'manager') return classifySchedule(schedule) !== 'past'
+    return false
+  }
   const { template, saveTemplate } = useScheduleTemplate()
 
   const [allSchedules, setAllSchedules] = useState<Schedule[]>([])
@@ -991,6 +1021,8 @@ export default function SchedulePage() {
   const [resolveTarget, setResolveTarget] = useState<{ gap: ScheduleGap; scheduleId: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Schedule | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('')
 
   // Day closure state
   const [closeDayTarget, setCloseDayTarget] = useState<string | null>(null)
@@ -1018,6 +1050,7 @@ export default function SchedulePage() {
       .from('schedules')
       .select('*')
       .eq('company_id', companyId)
+      .is('deleted_at', null)
       .order('week_start', { ascending: false })
       .limit(40)
     setAllSchedules((data as Schedule[]) ?? [])
@@ -1066,25 +1099,48 @@ export default function SchedulePage() {
     setEditingScheduleId(null)
   }
 
+  function requestDeleteSchedule(schedule: Schedule) {
+    setDeleteTarget(schedule)
+    setDeleteConfirmInput('')
+    setDeleteError(null)
+  }
+
+  function cancelDeleteSchedule() {
+    if (deleting) return
+    setDeleteTarget(null)
+    setDeleteConfirmInput('')
+    setDeleteError(null)
+  }
+
+  // Soft delete via the server route (mirrors SEC-1 authz). No client-side
+  // DELETE — RLS denies it; the route enforces the role/temporal/tenant gate.
   async function confirmDeleteSchedule() {
     if (!deleteTarget) return
     setDeleting(true)
-    const { error } = await supabase
-      .from('schedules')
-      .delete()
-      .eq('id', deleteTarget.id)
-      .eq('company_id', companyId)
-    if (error) {
-      console.error('Delete schedule failed:', error)
+    setDeleteError(null)
+    try {
+      const res = await fetch('/api/schedule/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scheduleId: deleteTarget.id }),
+      })
+      const json = await res.json().catch(() => ({} as { error?: string })) as { error?: string }
+      if (!res.ok) {
+        setDeleteError(json.error || `Request failed (${res.status})`)
+        setDeleting(false)
+        return
+      }
+      if (editingScheduleId === deleteTarget.id) cancelEditMode()
+      if (expandedUpcomingId === deleteTarget.id) setExpandedUpcomingId(null)
+      if (expandedHistoryId === deleteTarget.id) setExpandedHistoryId(null)
+      setDeleteTarget(null)
+      setDeleteConfirmInput('')
       setDeleting(false)
-      return
+      await fetchSchedules()
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Network error')
+      setDeleting(false)
     }
-    if (editingScheduleId === deleteTarget.id) cancelEditMode()
-    if (expandedUpcomingId === deleteTarget.id) setExpandedUpcomingId(null)
-    if (expandedHistoryId === deleteTarget.id) setExpandedHistoryId(null)
-    setDeleteTarget(null)
-    setDeleting(false)
-    await fetchSchedules()
   }
 
   function handleGapResolved(updatedSchedule: Schedule) {
@@ -1254,6 +1310,10 @@ export default function SchedulePage() {
     : []
   const notifyEmployeeNames = Array.from(new Set(notifyAssignments.map(a => a.employee_name)))
 
+  const deleteIsDistributed = !!deleteTarget?.distributed_at
+  const deleteConfirmReady = !deleteIsDistributed
+    || deleteConfirmInput.toLowerCase().trim() === DELETE_DISTRIBUTED_PHRASE
+
   function toggleUpcomingExpanded(id: string) {
     if (expandedUpcomingId === id) {
       if (editingScheduleId === id) cancelEditMode()
@@ -1301,9 +1361,9 @@ export default function SchedulePage() {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}>
             {!isEditingCurrent ? (
               <>
-                {canDeleteSchedule && currentSchedule && (
+                {currentSchedule && canDeleteScheduleFor(currentSchedule) && (
                   <button
-                    onClick={() => setDeleteTarget(currentSchedule)}
+                    onClick={() => requestDeleteSchedule(currentSchedule)}
                     style={{
                       background: 'transparent',
                       border: 'none',
@@ -1474,7 +1534,7 @@ export default function SchedulePage() {
                 pendingAssignments={pendingAssignments}
                 changesCount={editingScheduleId === s.id ? changesCount : 0}
                 canStartEdit={canStartNewEdit}
-                canDeleteSchedule={canDeleteSchedule}
+                canDeleteSchedule={canDeleteScheduleFor(s)}
                 onStartEdit={() => enterEditMode(s)}
                 onCancelEdit={cancelEditMode}
                 onAddShift={() => setAddShiftOpen(true)}
@@ -1482,7 +1542,7 @@ export default function SchedulePage() {
                 onReview={() => setReviewPanelOpen(true)}
                 onAssignmentChange={setPendingAssignments}
                 onResolveGap={gap => setResolveTarget({ gap, scheduleId: s.id })}
-                onDelete={() => setDeleteTarget(s)}
+                onDelete={() => requestDeleteSchedule(s)}
                 onCloseDay={(date) => requestCloseDay(s.id, date)}
                 onReopenDay={(date) => handleReopenDay(s.id, date)}
               />
@@ -1551,6 +1611,8 @@ export default function SchedulePage() {
                 template={template}
                 expanded={expandedHistoryId === s.id}
                 onToggle={() => setExpandedHistoryId(expandedHistoryId === s.id ? null : s.id)}
+                canDelete={canDeleteScheduleFor(s)}
+                onDelete={() => requestDeleteSchedule(s)}
               />
             ))}
           </div>
@@ -1644,7 +1706,7 @@ export default function SchedulePage() {
       {/* ══ Delete Schedule Confirmation ═════════════════════════════════════ */}
       {deleteTarget && (
         <div
-          onClick={() => !deleting && setDeleteTarget(null)}
+          onClick={cancelDeleteSchedule}
           style={{
             position: 'fixed',
             inset: 0,
@@ -1677,20 +1739,45 @@ export default function SchedulePage() {
             }}>
               Delete this schedule?
             </div>
-            <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 20 }}>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: deleteIsDistributed ? 12 : 20 }}>
               Are you sure you want to delete this schedule? This cannot be undone.
             </div>
+            {deleteIsDistributed && deleteTarget && (
+              <>
+                <div style={{ fontSize: 13, color: '#f97316', lineHeight: 1.55, marginBottom: 12 }}>
+                  This schedule was emailed to employees on {deleteTarget.distributed_at
+                    ? new Date(deleteTarget.distributed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    : 'an earlier date'}. Deleting it will NOT recall those emails.
+                </div>
+                <input
+                  className="form-input"
+                  placeholder="Type to confirm"
+                  value={deleteConfirmInput}
+                  onChange={e => setDeleteConfirmInput(e.target.value)}
+                  disabled={deleting}
+                  style={{ width: '100%', marginBottom: 6 }}
+                />
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 16 }}>
+                  Type: Yes, delete this distributed schedule
+                </div>
+              </>
+            )}
+            {deleteError && (
+              <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 12 }}>
+                {deleteError}
+              </div>
+            )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button
                 className="btn btn-secondary btn-sm"
-                onClick={() => setDeleteTarget(null)}
+                onClick={cancelDeleteSchedule}
                 disabled={deleting}
               >
                 Cancel
               </button>
               <button
                 onClick={confirmDeleteSchedule}
-                disabled={deleting}
+                disabled={deleting || !deleteConfirmReady}
                 style={{
                   padding: '6px 14px',
                   borderRadius: 'var(--radius-md)',
@@ -1700,8 +1787,8 @@ export default function SchedulePage() {
                   fontSize: 12,
                   fontFamily: 'var(--font-body)',
                   fontWeight: 500,
-                  cursor: deleting ? 'default' : 'pointer',
-                  opacity: deleting ? 0.6 : 1,
+                  cursor: (deleting || !deleteConfirmReady) ? 'default' : 'pointer',
+                  opacity: (deleting || !deleteConfirmReady) ? 0.6 : 1,
                 }}
               >
                 {deleting ? 'Deleting…' : 'Delete'}
