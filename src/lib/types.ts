@@ -291,6 +291,7 @@ export interface Schedule {
   generated_at: string
   approved_at: string | null
   distributed_at: string | null
+  deleted_at: string | null
   data: ScheduleData
   staffing_report: StaffingReport | null
 }

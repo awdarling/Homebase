@@ -332,7 +332,7 @@ export default function HomePage() {
 
     // Phase 1: schedule (by date range) + everything that doesn't depend on it.
     const [schedRes, actRes, toRes, empRes, swapRes] = await Promise.all([
-      supabase.from('schedules').select('*').eq('company_id', COMPANY_ID)
+      supabase.from('schedules').select('*').eq('company_id', COMPANY_ID).is('deleted_at', null)
         .lte('week_start', today).gte('week_end', today)
         .order('generated_at', { ascending: false }).limit(1).maybeSingle(),
       supabase.from('activity_log').select('*').eq('company_id', COMPANY_ID).order('created_at', { ascending: false }).limit(8),

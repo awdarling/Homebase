@@ -16,6 +16,7 @@ const MOCK_SCHEDULE: Schedule = {
   generated_at: new Date().toISOString(),
   approved_at: null,
   distributed_at: null,
+  deleted_at: null,
   data: {
     assignments: [
       { date: '2026-05-04', employee_id: 'e1', employee_name: 'Alice J.',  shift_name: 'AMWeekday', role: 'Server', start_time: '07:00', end_time: '15:00', hours: 8 },

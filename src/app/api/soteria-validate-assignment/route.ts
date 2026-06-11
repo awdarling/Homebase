@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
       .lte('start_date', date)
       .gte('end_date', date),
     supabase.from('policies').select('policy_key, policy_value, description').eq('company_id', company_id),
-    supabase.from('schedules').select('data, staffing_report').eq('id', schedule_id).single(),
+    supabase.from('schedules').select('data, staffing_report').eq('id', schedule_id).is('deleted_at', null).single(),
     supabase.from('wage_rates').select('role, hourly_rate').eq('company_id', company_id),
   ])
 

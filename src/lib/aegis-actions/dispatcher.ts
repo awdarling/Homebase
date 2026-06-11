@@ -155,6 +155,7 @@ async function handleConfirmDistribution(
       distributed_at: new Date().toISOString(),
     })
     .eq('id', schedule_id)
+    .is('deleted_at', null)
     .in('status', ['draft', 'published'])
     .select('id, status')
     .maybeSingle()
@@ -168,6 +169,7 @@ async function handleConfirmDistribution(
       .from('schedules')
       .select('status')
       .eq('id', schedule_id)
+      .is('deleted_at', null)
       .maybeSingle()
     if (!existing) {
       return { ok: false, message: 'Schedule not found. It may have been deleted.' }
