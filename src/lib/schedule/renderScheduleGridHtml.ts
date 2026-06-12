@@ -29,12 +29,17 @@ function formatGeneratedAt(iso: string): string {
 export function renderScheduleGridHtml(grid: ScheduleGrid): string {
   const totalColumns = grid.columns.length
 
-  const headerCells = grid.columns.map(col => `
-    <th class="day-col">
+  // Each day header takes its own template color (closed → grey), matching the
+  // on-screen DayHeader instead of a single shared navy. Half the all-blue fix.
+  const headerCells = grid.columns.map(col => {
+    const bg = col.isClosed ? '#4b5563' : col.color
+    return `
+    <th class="day-col" style="background:${bg}">
       <div class="day-label">${escapeHtml(col.dayLabel)}</div>
       <div class="day-date">${escapeHtml(col.shortDate)}</div>
     </th>
-  `).join('')
+  `
+  }).join('')
 
   const bodyRows = grid.rows.map((row, rIdx) => {
     const labelCell = `
@@ -45,31 +50,36 @@ export function renderScheduleGridHtml(grid: ScheduleGrid): string {
     `
     const dataCells = row.cells.map((cell, cIdx) => {
       const col = grid.columns[cIdx]
+      // Cell fill now comes from the shared resolver's per-day template color
+      // (cell.appearance.fill), set inline — replacing the fixed per-kind
+      // background classes that ignored template color ("all-blue" bug). Text
+      // styling (gap red, closed grey-italic) stays in the classes.
+      const fill = cell.appearance.fill
       if (cell.kind === 'closed') {
         // Only the first shift row owns the merged closure cell; later rows
         // skip the column entirely.
         if (rIdx !== 0) return ''
         return `
-          <td class="cell cell-closed" rowspan="${grid.rows.length}">
+          <td class="cell cell-closed" rowspan="${grid.rows.length}" style="background:${fill}">
             <div class="closed-text">${escapeHtml(closureLabel(col))}</div>
           </td>
         `
       }
       if (cell.kind === 'empty') {
-        return `<td class="cell cell-empty"></td>`
+        return `<td class="cell cell-empty" style="background:${fill}"></td>`
       }
       const employeeLines = (cell.employeeDisplayNames ?? [])
         .map(n => `<div class="cell-name">${escapeHtml(n ?? '')}</div>`)
         .join('')
       if (cell.kind === 'filled') {
-        return `<td class="cell cell-filled">${employeeLines}</td>`
+        return `<td class="cell cell-filled" style="background:${fill}">${employeeLines}</td>`
       }
       // gap or partial
       const gapText = cell.gapRole
         ? `UNFILLED — ${escapeHtml(cell.gapRole)}`
         : 'UNFILLED'
       return `
-        <td class="cell cell-${cell.kind}">
+        <td class="cell cell-${cell.kind}" style="background:${fill}">
           ${employeeLines}
           <div class="cell-gap">${gapText}</div>
         </td>
@@ -149,6 +159,10 @@ export function renderScheduleGridHtml(grid: ScheduleGrid): string {
     vertical-align: top;
     padding: 6px 8px;
     overflow: hidden;
+    /* Body cells + day headers carry inline template colors — force them to
+       print rather than letting the browser drop backgrounds. */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
   .grid-table thead th {
     background: #1a1a2e;
@@ -192,16 +206,12 @@ export function renderScheduleGridHtml(grid: ScheduleGrid): string {
     min-height: 56px;
     height: 56px;
   }
-  .cell-empty { background: #ffffff; }
-  .cell-filled { background: #fafafd; }
-  .cell-partial { background: #fdf4ec; }
-  .cell-gap { background: #fdecec; }
+  /* Cell backgrounds are set inline from the shared resolver (per-day template
+     color); the old per-kind background fills lived here and are now removed.
+     Only structural / text styling remains. */
   .cell-closed {
-    background: #ececec;
     text-align: center;
     vertical-align: middle;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
   }
   .closed-text {
     color: #666;

@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs'
 import type { ScheduleGrid, GridCell, GridColumn } from './buildScheduleGrid'
+import { hexToArgb } from './resolveCellAppearance'
 
 // Why exceljs and not the SheetJS community build:
 // the community `xlsx` build silently drops cell styles (fills/fonts) when it
@@ -127,7 +128,9 @@ export async function renderScheduleGridXlsx(grid: ScheduleGrid): Promise<Buffer
   const headerRow = ws.addRow(headerVals)
   headerRow.height = 32
   applyStyle(headerRow.getCell(1), STYLE.cornerHeader)
-  grid.columns.forEach((_, i) => applyStyle(headerRow.getCell(i + 2), STYLE.dayHeader))
+  // Each day header takes its own template color (matching the on-screen
+  // DayHeader), not a single shared navy. This is half the all-blue fix.
+  grid.columns.forEach((col, i) => applyStyle(headerRow.getCell(i + 2), dayHeaderStyle(col)))
 
   // ── Shift rows ──
   const SHIFT_FIRST_SHEET_ROW = 4 // 1-indexed row of the first shift row
@@ -160,13 +163,16 @@ export async function renderScheduleGridXlsx(grid: ScheduleGrid): Promise<Buffer
     applyStyle(xlsxRow.getCell(1), STYLE.shiftLabel)
     row.cells.forEach((cell, cIdx) => {
       const target = xlsxRow.getCell(cIdx + 2)
-      switch (cell.kind) {
-        case 'closed': applyStyle(target, STYLE.closed); break
-        case 'gap':
-        case 'partial': applyStyle(target, STYLE.gap); break
-        case 'filled': applyStyle(target, STYLE.filled); break
-        default: applyStyle(target, STYLE.empty); break
-      }
+      // Font / border / alignment stay per-kind (gap text red, closed text
+      // grey-italic, …) but the FILL now comes from the shared resolver's
+      // per-day template color — replacing the fixed kind palette that
+      // collapsed every cell to the same near-white/red ("all-blue") fill.
+      const base =
+        cell.kind === 'closed' ? STYLE.closed
+        : (cell.kind === 'gap' || cell.kind === 'partial') ? STYLE.gap
+        : cell.kind === 'filled' ? STYLE.filled
+        : STYLE.empty
+      applyStyle(target, { ...base, fill: hexToArgb(cell.appearance.fill) })
     })
   })
 
@@ -192,6 +198,16 @@ export async function renderScheduleGridXlsx(grid: ScheduleGrid): Promise<Buffer
 
   const buf = await wb.xlsx.writeBuffer()
   return Buffer.from(buf as ArrayBuffer)
+}
+
+// On-screen DayHeader paints a closed day '#4b5563'; mirror that here.
+const CLOSED_HEADER_ARGB = hexToArgb('#4b5563')
+
+function dayHeaderStyle(col: GridColumn): CellStyle {
+  return {
+    ...STYLE.dayHeader,
+    fill: col.isClosed ? CLOSED_HEADER_ARGB : hexToArgb(col.color),
+  }
 }
 
 function closureCellLabel(col: GridColumn): string {

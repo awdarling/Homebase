@@ -12,9 +12,10 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
-import type { Schedule, ScheduleTemplate, ScheduleAssignment, ColumnConfig, RowConfig } from '@/lib/types'
+import type { Schedule, ScheduleTemplate, ScheduleAssignment, ColumnConfig } from '@/lib/types'
 import { parseYMD, toYMD } from '@/lib/utils/dates'
 import { resolveAssignmentForSlot } from '@/lib/schedule/resolveAssignment'
+import { resolveCellAppearance, hexWithAlpha } from '@/lib/schedule/resolveCellAppearance'
 
 interface ScheduleRendererProps {
   schedule: Schedule
@@ -40,11 +41,6 @@ function getWeekDates(weekStart: string): string[] {
     const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i)
     return toYMD(d)
   })
-}
-
-function hexWithAlpha(hex: string, alpha: number): string {
-  const a = Math.round(alpha * 255).toString(16).padStart(2, '0')
-  return `${hex}${a}`
 }
 
 function assignmentDragId(a: ScheduleAssignment): string {
@@ -504,12 +500,6 @@ function ShiftRowsDayColumns({
   const MIN_ROW_HEIGHT = 80
   const MIN_COL_WIDTH = 120
 
-  const getColor = (col: ColumnConfig, row: RowConfig): string => {
-    if (color_config.by === 'day') return col.color
-    if (color_config.by === 'shift') return color_config.map[row.id] ?? col.color
-    return col.color
-  }
-
   function moveAssignment(source: ScheduleAssignment, targetShift: string, targetDate: string) {
     if (!onAssignmentChange) return
     if (source.shift_name === targetShift && source.date === targetDate) return
@@ -631,9 +621,19 @@ function ShiftRowsDayColumns({
               const cellKey = `${row.id}||${date}`
               const cellAssignments = assignmentMap.get(cellKey) ?? []
               const gapCount = gapMap.get(cellKey) ?? 0
-              const color = getColor(col, row)
               const isEmpty = cellAssignments.length === 0 && gapCount === 0
-              const baseBackground = isEmpty ? 'var(--bg-base)' : hexWithAlpha(color, 0.06)
+              // Shared resolver — same color logic the download renderers use.
+              // Closed background is owned by DroppableCell below (unchanged), so
+              // we classify only empty vs. non-empty here; the resolved color and
+              // tinted background match the previous inline output exactly.
+              const appearance = resolveCellAppearance({
+                colorConfig: color_config,
+                columnColor: col.color,
+                rowId: row.id,
+                kind: isEmpty ? 'empty' : 'filled',
+              })
+              const color = appearance.color
+              const baseBackground = appearance.background
               const closed = closedDateSet.has(date)
 
               return (
