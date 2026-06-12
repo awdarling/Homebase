@@ -315,6 +315,34 @@ async function main() {
   await rendersClean('multiple closed days', mkSchedule({ assignments: [], gaps: [], summary: '', closed_dates: ['2026-06-01', '2026-06-04', '2026-06-07'] }),
     [{ date: '2026-06-01', title: 'Holiday A' }, { date: '2026-06-07', title: 'Holiday B' }])
 
+  // (5) DOWNLOAD-500 (this fix): shift_types.days_active is number[] in the DB
+  //     (day indices 0–6), NOT the string[] this smoke's fixture used. The
+  //     download routes fetch days_active and pass it straight into
+  //     buildScheduleGrid → compactDaysLabel, which called d.toLowerCase() and
+  //     threw "d.toLowerCase is not a function" on a number — 500-ing BOTH the
+  //     Excel and PDF downloads. Exercise the real number[] shape here.
+  try {
+    const numberShifts = [
+      { name: 'AM Weekday', start_time: '11:30', end_time: '15:30', days_active: [1, 2, 3, 4, 5] },      // Mon–Fri
+      { name: 'AM Weekend', start_time: '09:30', end_time: '15:30', days_active: [0, 6] },                // Sun + Sat
+    ] satisfies ShiftMeta[]
+    const sched = mkSchedule({
+      assignments: [
+        { date: '2026-06-01', employee_id: 'e1', employee_name: 'Audrey Miller', shift_name: 'AM Weekday', role: 'Lifeguard', start_time: '11:30', end_time: '15:30', hours: 4 },
+      ],
+      gaps: [], summary: '', closed_dates: [],
+    })
+    const g = buildScheduleGrid({ schedule: sched, template: TEMPLATE, companyName: COMPANY_NAME, shifts: numberShifts, events: [] })
+    const xlsxBuf3 = await renderScheduleGridXlsx(g)
+    const html3 = renderScheduleGridHtml(g)
+    expect(xlsxBuf3.byteLength > 0 && html3.length > 0, `number[] days_active (real DB shape) → Excel + PDF both render (no throw)`)
+    // The Mon–Fri shift's meta label must compact correctly from numeric indices.
+    expect(g.rows[0].meta?.includes('Mon–Fri') ?? false, `number[] days_active compacts to 'Mon–Fri' (got '${g.rows[0].meta}')`)
+  } catch (e) {
+    console.error(`✗ number[] days_active THREW → ${e instanceof Error ? e.message : e}`)
+    process.exit(1)
+  }
+
   console.log('\n✓ All smoke-schedule-grid-download assertions passed')
 }
 

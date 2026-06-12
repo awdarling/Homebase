@@ -63,7 +63,9 @@ export interface ShiftMeta {
   name: string
   start_time: string | null
   end_time: string | null
-  days_active: string[] | null     // ['monday','tuesday',...] — informational only
+  // shift_types.days_active is a number[] of day indices (0=Sun … 6=Sat) — see
+  // src/lib/types.ts. Tolerate a legacy string[] form too. Informational only.
+  days_active: Array<number | string> | null
 }
 
 export interface EventRow {
@@ -160,10 +162,14 @@ const DAY_INDEX: Record<string, number> = {
   sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
 }
 
-function compactDaysLabel(days: string[]): string {
+function compactDaysLabel(days: Array<number | string>): string {
+  // days_active comes from the DB as number[] (day indices 0–6). Use the number
+  // directly; only fall back to the name lookup for a legacy string entry. This
+  // is the DOWNLOAD-500 root cause: calling .toLowerCase() on a number threw
+  // "d.toLowerCase is not a function" and broke both Excel and PDF downloads.
   const indices = days
-    .map(d => DAY_INDEX[d.toLowerCase()])
-    .filter(i => typeof i === 'number')
+    .map(d => (typeof d === 'number' ? d : DAY_INDEX[String(d).toLowerCase()]))
+    .filter((i): i is number => typeof i === 'number' && i >= 0 && i <= 6)
     .sort((a, b) => a - b)
   if (indices.length === 0) return ''
   // Detect contiguous Mon–Fri or Sat–Sun ranges.
