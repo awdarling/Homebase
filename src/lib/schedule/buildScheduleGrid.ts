@@ -22,11 +22,19 @@ export type CellKind =
   | 'gap'        // no assignments, requirement unfilled
   | 'closed'     // entire day is closed (this cell is suppressed; closure renders once per day)
 
+/** One assigned employee in a cell. `role` is '' when the template hides roles
+ *  (`display_options.show_role === false`) or the assignment has no role —
+ *  mirroring the on-screen card, which shows the full name and (gated) role. */
+export interface GridCellEmployee {
+  name: string                     // full employee_name (first + last), as on-screen
+  role: string                     // assignment role, or '' when gated/absent
+}
+
 export interface GridCell {
   kind: CellKind
   shiftId: string
   date: string
-  employeeDisplayNames: string[]   // pre-formatted, collision-resolved
+  employees: GridCellEmployee[]    // full name + (show_role-gated) role, matching the on-screen render
   gapRole: string | null           // when kind === 'gap' or 'partial'
   unfilledCount: number            // 0 unless gap/partial
   appearance: CellAppearance       // shared template-driven color (see resolveCellAppearance)
@@ -114,36 +122,6 @@ function weekRangeLabel(start: string, end: string): string {
     ? e.toLocaleDateString('en-US', { day: 'numeric' })
     : e.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   return `${startFmt}–${endFmt}, ${e.getFullYear()}`
-}
-
-// Renders one employee_name as either "First" or "First L." depending on
-// whether the first name collides with another employee in this week.
-function buildDisplayNameMap(assignments: ScheduleAssignment[]): Map<string, string> {
-  const firstNameCounts = new Map<string, Set<string>>()  // first → set of employee_id
-  for (const a of assignments) {
-    // Real data can carry a null/blank employee_name (e.g. a manual-edit
-    // residue). Normalize before any string op so it can't throw — for valid
-    // names this is identical to the previous behavior.
-    const name = (a.employee_name ?? '').trim()
-    const first = name.split(/\s+/)[0] ?? name
-    if (!firstNameCounts.has(first)) firstNameCounts.set(first, new Set())
-    firstNameCounts.get(first)!.add(a.employee_id)
-  }
-  const out = new Map<string, string>()
-  for (const a of assignments) {
-    if (out.has(a.employee_id)) continue
-    const name = (a.employee_name ?? '').trim()
-    const parts = name.split(/\s+/)
-    const first = parts[0] ?? name
-    const collides = (firstNameCounts.get(first)?.size ?? 0) > 1
-    if (collides && parts.length > 1) {
-      const lastInitial = parts[parts.length - 1][0] ?? ''
-      out.set(a.employee_id, `${first} ${lastInitial}.`)
-    } else {
-      out.set(a.employee_id, first || name)
-    }
-  }
-  return out
 }
 
 // "Mon–Fri • 11:30–3:30"-style hint under each shift label. Returns null if
@@ -243,7 +221,10 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
     gapByKey.set(`${g.shift_name}||${g.date}`, g)
   }
 
-  const displayName = buildDisplayNameMap(assignments)
+  // Role visibility mirrors the on-screen render, which gates the role line on
+  // display_options.show_role. A tenant with show_role=false gets no roles in
+  // the download either (true parity).
+  const showRole = template.display_options.show_role
 
   const rows: GridRow[] = visibleRows.map(row => {
     const shift = shiftByName.get(row.id)
@@ -253,7 +234,7 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
           kind: 'closed',
           shiftId: row.id,
           date: col.date,
-          employeeDisplayNames: [],
+          employees: [],
           gapRole: null,
           unfilledCount: 0,
           appearance: resolveCellAppearance({
@@ -267,10 +248,15 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
       const key = `${row.id}||${col.date}`
       const asgs = asgByKey.get(key) ?? []
       const gap = gapByKey.get(key)
-      const names = asgs
+      // Full name + role per assignment, matching the on-screen card exactly
+      // (which shows `employee_name` then the role line, role gated by show_role).
+      const employees: GridCellEmployee[] = asgs
         .slice()
         .sort((a, b) => (a.employee_name ?? '').localeCompare(b.employee_name ?? ''))
-        .map(a => displayName.get(a.employee_id) ?? a.employee_name ?? '')
+        .map(a => ({
+          name: a.employee_name ?? '',
+          role: showRole ? (a.role ?? '') : '',
+        }))
       const unfilled = gap ? (gap.required_count - gap.filled_count) : 0
       let kind: CellKind
       if (asgs.length === 0 && unfilled === 0) kind = 'empty'
@@ -281,7 +267,7 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
         kind,
         shiftId: row.id,
         date: col.date,
-        employeeDisplayNames: names,
+        employees,
         gapRole: gap?.role ?? null,
         unfilledCount: unfilled,
         appearance: resolveCellAppearance({

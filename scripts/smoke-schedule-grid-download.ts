@@ -147,13 +147,18 @@ expect(thuAmWeekdayCell.kind === 'gap', `Thursday AM Weekday cell is 'gap' (got 
 expect(thuAmWeekdayCell.gapRole === 'Lifeguard', `gap cell records role 'Lifeguard'`)
 expect(thuAmWeekdayCell.unfilledCount === 2, `gap cell records 2 unfilled`)
 
-// Saturday AM Weekend cell should have Kori + Ally
+// Saturday AM Weekend cell should have Kori Allen + Ally Roberts — FULL names +
+// role, matching the on-screen card (not collision-resolved first names).
 const satIdx = grid.columns.findIndex(c => c.dayLabel === 'Saturday')
 const satAmWeekendCell = grid.rows[1].cells[satIdx]
 expect(satAmWeekendCell.kind === 'filled', `Saturday AM Weekend is 'filled'`)
 expect(
-  satAmWeekendCell.employeeDisplayNames.includes('Ally') && satAmWeekendCell.employeeDisplayNames.includes('Kori'),
-  `Sat AM Weekend cell shows Kori + Ally first names (got ${JSON.stringify(satAmWeekendCell.employeeDisplayNames)})`,
+  satAmWeekendCell.employees.some(e => e.name === 'Ally Roberts') && satAmWeekendCell.employees.some(e => e.name === 'Kori Allen'),
+  `Sat AM Weekend cell shows FULL names Kori Allen + Ally Roberts (got ${JSON.stringify(satAmWeekendCell.employees)})`,
+)
+expect(
+  satAmWeekendCell.employees.every(e => e.role === 'Lifeguard'),
+  `Sat AM Weekend cell carries each assignment's role (got ${JSON.stringify(satAmWeekendCell.employees)})`,
 )
 
 // Sunday is closed — every cell in that column is kind='closed'
@@ -165,13 +170,13 @@ for (const row of grid.rows) {
 }
 console.log('✓ Every Sunday cell across all rows is kind=\'closed\'')
 
-// First-name collision: Audrey Miller + Audrey would collide if duplicated.
-// We have multiple Park last-names (Jay, Letzia, Ian) — no first-name collision
-// among those, so they render as bare first names.
+// Filled cell carries the FULL name (first + last) AND the role per assignment,
+// matching the on-screen card — this is the name+role regression guard at the
+// grid level (the download used to drop the last name + role).
 const audreyCell = grid.rows[0].cells[0]  // Mon AM Weekday
 expect(
-  audreyCell.employeeDisplayNames.includes('Audrey'),
-  `Audrey renders as bare first name (got ${JSON.stringify(audreyCell.employeeDisplayNames)})`,
+  audreyCell.employees.some(e => e.name === 'Audrey Miller' && e.role === 'Lifeguard'),
+  `Audrey renders as full name 'Audrey Miller' with role 'Lifeguard' (got ${JSON.stringify(audreyCell.employees)})`,
 )
 
 // ── Excel formatter (exceljs; renderer is now async) ─────────────────────────
@@ -208,6 +213,13 @@ async function main() {
 
   // Row 3 is first shift (AM Weekday). A4 contains 'AM Weekday'.
   expect(String(ws['A4']?.v ?? '').startsWith('AM Weekday'), `A4 shift label is 'AM Weekday'`)
+  // NAME+ROLE regression guard (Excel): B4 is Monday AM Weekday (Audrey Miller +
+  // Karsten Brown, both Lifeguard). The download used to drop the LAST NAME and
+  // the ROLE — assert both reach the cell text now.
+  const b4 = String(ws['B4']?.v ?? '')
+  expect(b4.includes('Audrey Miller'), `B4 contains FULL name 'Audrey Miller' incl. last name (got "${b4}")`)
+  expect(b4.includes('Karsten Brown'), `B4 contains FULL name 'Karsten Brown' incl. last name (got "${b4}")`)
+  expect(b4.includes('Lifeguard'), `B4 contains the assignment role 'Lifeguard' (got "${b4}")`)
   // E4 is Thursday cell for AM Weekday → should contain 'UNFILLED — Lifeguard'.
   expect(
     String(ws['E4']?.v ?? '').includes('UNFILLED'),
@@ -285,7 +297,11 @@ async function main() {
   expect(html.includes('Week of Jun 1–7, 2026'), `HTML contains week-range label`)
   expect(html.includes('UNFILLED — Lifeguard'), `HTML contains gap text 'UNFILLED — Lifeguard'`)
   expect(html.includes('CLOSED — Memorial Day'), `HTML contains closure label 'CLOSED — Memorial Day'`)
-  expect(html.includes('Kori') && html.includes('Ally'), `HTML contains employee first names in cells`)
+  // NAME+ROLE regression guard (PDF/HTML): FULL names (incl. last name) + role
+  // must render, matching the on-screen card — the content the download dropped.
+  expect(html.includes('Kori Allen') && html.includes('Ally Roberts'), `HTML contains FULL employee names incl. last name`)
+  expect(html.includes('Audrey Miller'), `HTML contains full name 'Audrey Miller' (last name restored)`)
+  expect(html.includes('class="cell-role">Lifeguard<'), `HTML renders the assignment role line 'Lifeguard'`)
   expect(html.includes('@media print'), `HTML has print CSS rules`)
   expect(html.includes('size: landscape'), `HTML print CSS is landscape`)
 
@@ -407,6 +423,39 @@ async function main() {
     kind: 'filled',
   })
   expect(dayFallback.color === '#FF8C00', `with no template entry, resolver falls back to the day color (got ${dayFallback.color})`)
+
+  // ── NAME + ROLE REGRESSION CASE (the bug this fix targets) ──────────────────
+  //
+  // A single filled assignment with a known first name, LAST name, and role.
+  // Both download renderers must emit the LAST name AND the ROLE — the content
+  // the download was dropping (it showed first-name-only, no role). Then with
+  // show_role=false the role must NOT appear on either renderer (true parity
+  // with the on-screen show_role gate) while the full name still does.
+  const nameRoleSched = mkSchedule({
+    assignments: [
+      { date: '2026-06-01', employee_id: 'e-jv', employee_name: 'Jordan Vasquez', shift_name: 'AM Weekday', role: 'Bartender', start_time: '11:30', end_time: '15:30', hours: 4 },
+    ],
+    gaps: [], summary: '', closed_dates: [],
+  })
+
+  // show_role = true (default TEMPLATE). B4 = Monday AM Weekday cell.
+  const gShow = buildScheduleGrid({ schedule: nameRoleSched, template: TEMPLATE, companyName: COMPANY_NAME, shifts: SHIFTS, events: [] })
+  const b4Show = String(XLSX.read(await renderScheduleGridXlsx(gShow), { type: 'buffer' }).Sheets['Schedule']['B4']?.v ?? '')
+  const htmlShow = renderScheduleGridHtml(gShow)
+  expect(b4Show.includes('Vasquez'), `Excel filled cell emits the LAST name 'Vasquez' (got "${b4Show.replace(/\n/g, '⏎')}")`)
+  expect(b4Show.includes('Bartender'), `Excel filled cell emits the ROLE 'Bartender' (got "${b4Show.replace(/\n/g, '⏎')}")`)
+  expect(htmlShow.includes('Jordan Vasquez'), `HTML filled cell emits the full name incl. last name 'Vasquez'`)
+  expect(htmlShow.includes('class="cell-role">Bartender<'), `HTML filled cell emits the role line 'Bartender'`)
+
+  // show_role = false → role gated off on BOTH renderers; full name still present.
+  const tmplNoRole: ScheduleTemplate = { ...TEMPLATE, display_options: { ...TEMPLATE.display_options, show_role: false } }
+  const gHide = buildScheduleGrid({ schedule: nameRoleSched, template: tmplNoRole, companyName: COMPANY_NAME, shifts: SHIFTS, events: [] })
+  const b4Hide = String(XLSX.read(await renderScheduleGridXlsx(gHide), { type: 'buffer' }).Sheets['Schedule']['B4']?.v ?? '')
+  const htmlHide = renderScheduleGridHtml(gHide)
+  expect(gHide.rows[0].cells[0].employees[0].role === '', `show_role=false: grid gates the role to '' at the source`)
+  expect(b4Hide.includes('Vasquez'), `show_role=false: Excel still shows the name (got "${b4Hide.replace(/\n/g, '⏎')}")`)
+  expect(!b4Hide.includes('Bartender'), `show_role=false: Excel hides the role — parity with on-screen (got "${b4Hide.replace(/\n/g, '⏎')}")`)
+  expect(htmlHide.includes('Jordan Vasquez') && !htmlHide.includes('Bartender'), `show_role=false: HTML shows the name, hides the role`)
 
   console.log('\n✓ All smoke-schedule-grid-download assertions passed')
 }

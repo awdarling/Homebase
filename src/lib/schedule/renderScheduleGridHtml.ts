@@ -68,8 +68,10 @@ export function renderScheduleGridHtml(grid: ScheduleGrid): string {
       if (cell.kind === 'empty') {
         return `<td class="cell cell-empty" style="background:${fill}"></td>`
       }
-      const employeeLines = (cell.employeeDisplayNames ?? [])
-        .map(n => `<div class="cell-name">${escapeHtml(n ?? '')}</div>`)
+      // Per assignment: full name + its role line (when present) — mirrors the
+      // on-screen card. `role` is already show_role-gated in buildScheduleGrid.
+      const employeeLines = (cell.employees ?? [])
+        .map(e => `<div class="cell-emp"><div class="cell-name">${escapeHtml(e.name)}</div>${e.role ? `<div class="cell-role">${escapeHtml(e.role)}</div>` : ''}</div>`)
         .join('')
       if (cell.kind === 'filled') {
         return `<td class="cell cell-filled" style="background:${fill}">${employeeLines}</td>`
@@ -220,9 +222,17 @@ export function renderScheduleGridHtml(grid: ScheduleGrid): string {
     font-size: 12px;
     letter-spacing: 0.04em;
   }
+  .cell-emp {
+    margin-bottom: 3px;
+  }
   .cell-name {
     color: #1a1a2e;
     line-height: 1.45;
+  }
+  .cell-role {
+    color: #555;
+    font-size: 10px;
+    line-height: 1.2;
   }
   .cell-gap, .cell-partial .cell-gap, .cell-gap div.cell-gap {
     /* The .cell-gap text inside partial/gap cells. */

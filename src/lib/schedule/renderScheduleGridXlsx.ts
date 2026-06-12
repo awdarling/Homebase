@@ -82,7 +82,14 @@ const STYLE = {
 function cellTextForGrid(cell: GridCell, gapRoleLabel: (role: string) => string): string {
   if (cell.kind === 'closed') return '' // closed cells render via merge; only the top cell shows text
   if (cell.kind === 'empty') return ''
-  const lines: string[] = [...(cell.employeeDisplayNames ?? [])]
+  // Per assignment: full name, then its role on the next line (when present) —
+  // mirroring the on-screen card's name-line + role-line. `role` is already
+  // gated by show_role in buildScheduleGrid, so an empty role means "hide it".
+  const lines: string[] = []
+  for (const e of cell.employees ?? []) {
+    lines.push(e.name)
+    if (e.role) lines.push(e.role)
+  }
   if (cell.kind === 'gap' || cell.kind === 'partial') {
     lines.push(gapRoleLabel(cell.gapRole ?? ''))
   }
