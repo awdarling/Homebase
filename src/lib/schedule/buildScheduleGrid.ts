@@ -5,6 +5,7 @@ import type {
   ScheduleGap,
   ScheduleTemplate,
 } from '@/lib/types'
+import { resolveCellAppearance, type CellAppearance } from './resolveCellAppearance'
 
 // ── Cell + grid shape ────────────────────────────────────────────────────────
 //
@@ -28,6 +29,7 @@ export interface GridCell {
   employeeDisplayNames: string[]   // pre-formatted, collision-resolved
   gapRole: string | null           // when kind === 'gap' or 'partial'
   unfilledCount: number            // 0 unless gap/partial
+  appearance: CellAppearance       // shared template-driven color (see resolveCellAppearance)
 }
 
 export interface GridColumn {
@@ -37,6 +39,7 @@ export interface GridColumn {
   width: number                    // px hint
   isClosed: boolean
   closureTitle: string | null      // null if no event matches; e.g. 'Memorial Day'
+  color: string                    // template day color (hex) — drives the day-header fill
 }
 
 export interface GridRow {
@@ -215,6 +218,7 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
         width: col.width ?? 100,
         isClosed: closedDates.has(date),
         closureTitle: closureTitleParts.length > 0 ? closureTitleParts.join(' • ') : null,
+        color: col.color,
       } as GridColumn
     })
     .filter((c): c is GridColumn => c !== null)
@@ -252,6 +256,12 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
           employeeDisplayNames: [],
           gapRole: null,
           unfilledCount: 0,
+          appearance: resolveCellAppearance({
+            colorConfig: template.color_config,
+            columnColor: col.color,
+            rowId: row.id,
+            kind: 'closed',
+          }),
         }
       }
       const key = `${row.id}||${col.date}`
@@ -274,6 +284,12 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
         employeeDisplayNames: names,
         gapRole: gap?.role ?? null,
         unfilledCount: unfilled,
+        appearance: resolveCellAppearance({
+          colorConfig: template.color_config,
+          columnColor: col.color,
+          rowId: row.id,
+          kind,
+        }),
       }
     })
     return {

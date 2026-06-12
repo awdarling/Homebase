@@ -14,6 +14,7 @@ import {
 } from '../src/lib/schedule/buildScheduleGrid'
 import { renderScheduleGridXlsx } from '../src/lib/schedule/renderScheduleGridXlsx'
 import { renderScheduleGridHtml } from '../src/lib/schedule/renderScheduleGridHtml'
+import { hexToArgb, blendOnWhite, resolveCellAppearance } from '../src/lib/schedule/resolveCellAppearance'
 
 function expect(cond: boolean, msg: string) {
   if (!cond) { console.error('✗ ' + msg); process.exit(1) }
@@ -242,10 +243,37 @@ async function main() {
   expect(titleFill?.type === 'pattern' && !!titleFill.fgColor?.argb, `A1 has a real solid fill (got ${JSON.stringify(titleFill?.fgColor)})`)
   const gapCell = ews.getCell('E4')
   const gapFill = (gapCell.fill as ExcelJS.FillPattern)
-  expect(gapFill?.fgColor?.argb === 'FFFDECEC', `E4 gap cell has the red gap fill (got ${gapFill?.fgColor?.argb})`)
-  expect((gapCell.font?.color?.argb) === 'FFB91C1C', `E4 gap text is red (got ${gapCell.font?.color?.argb})`)
+  // Post template-unification: a gap cell is no longer painted a flat red box.
+  // It carries the Thursday day tint (col '#00008B' blended onto white at the
+  // shared 0.06 alpha) — matching the on-screen grid, which shows a day-tinted
+  // cell with a red gap pill — while the gap TEXT stays red.
+  const thuTint = hexToArgb(blendOnWhite('#00008B', 0.06)) // 'FFF0F0F8'
+  expect(gapFill?.fgColor?.argb === thuTint, `E4 gap cell carries the Thursday day tint ${thuTint} (got ${gapFill?.fgColor?.argb})`)
+  expect((gapCell.font?.color?.argb) === 'FFB91C1C', `E4 gap text is still red (got ${gapCell.font?.color?.argb})`)
   const frozen = ews.views?.[0]
   expect(frozen?.state === 'frozen' && frozen.xSplit === 1 && frozen.ySplit === 3, `header row + label column are frozen (got ${JSON.stringify(frozen)})`)
+
+  // ── ALL-BLUE REGRESSION GUARD ──────────────────────────────────────────────
+  //
+  // The bug this fix targets: the download forked its own color logic and
+  // collapsed every per-day color into ONE shared navy (headers) / near-white
+  // (cells), so the download looked nothing like the on-screen grid. A single-
+  // column check could pass while still broken, so we assert TWO columns with
+  // DISTINCT known template colors each reach the file as their OWN color —
+  // never a shared default. (Cell color here is template DAY color, per the
+  // resolveCellAppearance contract; this codebase has no role-color path.)
+  const OLD_SHARED_NAVY = 'FF2A2A4E' // the single fill the forked code used for every day header
+  const monHeaderFill = (ews.getCell('B3').fill as ExcelJS.FillPattern)?.fgColor?.argb // Monday '#FF8C00'
+  const thuHeaderFill = (ews.getCell('E3').fill as ExcelJS.FillPattern)?.fgColor?.argb // Thursday '#00008B'
+  expect(monHeaderFill === hexToArgb('#FF8C00'), `Monday header is its own orange ${hexToArgb('#FF8C00')} (got ${monHeaderFill})`)
+  expect(thuHeaderFill === hexToArgb('#00008B'), `Thursday header is its own dark-blue ${hexToArgb('#00008B')} (got ${thuHeaderFill})`)
+  expect(monHeaderFill !== thuHeaderFill, `two day headers are DISTINCT colors, not collapsed to one`)
+  expect(monHeaderFill !== OLD_SHARED_NAVY && thuHeaderFill !== OLD_SHARED_NAVY, `neither day header fell back to the old shared navy`)
+
+  // Filled body cells carry their own per-day tint too (not a single grey).
+  const monBodyFill = (ews.getCell('B4').fill as ExcelJS.FillPattern)?.fgColor?.argb // Mon AM Weekday (filled)
+  expect(monBodyFill === hexToArgb(blendOnWhite('#FF8C00', 0.06)), `Monday filled cell carries the Monday tint ${hexToArgb(blendOnWhite('#FF8C00', 0.06))} (got ${monBodyFill})`)
+  expect(monBodyFill !== gapFill?.fgColor?.argb, `Monday and Thursday cells are DISTINCT tints, not one shared fill`)
 
   try { fs.unlinkSync(tmpXlsx) } catch { /* best-effort cleanup */ }
 
@@ -260,6 +288,19 @@ async function main() {
   expect(html.includes('Kori') && html.includes('Ally'), `HTML contains employee first names in cells`)
   expect(html.includes('@media print'), `HTML has print CSS rules`)
   expect(html.includes('size: landscape'), `HTML print CSS is landscape`)
+
+  // ALL-BLUE REGRESSION GUARD (PDF/HTML side): the two day headers must render
+  // their OWN template colors inline, not a single shared background.
+  expect(html.includes('style="background:#FF8C00"'), `HTML Monday header renders its own orange inline`)
+  expect(html.includes('style="background:#00008B"'), `HTML Thursday header renders its own dark-blue inline`)
+  expect(
+    html.includes(`style="background:${blendOnWhite('#FF8C00', 0.06)}"`),
+    `HTML Monday body cells carry the Monday day tint inline (${blendOnWhite('#FF8C00', 0.06)})`,
+  )
+  expect(
+    !html.includes('.cell-filled { background:'),
+    `dead per-kind background CSS was removed from the HTML renderer`,
+  )
   expect(html.includes('rowspan="5"'), `HTML closure cell uses rowspan=5 (one per shift row)`)
   expect(html.includes('— Aegis'), `HTML footer mentions Aegis attribution`)
 
@@ -342,6 +383,30 @@ async function main() {
     console.error(`✗ number[] days_active THREW → ${e instanceof Error ? e.message : e}`)
     process.exit(1)
   }
+
+  // ── CONTRACT CASE: a per-shift template color overrides the plain day color ──
+  //
+  // Exercises the resolver directly (no saveTemplate dependency — that path is a
+  // known-broken Piece 2 item). Documents the contract Pieces 2/3 inherit: when
+  // the template specifies a color for this position (here via color_config
+  // by:'shift' → map[rowId]), that template color WINS over the column's day
+  // color; with by:'day' it falls back to the column color.
+  const shiftOverride = resolveCellAppearance({
+    colorConfig: { by: 'shift', map: { 'AM Weekday': '#123456' } },
+    columnColor: '#FF8C00',
+    rowId: 'AM Weekday',
+    kind: 'filled',
+  })
+  expect(shiftOverride.color === '#123456', `template (per-shift) color wins over day color (got ${shiftOverride.color})`)
+  expect(shiftOverride.fill === blendOnWhite('#123456', 0.06), `override flows through to the export fill`)
+
+  const dayFallback = resolveCellAppearance({
+    colorConfig: { by: 'shift', map: {} }, // no entry for this row → fall back
+    columnColor: '#FF8C00',
+    rowId: 'AM Weekday',
+    kind: 'filled',
+  })
+  expect(dayFallback.color === '#FF8C00', `with no template entry, resolver falls back to the day color (got ${dayFallback.color})`)
 
   console.log('\n✓ All smoke-schedule-grid-download assertions passed')
 }
