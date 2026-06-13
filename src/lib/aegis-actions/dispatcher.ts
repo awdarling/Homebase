@@ -310,6 +310,74 @@ async function handleAvailabilityDecision(
   }
 }
 
+// ── Custom availability (temporary / date-limited override — approve / deny) ──
+
+async function handleCustomAvailabilityDecision(
+  decision: 'approved' | 'denied',
+  row: TokenRow,
+  supabase: SupabaseClient,
+): Promise<DispatchResult> {
+  const payload = row.payload
+  const employee_id = strOrNull(payload.employee_id)
+  const employee_name = strOrNull(payload.employee_name) ?? 'the employee'
+
+  if (!employee_id) {
+    return { ok: false, message: 'This link is missing the employee id. Approve from Homebase instead.' }
+  }
+
+  // The custom-availability business logic (write the date-limited override + the
+  // employee notification) lives in Aegis, shared with the reply-"YES" path. The
+  // DB write happens on the Aegis side, so a failed call means nothing was applied.
+  try {
+    await postToAegisInternal('/internal/apply-custom-availability-decision', {
+      decision,
+      decided_by: row.issued_to_email,
+      ...row.payload,
+    })
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    await logAegisDeliveryFailure(supabase, {
+      company_id: row.company_id,
+      entity_type: 'employee',
+      entity_id: employee_id,
+      aegis_endpoint: '/internal/apply-custom-availability-decision',
+      error: errMsg,
+      issued_to_user_id: row.issued_to_user_id,
+      issued_to_email: row.issued_to_email,
+    })
+    if (err instanceof AegisInternalConfigError) {
+      return {
+        ok: false,
+        message: 'Could not apply the temporary-availability decision — the Aegis connection is not configured. Please reply YES/NO to the email, or take action in Homebase.',
+      }
+    }
+    return {
+      ok: false,
+      message: 'Could not apply the temporary-availability decision. Please reply YES/NO to the email, or take action in Homebase.',
+    }
+  }
+
+  await logDecision(supabase, {
+    company_id: row.company_id,
+    action: decision === 'approved' ? 'custom_availability_approved_via_email' : 'custom_availability_denied_via_email',
+    entity_type: 'employee',
+    entity_id: employee_id,
+    summary: `${decision === 'approved' ? 'Approved' : 'Denied'} ${employee_name}'s temporary availability change`,
+    metadata: {
+      decided_by: row.issued_to_user_id,
+      decided_by_email: row.issued_to_email,
+      source: 'magic_link',
+    },
+  })
+
+  return {
+    ok: true,
+    message: decision === 'approved'
+      ? `${employee_name}'s temporary availability change is approved — they've been notified.`
+      : `${employee_name}'s temporary availability change is denied — they've been notified.`,
+  }
+}
+
 // ── Public entry point ───────────────────────────────────────────────────────
 
 export async function dispatchAction(
@@ -327,6 +395,10 @@ export async function dispatchAction(
       return handleAvailabilityDecision('approved', row, supabase)
     case 'deny_availability':
       return handleAvailabilityDecision('denied', row, supabase)
+    case 'approve_custom_availability':
+      return handleCustomAvailabilityDecision('approved', row, supabase)
+    case 'deny_custom_availability':
+      return handleCustomAvailabilityDecision('denied', row, supabase)
 
     // The remaining action types are still pending real handlers — they
     // continue to stub-dispatch so the token consume + audit flow keeps
