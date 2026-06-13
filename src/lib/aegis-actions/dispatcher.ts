@@ -240,6 +240,76 @@ async function handleConfirmDistribution(
   }
 }
 
+// ── Availability (approve / deny) ────────────────────────────────────────────
+
+async function handleAvailabilityDecision(
+  decision: 'approved' | 'denied',
+  row: TokenRow,
+  supabase: SupabaseClient,
+): Promise<DispatchResult> {
+  const payload = row.payload
+  const employee_id = strOrNull(payload.employee_id)
+  const employee_name = strOrNull(payload.employee_name) ?? 'the employee'
+
+  if (!employee_id) {
+    return { ok: false, message: 'This link is missing the employee id. Approve from Homebase instead.' }
+  }
+
+  // The availability business logic (DB write + employee notification) lives in
+  // Aegis, shared with the reply-"YES" path so the two produce the identical
+  // effect. Forward the token payload (the approval snapshot) so Aegis applies
+  // it. Unlike time-off, the DB write happens on the Aegis side — so if this
+  // call fails, nothing was applied and we surface a non-success message.
+  try {
+    await postToAegisInternal('/internal/apply-availability-decision', {
+      decision,
+      decided_by: row.issued_to_email,
+      ...row.payload,
+    })
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    await logAegisDeliveryFailure(supabase, {
+      company_id: row.company_id,
+      entity_type: 'employee',
+      entity_id: employee_id,
+      aegis_endpoint: '/internal/apply-availability-decision',
+      error: errMsg,
+      issued_to_user_id: row.issued_to_user_id,
+      issued_to_email: row.issued_to_email,
+    })
+    if (err instanceof AegisInternalConfigError) {
+      return {
+        ok: false,
+        message: 'Could not apply the availability decision — the Aegis connection is not configured. Please reply YES/NO to the email, or take action in Homebase.',
+      }
+    }
+    return {
+      ok: false,
+      message: 'Could not apply the availability decision. Please reply YES/NO to the email, or take action in Homebase.',
+    }
+  }
+
+  await logDecision(supabase, {
+    company_id: row.company_id,
+    action: decision === 'approved' ? 'availability_approved_via_email' : 'availability_denied_via_email',
+    entity_type: 'employee',
+    entity_id: employee_id,
+    summary: `${decision === 'approved' ? 'Approved' : 'Denied'} ${employee_name}'s availability update`,
+    metadata: {
+      decided_by: row.issued_to_user_id,
+      decided_by_email: row.issued_to_email,
+      source: 'magic_link',
+    },
+  })
+
+  return {
+    ok: true,
+    message: decision === 'approved'
+      ? `${employee_name}'s availability update is approved — they've been notified.`
+      : `${employee_name}'s availability update is denied — they've been notified.`,
+  }
+}
+
 // ── Public entry point ───────────────────────────────────────────────────────
 
 export async function dispatchAction(
@@ -253,12 +323,14 @@ export async function dispatchAction(
       return handleTimeOffDecision('denied', row, supabase)
     case 'confirm_distribution':
       return handleConfirmDistribution(row, supabase)
+    case 'approve_availability':
+      return handleAvailabilityDecision('approved', row, supabase)
+    case 'deny_availability':
+      return handleAvailabilityDecision('denied', row, supabase)
 
     // The remaining action types are still pending real handlers — they
     // continue to stub-dispatch so the token consume + audit flow keeps
     // working end-to-end while the Aegis side ships those workflows.
-    case 'approve_availability':
-    case 'deny_availability':
     case 'accept_emergency_coverage':
     case 'decline_emergency_coverage':
     case 'request_additional_batch':
