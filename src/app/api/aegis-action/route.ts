@@ -260,17 +260,10 @@ export async function POST(request: NextRequest) {
     return htmlResponse(errorPage('failed', dispatch.message), 500)
   }
 
-  if (row.company_id) {
-    await supabase.from('activity_log').insert({
-      company_id: row.company_id,
-      actor: 'aegis',
-      action: 'token_consumed',
-      entity_type: 'aegis_action_token',
-      entity_id: row.id,
-      summary: `Aegis action ${row.action_type} confirmed via magic link`,
-      metadata: { action_type: row.action_type, token_id: row.id },
-    })
-  }
+  // Each wired handler writes its own human-readable activity_log row with
+  // metadata.source='magic_link' (see dispatcher.ts + time-off/decide.ts).
+  // The token_consumed lifecycle is already captured on the aegis_action_tokens
+  // row itself (consumed_at), so a second feed entry here was purely duplicative.
 
   return htmlResponse(successPage(dispatch.message))
 }
