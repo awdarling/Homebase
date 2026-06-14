@@ -1573,6 +1573,122 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true })
       }
 
+      case 'add_shift_experience_rule': {
+        const d = action.data as {
+          shift_type_id?: string | null
+          days_of_week?: number[] | null
+          role?: string | null
+          mode?: string
+          min_count?: number | null
+          season_start?: string | null
+          season_end?: string | null
+        }
+        const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+        if (d.mode !== 'all_veterans' && d.mode !== 'min_veterans') {
+          return NextResponse.json({ error: "Mode must be 'all_veterans' or 'min_veterans'." }, { status: 400 })
+        }
+        if (d.mode === 'min_veterans' && (typeof d.min_count !== 'number' || d.min_count < 1)) {
+          return NextResponse.json({ error: 'For a minimum-veterans rule I need a min_count of at least 1.' }, { status: 400 })
+        }
+        for (const k of ['season_start', 'season_end'] as const) {
+          const v = d[k]
+          if (v != null && (typeof v !== 'string' || !DATE_RE.test(v))) {
+            return NextResponse.json({ error: `${k} must be a date in YYYY-MM-DD format.` }, { status: 400 })
+          }
+        }
+        const days = Array.isArray(d.days_of_week)
+          ? d.days_of_week.filter(n => Number.isInteger(n) && n >= 0 && n <= 6)
+          : null
+        const { data, error } = await supabase.from('shift_experience_rules').insert({
+          company_id: companyId,
+          shift_type_id: d.shift_type_id ?? null,
+          days_of_week: days && days.length ? days : null,
+          role: d.role?.toString().trim() || null,
+          mode: d.mode,
+          min_count: d.mode === 'min_veterans' ? d.min_count : null,
+          season_start: d.season_start ?? null,
+          season_end: d.season_end ?? null,
+          created_by: 'soteria',
+        }).select().single()
+        if (error) throw error
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'add_shift_experience_rule',
+          entity_type: 'shift_experience_rule',
+          entity_id: data.id,
+          summary: `Soteria added a veteran staffing rule (${d.mode === 'min_veterans' ? `min ${d.min_count}` : 'all veterans'})`,
+          metadata: { ...d },
+        })
+        return NextResponse.json({ success: true, data })
+      }
+
+      case 'update_shift_experience_rule': {
+        const d = action.data as { id?: string; mode?: string; min_count?: number | null; active?: boolean } & Record<string, unknown>
+        if (!d.id || typeof d.id !== 'string') {
+          return NextResponse.json({ error: 'I need the id of the rule to update.' }, { status: 400 })
+        }
+        const patch: Record<string, unknown> = {}
+        if ('shift_type_id' in d) patch.shift_type_id = d.shift_type_id ?? null
+        if ('days_of_week' in d) {
+          patch.days_of_week = Array.isArray(d.days_of_week)
+            ? (d.days_of_week as number[]).filter(n => Number.isInteger(n) && n >= 0 && n <= 6)
+            : null
+        }
+        if ('role' in d) patch.role = (d.role as string | null)?.toString().trim() || null
+        if ('mode' in d) {
+          if (d.mode !== 'all_veterans' && d.mode !== 'min_veterans') {
+            return NextResponse.json({ error: "Mode must be 'all_veterans' or 'min_veterans'." }, { status: 400 })
+          }
+          patch.mode = d.mode
+        }
+        if ('min_count' in d) patch.min_count = d.min_count ?? null
+        if ('season_start' in d) patch.season_start = d.season_start ?? null
+        if ('season_end' in d) patch.season_end = d.season_end ?? null
+        if ('active' in d) patch.active = !!d.active
+        const { data, error } = await supabase
+          .from('shift_experience_rules')
+          .update(patch)
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+          .select()
+          .single()
+        if (error) throw error
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'update_shift_experience_rule',
+          entity_type: 'shift_experience_rule',
+          entity_id: d.id,
+          summary: 'Soteria updated a veteran staffing rule',
+          metadata: { ...d },
+        })
+        return NextResponse.json({ success: true, data })
+      }
+
+      case 'delete_shift_experience_rule': {
+        const d = action.data as { id?: string }
+        if (!d.id || typeof d.id !== 'string') {
+          return NextResponse.json({ error: 'I need the id of the rule to remove.' }, { status: 400 })
+        }
+        const { error } = await supabase
+          .from('shift_experience_rules')
+          .delete()
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+        if (error) throw error
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'delete_shift_experience_rule',
+          entity_type: 'shift_experience_rule',
+          entity_id: d.id,
+          summary: 'Soteria removed a veteran staffing rule',
+          metadata: { id: d.id },
+        })
+        return NextResponse.json({ success: true })
+      }
+
       case 'update_conflict': {
         const d = action.data as { id?: string; severity?: string; reason?: string | null }
         const ALLOWED_SEVERITIES = ['avoid', 'never'] as const
