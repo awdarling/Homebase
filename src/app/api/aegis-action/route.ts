@@ -8,103 +8,17 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 )
 
-// ── Styled HTML helpers ─────────────────────────────────────────────────────
+// ── Styled HTML helpers (Quria dark brand) ──────────────────────────────────
 
-const BASE_STYLE = `
-  :root {
-    --bg-base: #0d0d0d;
-    --bg-surface-1: #111111;
-    --bg-surface-2: #141414;
-    --border-default: #2a2a2a;
-    --text-primary: #e8e8e8;
-    --text-secondary: #999999;
-    --text-muted: #555555;
-    --accent: #f97316;
-    --accent-dark: #c2582a;
-    --status-ready-text: #4ade80;
-    --status-blocked-text: #f87171;
-    --radius-md: 8px;
-    --radius-lg: 12px;
-  }
-  * { box-sizing: border-box; }
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: var(--bg-base);
-    color: var(--text-primary);
-    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    min-height: 100vh;
-  }
-  .wrap {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
-    padding: 24px;
-  }
-  .card {
-    background: var(--bg-surface-1);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-lg);
-    padding: 40px 32px;
-    max-width: 480px;
-    width: 100%;
-    text-align: center;
-  }
-  .card h1 {
-    font-family: 'Syne', sans-serif;
-    font-size: 22px;
-    font-weight: 600;
-    margin: 0 0 12px 0;
-    color: var(--text-primary);
-  }
-  .card p {
-    color: var(--text-secondary);
-    line-height: 1.55;
-    margin: 0 0 24px 0;
-    font-size: 15px;
-  }
-  .icon {
-    font-size: 36px;
-    margin-bottom: 12px;
-    display: block;
-  }
-  .btn-primary {
-    background: var(--accent);
-    color: #0d0d0d;
-    border: none;
-    padding: 12px 28px;
-    border-radius: var(--radius-md);
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    font-family: inherit;
-  }
-  .btn-primary:hover { background: var(--accent-dark); }
-  .cancel-note {
-    margin-top: 18px;
-    font-size: 13px;
-    color: var(--text-muted);
-  }
-  .ok-icon { color: var(--status-ready-text); }
-  .err-icon { color: var(--status-blocked-text); }
-`
+const FONT_STACK =
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
 
-function htmlShell(title: string, body: string): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)} — Homebase</title>
-<style>${BASE_STYLE}</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="card">${body}</div>
-</div>
-</body>
-</html>`
+// Accent color per tone. Success = green, error/denied = red, info = orange.
+type Tone = 'success' | 'error' | 'info'
+const TONE_ACCENT: Record<Tone, string> = {
+  success: '#4ade80',
+  error: '#f87171',
+  info: '#f97316',
 }
 
 function escapeHtml(s: string): string {
@@ -121,6 +35,139 @@ function htmlResponse(html: string, status = 200): Response {
     status,
     headers: { 'content-type': 'text/html; charset=utf-8' },
   })
+}
+
+/**
+ * Renders a single, consistent Quria-branded result page. `bodyExtra` lets the
+ * confirmation page inject its form below the message; everything else (error,
+ * success) just shows title + message.
+ */
+function renderActionResultPage(opts: {
+  title: string
+  message: string
+  tone: Tone
+  bodyExtra?: string
+  footnote?: string
+}): string {
+  const accent = TONE_ACCENT[opts.tone]
+  const footnote = opts.footnote ?? 'You can close this tab.'
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(opts.title)} — Aegis</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #0d0d0d;
+    color: #e8e8e8;
+    font-family: ${FONT_STACK};
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 24px;
+  }
+  .card {
+    background: #141414;
+    border: 1px solid #2a2a2a;
+    border-radius: 14px;
+    max-width: 440px;
+    width: 100%;
+    overflow: hidden;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 24px;
+    background: #000000;
+    border-bottom: 2px solid #f97316;
+  }
+  .header img {
+    width: 56px;
+    height: 56px;
+    border-radius: 10px;
+    display: block;
+  }
+  .header .wordmark {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #e8e8e8;
+  }
+  .body {
+    padding: 32px 28px 28px;
+    text-align: center;
+  }
+  .status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin: 0 auto 16px;
+    background: ${accent};
+    box-shadow: 0 0 0 5px ${accent}22;
+  }
+  .body h1 {
+    font-size: 21px;
+    font-weight: 700;
+    margin: 0 0 10px;
+    color: ${accent};
+    letter-spacing: -0.01em;
+  }
+  .body p {
+    color: #b0b0b0;
+    line-height: 1.55;
+    margin: 0;
+    font-size: 15px;
+  }
+  .actions {
+    margin-top: 24px;
+  }
+  .btn-primary {
+    background: #f97316;
+    color: #0d0d0d;
+    border: none;
+    padding: 13px 30px;
+    border-radius: 9px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn-primary:hover { background: #ea6a0c; }
+  .footnote {
+    margin-top: 22px;
+    font-size: 13px;
+    color: #777777;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="header">
+      <img src="/aegis-icon.jpg" alt="Aegis">
+      <span class="wordmark">Aegis</span>
+    </div>
+    <div class="body">
+      <div class="status-dot"></div>
+      <h1>${escapeHtml(opts.title)}</h1>
+      <p>${escapeHtml(opts.message)}</p>
+      ${opts.bodyExtra ?? ''}
+      <div class="footnote">${escapeHtml(footnote)}</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>`
 }
 
 // ── Action description templates ─────────────────────────────────────────────
@@ -180,52 +227,50 @@ function actionTitle(action_type: ActionType): string {
 
 function errorPage(kind: 'invalid' | 'expired' | 'consumed' | 'failed', detail?: string): string {
   const titles: Record<string, string> = {
-    invalid: 'Invalid link',
-    expired: 'Link expired',
-    consumed: 'Already used',
+    invalid: 'This link isn\'t valid',
+    expired: 'This link has expired',
+    consumed: 'This link was already used',
     failed: 'Something went wrong',
   }
   const messages: Record<string, string> = {
-    invalid: 'This link is not valid. Check the message for the correct link, or ask your manager to resend it.',
-    expired: 'This link has expired. Ask your manager to resend it.',
-    consumed: 'This link has already been used. If this wasn\'t you, contact your manager.',
-    failed: detail ?? 'We hit an unexpected error. Try again, or contact your manager if the problem persists.',
+    invalid: 'I couldn\'t read this link. Check the email for the right one, or ask your manager to resend it.',
+    expired: 'This link has expired. Ask your manager to resend it and I\'ll take it from there.',
+    consumed: 'This link has already been used. If that wasn\'t you, reach out to your manager.',
+    failed: detail ?? 'I hit an unexpected error. Try again, or contact your manager if it keeps happening.',
   }
 
-  const body = `
-    <span class="icon err-icon">⚠</span>
-    <h1>${escapeHtml(titles[kind])}</h1>
-    <p>${escapeHtml(messages[kind])}</p>
-    <div class="cancel-note">You can close this tab.</div>
-  `
-  return htmlShell(titles[kind], body)
+  return renderActionResultPage({
+    title: titles[kind],
+    message: messages[kind],
+    tone: 'error',
+  })
 }
 
 // ── Confirmation page (GET success) ─────────────────────────────────────────
 
 function confirmPage(token: string, row: TokenRow): string {
   const description = describeAction(row.action_type, row.payload)
-  const body = `
-    <h1>${escapeHtml(actionTitle(row.action_type))}</h1>
-    <p>${escapeHtml(description)}</p>
-    <form method="POST" action="/api/aegis-action?token=${encodeURIComponent(token)}">
-      <button type="submit" class="btn-primary">Confirm</button>
-    </form>
-    <div class="cancel-note">You can close this tab if you change your mind.</div>
-  `
-  return htmlShell('Confirm action', body)
+  const bodyExtra = `
+      <form method="POST" action="/api/aegis-action?token=${encodeURIComponent(token)}" class="actions">
+        <button type="submit" class="btn-primary">Confirm</button>
+      </form>`
+  return renderActionResultPage({
+    title: actionTitle(row.action_type),
+    message: description,
+    tone: 'info',
+    bodyExtra,
+    footnote: 'You can close this tab if you change your mind.',
+  })
 }
 
 // ── Success page (POST success) ─────────────────────────────────────────────
 
 function successPage(message: string): string {
-  const body = `
-    <span class="icon ok-icon">✓</span>
-    <h1>Done</h1>
-    <p>${escapeHtml(message)}</p>
-    <div class="cancel-note">You can close this tab.</div>
-  `
-  return htmlShell('Done', body)
+  return renderActionResultPage({
+    title: 'All set',
+    message,
+    tone: 'success',
+  })
 }
 
 // ── Route handlers ──────────────────────────────────────────────────────────
