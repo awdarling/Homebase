@@ -27,6 +27,10 @@ interface ScheduleRendererProps {
   closedDates?: string[]
   onCloseDay?: (date: string) => void
   onReopenDay?: (date: string) => void
+  /** Employee ids flagged as veterans — drives the "VET" name badge. */
+  veteranIds?: Set<string>
+  /** Shift NAME → short veteran-rule label (e.g. "Veterans only", "≥2 veterans"). */
+  shiftRuleLabels?: Record<string, string>
 }
 
 const FONT_SIZES = {
@@ -51,6 +55,51 @@ function cellDropId(shiftName: string, date: string): string {
   return `cell::${shiftName}||${date}`
 }
 
+// ── Veteran indicators ────────────────────────────────────────────────────────
+
+function VetBadge() {
+  return (
+    <span style={{
+      flexShrink: 0,
+      display: 'inline-flex',
+      alignItems: 'center',
+      padding: '0 4px',
+      height: 13,
+      borderRadius: 'var(--radius-sm)',
+      background: 'var(--accent-dim)',
+      color: 'var(--accent)',
+      fontSize: 9,
+      fontWeight: 800,
+      letterSpacing: '0.06em',
+      lineHeight: 1,
+      textTransform: 'uppercase',
+    }}>
+      VET
+    </span>
+  )
+}
+
+function ShiftRuleTag({ label }: { label: string }) {
+  return (
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      padding: '1px 6px',
+      borderRadius: 'var(--radius-pill)',
+      background: 'var(--accent-dim)',
+      border: '1px solid var(--accent-border)',
+      color: 'var(--accent)',
+      fontSize: 9,
+      fontWeight: 700,
+      letterSpacing: '0.04em',
+      lineHeight: 1.3,
+      whiteSpace: 'nowrap',
+    }}>
+      {label}
+    </span>
+  )
+}
+
 // ── AssignmentCard ────────────────────────────────────────────────────────────
 
 function AssignmentCardContent({
@@ -61,6 +110,7 @@ function AssignmentCardContent({
   showHours,
   showStartEnd,
   removeMode,
+  isVeteran,
 }: {
   assignment: ScheduleAssignment
   color: string
@@ -69,6 +119,7 @@ function AssignmentCardContent({
   showHours: boolean
   showStartEnd: boolean
   removeMode?: boolean
+  isVeteran?: boolean
 }) {
   return (
     <div style={{
@@ -100,16 +151,23 @@ function AssignmentCardContent({
         </div>
       )}
       <div style={{
-        fontSize: fontSize.name,
-        fontWeight: 500,
-        color: 'var(--text-primary)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 5,
         lineHeight: 1.3,
-        whiteSpace: 'nowrap',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
         paddingRight: removeMode ? 16 : 0,
       }}>
-        {assignment.employee_name}
+        <span style={{
+          fontSize: fontSize.name,
+          fontWeight: 500,
+          color: 'var(--text-primary)',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}>
+          {assignment.employee_name}
+        </span>
+        {isVeteran && <VetBadge />}
       </div>
       {showRole && (
         <div style={{
@@ -148,6 +206,7 @@ function DraggableAssignmentCard({
   showStartEnd,
   removeMode,
   onRemove,
+  isVeteran,
 }: {
   assignment: ScheduleAssignment
   color: string
@@ -157,6 +216,7 @@ function DraggableAssignmentCard({
   showStartEnd: boolean
   removeMode: boolean
   onRemove: () => void
+  isVeteran?: boolean
 }) {
   const id = assignmentDragId(assignment)
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -189,6 +249,7 @@ function DraggableAssignmentCard({
         showHours={showHours}
         showStartEnd={showStartEnd}
         removeMode={removeMode}
+        isVeteran={isVeteran}
       />
     </div>
   )
@@ -201,6 +262,7 @@ function StaticAssignmentCard(props: {
   showRole: boolean
   showHours: boolean
   showStartEnd: boolean
+  isVeteran?: boolean
 }) {
   return <AssignmentCardContent {...props} />
 }
@@ -430,6 +492,8 @@ function ShiftRowsDayColumns({
   closedDates,
   onCloseDay,
   onReopenDay,
+  veteranIds,
+  shiftRuleLabels,
 }: {
   schedule: Schedule
   template: ScheduleTemplate
@@ -440,6 +504,8 @@ function ShiftRowsDayColumns({
   closedDates: string[]
   onCloseDay?: (date: string) => void
   onReopenDay?: (date: string) => void
+  veteranIds?: Set<string>
+  shiftRuleLabels?: Record<string, string>
 }) {
   const closedDateSet = new Set(closedDates)
   const { display_options, row_config, column_config, color_config } = template
@@ -598,7 +664,7 @@ function ShiftRowsDayColumns({
               borderBottom: '1px solid var(--border-subtle)',
               borderRight: '1px solid var(--border-default)',
               padding: '10px 12px',
-              display: 'flex', alignItems: 'flex-start',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
               minHeight: rowHeight,
             }}>
               <span style={{
@@ -613,6 +679,9 @@ function ShiftRowsDayColumns({
               }}>
                 {row.label}
               </span>
+              {shiftRuleLabels?.[row.id] && (
+                <ShiftRuleTag label={shiftRuleLabels[row.id]} />
+              )}
             </div>,
 
             // Data cells
@@ -667,6 +736,7 @@ function ShiftRowsDayColumns({
                           showStartEnd={display_options.show_start_end}
                           removeMode={removeMode}
                           onRemove={() => removeAssignment(a)}
+                          isVeteran={veteranIds?.has(a.employee_id) ?? false}
                         />
                       ) : (
                         <StaticAssignmentCard
@@ -677,6 +747,7 @@ function ShiftRowsDayColumns({
                           showRole={display_options.show_role}
                           showHours={display_options.show_hours}
                           showStartEnd={display_options.show_start_end}
+                          isVeteran={veteranIds?.has(a.employee_id) ?? false}
                         />
                       ))}
                       {gapCount > 0 && <GapPill count={gapCount} />}
@@ -717,6 +788,7 @@ function ShiftRowsDayColumns({
               showRole={display_options.show_role}
               showHours={display_options.show_hours}
               showStartEnd={display_options.show_start_end}
+              isVeteran={veteranIds?.has(activeAssignment.employee_id) ?? false}
             />
           </div>
         )}
@@ -735,6 +807,8 @@ export default function ScheduleRenderer({
   closedDates,
   onCloseDay,
   onReopenDay,
+  veteranIds,
+  shiftRuleLabels,
 }: ScheduleRendererProps) {
   const containerStyle: React.CSSProperties = {
     background: 'var(--bg-surface-1)',
@@ -758,6 +832,8 @@ export default function ScheduleRenderer({
           closedDates={resolvedClosedDates}
           onCloseDay={onCloseDay}
           onReopenDay={onReopenDay}
+          veteranIds={veteranIds}
+          shiftRuleLabels={shiftRuleLabels}
         />
       </div>
     )

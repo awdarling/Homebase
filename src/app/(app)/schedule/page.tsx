@@ -583,6 +583,8 @@ function HistoryCard({
   onToggle,
   canDelete,
   onDelete,
+  veteranIds,
+  shiftRuleLabels,
 }: {
   schedule: Schedule
   template: ScheduleTemplate
@@ -590,6 +592,8 @@ function HistoryCard({
   onToggle: () => void
   canDelete: boolean
   onDelete: () => void
+  veteranIds: Set<string>
+  shiftRuleLabels: Record<string, string>
 }) {
   const weekLabel = `${formatDateLong(schedule.week_start)} – ${formatDateLong(schedule.week_end)}`
 
@@ -657,7 +661,13 @@ function HistoryCard({
           padding: '20px',
         }}>
           <ScaledContainer scale={0.7}>
-            <ScheduleRenderer schedule={schedule} template={template} mode="view" />
+            <ScheduleRenderer
+              schedule={schedule}
+              template={template}
+              mode="view"
+              veteranIds={veteranIds}
+              shiftRuleLabels={shiftRuleLabels}
+            />
           </ScaledContainer>
           <HistoryReportDetail schedule={schedule} />
         </div>
@@ -790,6 +800,8 @@ interface UpcomingCardProps {
   onDelete: () => void
   onCloseDay: (date: string) => void
   onReopenDay: (date: string) => void
+  veteranIds: Set<string>
+  shiftRuleLabels: Record<string, string>
 }
 
 function UpcomingCard({
@@ -814,6 +826,8 @@ function UpcomingCard({
   onDelete,
   onCloseDay,
   onReopenDay,
+  veteranIds,
+  shiftRuleLabels,
 }: UpcomingCardProps) {
   const closedDates = schedule.data?.closed_dates ?? []
   const weekLabel = `${formatDateLong(schedule.week_start)} – ${formatDateLong(schedule.week_end)}`
@@ -968,6 +982,8 @@ function UpcomingCard({
             closedDates={closedDates}
             onCloseDay={onCloseDay}
             onReopenDay={onReopenDay}
+            veteranIds={veteranIds}
+            shiftRuleLabels={shiftRuleLabels}
           />
 
           {/* Wage breakdown — reflects pendingAssignments live while editing */}
@@ -1001,6 +1017,11 @@ export default function SchedulePage() {
 
   const [allSchedules, setAllSchedules] = useState<Schedule[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Veteran indicators for the schedule grid: veteran employee ids → "VET"
+  // name badge; shift NAME → veteran-rule tag on the shift row header.
+  const [veteranIds, setVeteranIds] = useState<Set<string>>(new Set())
+  const [shiftRuleLabels, setShiftRuleLabels] = useState<Record<string, string>>({})
 
   // Edit state — at most one schedule at a time, across all sections.
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null)
@@ -1042,7 +1063,47 @@ export default function SchedulePage() {
   useEffect(() => {
     if (!companyId) return
     fetchSchedules()
+    fetchVeteranIndicators()
   }, [companyId])
+
+  // Veteran name badges (employees.is_veteran) + per-shift veteran-rule tags
+  // (active shift_experience_rules, keyed by the shift_types.name they target).
+  async function fetchVeteranIndicators() {
+    const [vetRes, rulesRes, shiftTypesRes] = await Promise.all([
+      supabase
+        .from('employees')
+        .select('id')
+        .eq('company_id', companyId)
+        .eq('is_veteran', true),
+      supabase
+        .from('shift_experience_rules')
+        .select('shift_type_id, mode, min_count')
+        .eq('company_id', companyId)
+        .eq('active', true),
+      supabase
+        .from('shift_types')
+        .select('id, name')
+        .eq('company_id', companyId),
+    ])
+
+    setVeteranIds(new Set(((vetRes.data as { id: string }[]) ?? []).map(e => e.id)))
+
+    const nameByTypeId = new Map<string, string>()
+    for (const st of (shiftTypesRes.data as { id: string; name: string }[]) ?? []) {
+      nameByTypeId.set(st.id, st.name)
+    }
+
+    const labels: Record<string, string> = {}
+    for (const r of (rulesRes.data as { shift_type_id: string | null; mode: string; min_count: number | null }[]) ?? []) {
+      if (!r.shift_type_id) continue
+      const shiftName = nameByTypeId.get(r.shift_type_id)
+      if (!shiftName || labels[shiftName]) continue // first rule per shift wins
+      labels[shiftName] = r.mode === 'all_veterans'
+        ? 'Veterans only'
+        : `≥${r.min_count ?? 1} veterans`
+    }
+    setShiftRuleLabels(labels)
+  }
 
   async function fetchSchedules() {
     setLoading(true)
@@ -1471,6 +1532,8 @@ export default function SchedulePage() {
                 closedDates={currentSchedule.data?.closed_dates ?? []}
                 onCloseDay={(date) => requestCloseDay(currentSchedule.id, date)}
                 onReopenDay={(date) => handleReopenDay(currentSchedule.id, date)}
+                veteranIds={veteranIds}
+                shiftRuleLabels={shiftRuleLabels}
               />
             )}
 
@@ -1545,6 +1608,8 @@ export default function SchedulePage() {
                 onDelete={() => requestDeleteSchedule(s)}
                 onCloseDay={(date) => requestCloseDay(s.id, date)}
                 onReopenDay={(date) => handleReopenDay(s.id, date)}
+                veteranIds={veteranIds}
+                shiftRuleLabels={shiftRuleLabels}
               />
             ))}
           </div>
@@ -1613,6 +1678,8 @@ export default function SchedulePage() {
                 onToggle={() => setExpandedHistoryId(expandedHistoryId === s.id ? null : s.id)}
                 canDelete={canDeleteScheduleFor(s)}
                 onDelete={() => requestDeleteSchedule(s)}
+                veteranIds={veteranIds}
+                shiftRuleLabels={shiftRuleLabels}
               />
             ))}
           </div>

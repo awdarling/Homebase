@@ -9,6 +9,7 @@ import type { Policy, PolicyCategory } from '@/lib/types'
 import { CATEGORY_LIST, formatPolicySummary } from '@/lib/rules/categories'
 import { removePolicy } from '@/lib/rules/save'
 import TimeOffManagementSection from '@/components/rules/TimeOffManagementSection'
+import ShiftVeteranRulesSection from '@/components/rules/ShiftVeteranRulesSection'
 import WeekStartDayModal from '@/components/rules/WeekStartDayModal'
 import AttributeMixModal from '@/components/rules/AttributeMixModal'
 import VeteranPreferenceModal from '@/components/rules/VeteranPreferenceModal'
@@ -259,6 +260,8 @@ export default function RulesPage() {
             </section>
           )
         })}
+
+        <ShiftVeteranRulesSection companyId={COMPANY_ID} supabase={supabase} />
 
         {policiesByCategory.legacy.length > 0 && (
           <section

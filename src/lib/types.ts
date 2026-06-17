@@ -509,3 +509,20 @@ export interface BillingInfo {
   billing_model: 'subscription' | 'one_time' | null
   stripe_price_id: string | null
 }
+
+export type ShiftExperienceRuleMode = 'all_veterans' | 'min_veterans'
+
+export interface ShiftExperienceRule {
+  id: string
+  company_id: string
+  shift_type_id: string
+  days_of_week: number[] | null
+  role: string | null
+  mode: ShiftExperienceRuleMode
+  min_count: number | null
+  season_start: string | null
+  season_end: string | null
+  active: boolean
+  created_by: string | null
+  created_at: string
+}
