@@ -93,20 +93,38 @@ export async function decideTimeOffRequest(
   }
 
   if (!updated) {
-    // Row is gone or was already decided — re-read to tell the manager which.
+    // Row is gone or was already decided — re-read to tell the manager which,
+    // and (the definitive click-guard) by whom and when.
     const { data: existing } = await supabase
       .from('time_off_requests')
-      .select('status')
+      .select('status, decided_at, decided_by')
       .eq('id', timeOffRequestId)
       .maybeSingle()
     if (!existing) {
       return { ok: false, message: 'That request no longer exists — it may have been deleted.' }
     }
-    const status = (existing as { status: string }).status
+    const ex = existing as { status: string; decided_at: string | null; decided_by: string | null }
+
+    // Resolve who decided it, for a clear "already approved by X on <date>" note.
+    let byPhrase = ''
+    if (ex.decided_by) {
+      const { data: decider } = await supabase
+        .from('users').select('name').eq('id', ex.decided_by).maybeSingle()
+      const name = (decider as { name: string | null } | null)?.name
+      if (name) byPhrase = ` by ${name}`
+    }
+    let onPhrase = ''
+    if (ex.decided_at) {
+      const d = new Date(ex.decided_at)
+      if (!Number.isNaN(d.getTime())) {
+        onPhrase = ` on ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+      }
+    }
+
     return {
       ok: false,
       alreadyDecided: true,
-      message: `This one was already ${status} — nothing changed. Open Homebase to see where it stands.`,
+      message: `This request was already ${ex.status}${byPhrase}${onPhrase} — nothing changed.`,
     }
   }
 

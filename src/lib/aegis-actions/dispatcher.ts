@@ -151,17 +151,36 @@ async function handleRecheckTimeOff(
   if (!requestId) {
     return { ok: false, message: 'This link is missing the time-off request id. Re-run the check from Homebase instead.' }
   }
+  // Reply to the manager who got the email, in their original thread.
+  const managerEmail = strOrNull(row.payload.manager_email) ?? row.issued_to_email
+  const managerUserId = strOrNull(row.payload.manager_user_id) ?? row.issued_to_user_id
+  if (!managerEmail) {
+    return { ok: false, message: 'This link is missing the manager email. Re-run the check from Homebase instead.' }
+  }
 
   try {
+    // Recompute AND reply in the same email thread with a refreshed action card —
+    // the result lands in the manager's inbox, not a new email or this page.
     const resp = await postToAegisInternal<RecomputeToResponse>(
-      '/internal/recompute-to-recommendation',
-      { time_off_request_id: requestId },
+      '/internal/recheck-to-reply',
+      { time_off_request_id: requestId, manager_email: managerEmail, manager_user_id: managerUserId },
     )
+    // Click-guard: re-running a request that's already been decided does nothing.
+    if (resp.status === 'already_decided') {
+      const decided = resp.recommendation === 'approve' ? 'approved' : resp.recommendation === 'deny' ? 'denied' : 'decided'
+      return {
+        ok: true,
+        message: `This time-off request has already been ${decided} — no re-check needed. Open Homebase to see where it stands.`,
+      }
+    }
     const gapCount = numOrNull(resp.coverage_gap_count) ?? 0
-    const message = resp.recommendation === 'approve'
-      ? 'Re-checked against everything currently approved — Aegis now recommends: Approve.'
-      : `Re-checked against everything currently approved — Aegis now recommends: Don't approve (${gapCount} coverage gap${gapCount === 1 ? '' : 's'} if approved now).`
-    return { ok: true, message }
+    const verdict = resp.recommendation === 'approve'
+      ? 'Approve'
+      : `Don't approve (${gapCount} coverage gap${gapCount === 1 ? '' : 's'} if approved now)`
+    return {
+      ok: true,
+      message: `Re-checked — Aegis now recommends: ${verdict}. I've replied in that request's email thread with the updated card, so you can act on it right from your inbox.`,
+    }
   } catch (err) {
     if (err instanceof AegisInternalConfigError) {
       return {
