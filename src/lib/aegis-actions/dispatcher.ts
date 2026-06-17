@@ -128,6 +128,54 @@ async function handleTimeOffDecision(
   return { ok: result.ok, message: result.message }
 }
 
+// ── Time-off re-check (recompute recommendation) ─────────────────────────────
+
+// Aegis /internal/recompute-to-recommendation response shape. Kept narrow on
+// purpose — extra fields are ignored.
+type RecomputeToResponse = {
+  ok?: boolean
+  status?: string
+  recommendation?: 'approve' | 'deny'
+  reasoning?: string
+  coverage_gap_count?: number
+}
+
+async function handleRecheckTimeOff(
+  row: TokenRow,
+  _supabase: SupabaseClient,
+): Promise<DispatchResult> {
+  // The recheck token is single-use (like approve/deny), so the email button
+  // re-checks once; the Homebase tab button and the conversational command allow
+  // repeated re-checks. That's acceptable for v1 (TO-RERUN-1).
+  const requestId = strOrNull(row.payload.time_off_request_id)
+  if (!requestId) {
+    return { ok: false, message: 'This link is missing the time-off request id. Re-run the check from Homebase instead.' }
+  }
+
+  try {
+    const resp = await postToAegisInternal<RecomputeToResponse>(
+      '/internal/recompute-to-recommendation',
+      { time_off_request_id: requestId },
+    )
+    const gapCount = numOrNull(resp.coverage_gap_count) ?? 0
+    const message = resp.recommendation === 'approve'
+      ? 'Re-checked against everything currently approved — Aegis now recommends: Approve.'
+      : `Re-checked against everything currently approved — Aegis now recommends: Don't approve (${gapCount} coverage gap${gapCount === 1 ? '' : 's'} if approved now).`
+    return { ok: true, message }
+  } catch (err) {
+    if (err instanceof AegisInternalConfigError) {
+      return {
+        ok: false,
+        message: 'Could not re-run the check — the Aegis connection is not configured. Open Homebase to re-run the coverage check.',
+      }
+    }
+    return {
+      ok: false,
+      message: 'Could not re-run the check right now. Open Homebase to re-run the coverage check.',
+    }
+  }
+}
+
 // ── Schedule distribution ────────────────────────────────────────────────────
 
 async function handleConfirmDistribution(
@@ -389,6 +437,8 @@ export async function dispatchAction(
       return handleTimeOffDecision('approved', row, supabase)
     case 'deny_to':
       return handleTimeOffDecision('denied', row, supabase)
+    case 'recheck_to':
+      return handleRecheckTimeOff(row, supabase)
     case 'confirm_distribution':
       return handleConfirmDistribution(row, supabase)
     case 'approve_availability':

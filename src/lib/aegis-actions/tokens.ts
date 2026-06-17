@@ -12,6 +12,7 @@ export type ActionType =
   | 'decline_emergency_coverage'
   | 'confirm_distribution'
   | 'request_additional_batch'
+  | 'recheck_to'
 
 // Mirrors the live aegis_action_tokens schema (Aegis-side migration 015 +
 // follow-ups). issued_to_* are the manager identity captured at token-mint

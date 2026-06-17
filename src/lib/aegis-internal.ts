@@ -20,6 +20,7 @@ export type AegisInternalEndpoint =
   | '/internal/distribute-schedule'
   | '/internal/apply-availability-decision'
   | '/internal/apply-custom-availability-decision'
+  | '/internal/recompute-to-recommendation'
 
 export class AegisInternalError extends Error {
   constructor(

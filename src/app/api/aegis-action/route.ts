@@ -192,6 +192,10 @@ function describeAction(action_type: ActionType, payload: Record<string, unknown
       return employee && dateRange
         ? `Deny ${employee}'s time-off request for ${dateRange}?`
         : 'Deny this time-off request?'
+    case 'recheck_to':
+      return employee && dateRange
+        ? `Re-run Aegis's coverage check on ${employee}'s time-off request for ${dateRange}.`
+        : "Re-run Aegis's coverage check on this time-off request."
     case 'approve_availability':
       return employee
         ? `Approve ${employee}'s availability change?`
