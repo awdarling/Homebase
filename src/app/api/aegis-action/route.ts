@@ -239,7 +239,7 @@ function errorPage(kind: 'invalid' | 'expired' | 'consumed' | 'failed', detail?:
   const messages: Record<string, string> = {
     invalid: 'I couldn\'t read this link. Check the email for the right one, or ask your manager to resend it.',
     expired: 'This link has expired. Ask your manager to resend it and I\'ll take it from there.',
-    consumed: 'This link has already been used. If that wasn\'t you, reach out to your manager.',
+    consumed: 'This link has already been used — your last action went through, so nothing was missed. Check your inbox or Homebase to confirm where it stands.',
     failed: detail ?? 'I hit an unexpected error. Try again, or contact your manager if it keeps happening.',
   }
 
