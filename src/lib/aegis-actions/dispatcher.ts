@@ -167,19 +167,16 @@ async function handleRecheckTimeOff(
     )
     // Click-guard: re-running a request that's already been decided does nothing.
     if (resp.status === 'already_decided') {
-      const decided = resp.recommendation === 'approve' ? 'approved' : resp.recommendation === 'deny' ? 'denied' : 'decided'
       return {
         ok: true,
-        message: `This time-off request has already been ${decided} — no re-check needed. Open Homebase to see where it stands.`,
+        message: 'This time-off request has already been decided — no re-check needed. Open Homebase to see where it stands.',
       }
     }
-    const gapCount = numOrNull(resp.coverage_gap_count) ?? 0
-    const verdict = resp.recommendation === 'approve'
-      ? 'Approve'
-      : `Don't approve (${gapCount} coverage gap${gapCount === 1 ? '' : 's'} if approved now)`
+    // The recompute + reply run in the background (they take a few seconds), so
+    // this page returns immediately and the refreshed card lands in the inbox.
     return {
       ok: true,
-      message: `Re-checked — Aegis now recommends: ${verdict}. I've replied in that request's email thread with the updated card, so you can act on it right from your inbox.`,
+      message: "On it — I'm re-checking this against everything currently approved and will reply in that request's email thread in a moment. Check your inbox.",
     }
   } catch (err) {
     if (err instanceof AegisInternalConfigError) {
