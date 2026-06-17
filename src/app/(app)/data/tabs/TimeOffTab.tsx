@@ -171,6 +171,8 @@ export default function TimeOffTab() {
   // Manager-facing toast for approve/deny results (incl. employee-notify status).
   const [notice, setNotice] = useState('')
   const [decidingId, setDecidingId] = useState<string | null>(null)
+  // TO-RERUN-1: which request is currently re-running its Aegis recommendation.
+  const [recheckingId, setRecheckingId] = useState<string | null>(null)
 
   // ── Time-off mode + type ──────────────────────────────────────────────────
   const [toMode, setToMode] = useState<'single' | 'multi'>('single')
@@ -251,6 +253,29 @@ export default function TimeOffTab() {
       setNotice('Could not reach the server — the decision was not recorded. Please try again.')
     } finally {
       setDecidingId(null)
+      fetchData()
+    }
+  }
+
+  // TO-RERUN-1: re-run the Aegis coverage check + recommendation for a pending
+  // request against CURRENT approvals. The submit-time recommendation can go
+  // stale if other requests were approved since — see TO-REC-STALE.
+  async function handleRecheck(req: TORequest) {
+    if (recheckingId) return
+    setRecheckingId(req.id)
+    setNotice('')
+    try {
+      const res = await fetch('/api/time-off/recompute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeOffRequestId: req.id }),
+      })
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; message?: string } | null
+      setNotice(data?.message ?? (res.ok ? 'Recommendation re-checked.' : 'Could not re-check that request.'))
+    } catch {
+      setNotice('Could not reach the server to re-check — please try again.')
+    } finally {
+      setRecheckingId(null)
       fetchData()
     }
   }
@@ -592,6 +617,18 @@ export default function TimeOffTab() {
                     {req.aegis_recommendation && <AegisBadge rec={req.aegis_recommendation} />}
                     {req.status === 'pending' ? (
                       <>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => handleRecheck(req)}
+                          disabled={recheckingId !== null}
+                          title="Re-run the Aegis coverage check against everything currently approved"
+                          style={{
+                            opacity: recheckingId !== null ? 0.6 : 1,
+                            cursor: recheckingId !== null ? 'default' : 'pointer',
+                          }}
+                        >
+                          {recheckingId === req.id ? 'Re-checking…' : 'Re-run check'}
+                        </button>
                         <button
                           className="btn btn-sm"
                           onClick={() => handleDecision(req, 'approved')}
