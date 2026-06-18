@@ -17,6 +17,9 @@ const MOCK_SCHEDULE: Schedule = {
   approved_at: null,
   distributed_at: null,
   deleted_at: null,
+  published_at: null,
+  archived_at: null,
+  superseded_by: null,
   data: {
     assignments: [
       { date: '2026-05-04', employee_id: 'e1', employee_name: 'Alice J.',  shift_name: 'AMWeekday', role: 'Server', start_time: '07:00', end_time: '15:00', hours: 8 },

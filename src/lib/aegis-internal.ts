@@ -18,6 +18,8 @@
 export type AegisInternalEndpoint =
   | '/internal/notify-to-decision'
   | '/internal/distribute-schedule'
+  | '/internal/build-schedule'
+  | '/internal/notify-schedule-changes'
   | '/internal/apply-availability-decision'
   | '/internal/apply-custom-availability-decision'
   | '/internal/recompute-to-recommendation'
