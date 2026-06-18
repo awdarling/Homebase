@@ -15,6 +15,43 @@ function formatEventDate(iso: string | null | undefined): string {
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
 }
 
+// Validate the structured special-event staffing spec (item 6) before it's
+// written to events.event_shifts and later read by the schedule engine. Drops
+// anything malformed; returns null when there's nothing usable. Shape mirrors
+// Aegis src/lib/engine/event-shifts.ts (mode add | stretch).
+const EVENT_SHIFT_TIME_RE = /^\d{2}:\d{2}$/
+function sanitizeEventShifts(input: unknown): Record<string, unknown>[] | null {
+  if (!Array.isArray(input)) return null
+  const out: Record<string, unknown>[] = []
+  for (const raw of input) {
+    if (!raw || typeof raw !== 'object') continue
+    const s = raw as Record<string, unknown>
+    if (s.mode !== 'add' && s.mode !== 'stretch') continue
+    const shiftName = typeof s.shift_name === 'string' ? s.shift_name.trim() : ''
+    if (!shiftName) continue
+    const entry: Record<string, unknown> = { mode: s.mode, shift_name: shiftName }
+    if (typeof s.start_time === 'string' && EVENT_SHIFT_TIME_RE.test(s.start_time)) entry.start_time = s.start_time
+    if (typeof s.end_time === 'string' && EVENT_SHIFT_TIME_RE.test(s.end_time)) entry.end_time = s.end_time
+    if (Array.isArray(s.roles)) {
+      const roles = s.roles
+        .filter((r): r is Record<string, unknown> =>
+          !!r && typeof r === 'object' &&
+          typeof (r as Record<string, unknown>).role === 'string' &&
+          Number.isFinite(Number((r as Record<string, unknown>).count)) &&
+          Number((r as Record<string, unknown>).count) > 0)
+        .map((r) => ({ role: (r.role as string).trim(), count: Math.floor(Number(r.count)) }))
+      if (roles.length > 0) entry.roles = roles
+    }
+    if (typeof s.replaces_shift_name === 'string' && s.replaces_shift_name.trim()) {
+      entry.replaces_shift_name = s.replaces_shift_name.trim()
+    }
+    // An "add" is only useful with hours + at least one role; skip incomplete ones.
+    if (s.mode === 'add' && (!entry.start_time || !entry.end_time || !entry.roles)) continue
+    out.push(entry)
+  }
+  return out.length > 0 ? out : null
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -1415,6 +1452,7 @@ export async function POST(request: NextRequest) {
           date?: string
           description?: string | null
           notes?: string | null
+          event_shifts?: unknown
         }
         const ALLOWED_EVENT_TYPES = ['holiday', 'special_event', 'party', 'fundraiser', 'closure', 'custom'] as const
         const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -1435,6 +1473,8 @@ export async function POST(request: NextRequest) {
         const notes = d.notes?.toString().trim() || null
         const description = d.description ? (d.description.toString().trim() || null) : null
 
+        const eventShifts = sanitizeEventShifts(d.event_shifts)
+
         const { data, error } = await supabase.from('events').insert({
           company_id: companyId,
           title,
@@ -1442,6 +1482,7 @@ export async function POST(request: NextRequest) {
           event_type: d.event_type,
           description,
           staffing_notes: notes,
+          event_shifts: eventShifts,
           created_by: 'soteria',
         }).select().single()
         if (error) throw error
@@ -1466,6 +1507,7 @@ export async function POST(request: NextRequest) {
           date?: string
           description?: string | null
           notes?: string | null
+          event_shifts?: unknown
         }
         const ALLOWED_EVENT_TYPES = ['holiday', 'special_event', 'party', 'fundraiser', 'closure', 'custom'] as const
         const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -1500,6 +1542,10 @@ export async function POST(request: NextRequest) {
         }
         if (d.description !== undefined) {
           updates.description = d.description === null ? null : d.description.toString().trim() || null
+        }
+        if (d.event_shifts !== undefined) {
+          // null / empty clears the event's staffing exceptions back to "none".
+          updates.event_shifts = d.event_shifts === null ? null : sanitizeEventShifts(d.event_shifts)
         }
         if (Object.keys(updates).length === 0) {
           return NextResponse.json(
