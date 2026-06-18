@@ -76,7 +76,7 @@ export default function AttributeMixModal({
 
   async function handleSave() {
     if (!canSave) {
-      setError('At least one minimum count must be greater than zero.')
+      setError('Enter at least 1 for one of the options above.')
       return
     }
     setSaving(true)
@@ -111,7 +111,7 @@ export default function AttributeMixModal({
   return (
     <RulesModalShell
       open={open}
-      title={existing ? 'Edit attribute mix requirement' : 'Add attribute mix requirement'}
+      title={existing ? 'Edit required staff mix' : 'Add required staff mix'}
       onClose={onClose}
       onSave={handleSave}
       saving={saving}
@@ -119,19 +119,19 @@ export default function AttributeMixModal({
       error={error}
     >
       <div className="form-group">
-        <label className="form-label">Attribute</label>
+        <label className="form-label">Base this rule on</label>
         <select
           className="form-select"
           value={form.attribute}
           onChange={(e) => setForm((f) => ({ ...f, attribute: e.target.value as Attribute }))}
           disabled={!!existing}
         >
-          <option value="sex">Sex</option>
-          <option value="is_veteran">Veteran Status</option>
+          <option value="sex">Men &amp; women</option>
+          <option value="is_veteran">Veterans</option>
         </select>
         {existing && (
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-            The attribute cannot be changed once the rule is saved. Remove and re-add to switch attributes.
+            You can&rsquo;t switch what this rule is based on after saving. To change it, remove this rule and add a new one.
           </div>
         )}
       </div>
@@ -139,7 +139,7 @@ export default function AttributeMixModal({
       {form.attribute === 'sex' && (
         <>
           <div className="form-group">
-            <label className="form-label">Minimum males per shift</label>
+            <label className="form-label">At least this many men on each shift</label>
             <input
               className="form-input"
               type="number"
@@ -150,7 +150,7 @@ export default function AttributeMixModal({
             />
           </div>
           <div className="form-group">
-            <label className="form-label">Minimum females per shift</label>
+            <label className="form-label">At least this many women on each shift</label>
             <input
               className="form-input"
               type="number"
@@ -166,7 +166,7 @@ export default function AttributeMixModal({
       {form.attribute === 'is_veteran' && (
         <>
           <div className="form-group">
-            <label className="form-label">Minimum veterans per shift</label>
+            <label className="form-label">At least this many veterans on each shift</label>
             <input
               className="form-input"
               type="number"
@@ -176,7 +176,7 @@ export default function AttributeMixModal({
               onChange={(e) => setForm((f) => ({ ...f, minVeteran: e.target.value }))}
             />
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-              To require non-veterans too, use Veteran Preference instead.
+              Want to favor veterans more broadly? Use Veteran Preference instead.
             </div>
           </div>
         </>

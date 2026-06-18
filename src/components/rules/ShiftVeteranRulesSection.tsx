@@ -238,7 +238,7 @@ export default function ShiftVeteranRulesSection({ companyId, supabase: supabase
       </div>
 
       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
-        Require veterans on specific shifts — for all positions, or a minimum count — optionally scoped to certain days, a role, or a season.
+        Require veterans on certain shifts — either everyone on the shift, or a set number. You can limit a rule to specific days, a single role, or a date range. For example: all veterans on the Saturday &amp; Sunday afternoon shift.
       </div>
 
       {loading ? (

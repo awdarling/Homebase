@@ -240,7 +240,7 @@ export default function RulesPage() {
                   marginBottom: 12,
                 }}>
                   <div style={{ color: 'var(--accent)', fontWeight: 600, fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>
-                    Engine Effect
+                    What this does
                   </div>
                   {cat.engineEffect}
                 </div>
@@ -293,14 +293,14 @@ export default function RulesPage() {
                 fontWeight: 700,
                 color: 'var(--text-primary)',
               }}>
-                Legacy / Unstructured Rules ({policiesByCategory.legacy.length})
+                Other Rules ({policiesByCategory.legacy.length})
               </span>
             </button>
 
             {legacyExpanded && (
               <div style={{ marginTop: 14 }}>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
-                  These rules don&rsquo;t match a structured category yet. Edit them in free-text, or remove them and recreate using a structured category above.
+                  These rules aren&rsquo;t sorted into one of the types above yet. You can edit the wording directly, or remove one and re-create it using a type above.
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {policiesByCategory.legacy.map((p) => (
@@ -431,7 +431,7 @@ function RulesCategoryBody({
             marginTop: 4,
           }}
         >
-          + Add {category === 'attribute_mix' ? 'Attribute Mix' : 'Rule'}
+          + Add {category === 'attribute_mix' ? 'Staff Mix' : 'Rule'}
         </button>
       )}
     </div>

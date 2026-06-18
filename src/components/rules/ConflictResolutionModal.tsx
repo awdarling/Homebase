@@ -19,8 +19,8 @@ interface Props {
 
 // Parser-accepted values: 'fairness_first' | 'minimize_disruption'.
 const OPTIONS: { value: ConflictResolutionValue; label: string; summary: string }[] = [
-  { value: 'fairness_first',      label: 'Fairness first (default)', summary: 'Fairness first' },
-  { value: 'minimize_disruption', label: 'Minimize disruption',      summary: 'Minimize disruption' },
+  { value: 'fairness_first',      label: 'Keep looking for another arrangement (default)', summary: 'Keep it fair' },
+  { value: 'minimize_disruption', label: 'Fill it anyway and flag it for you',             summary: 'Avoid moving people around' },
 ]
 
 function readInitial(p: Policy | null): ConflictResolutionValue {
@@ -72,7 +72,7 @@ export default function ConflictResolutionModal({
   return (
     <RulesModalShell
       open={open}
-      title={existing ? 'Edit conflict resolution' : 'Set conflict resolution'}
+      title={existing ? `Edit: when two can't work together` : `Set: when two can't work together`}
       onClose={onClose}
       onSave={handleSave}
       saving={saving}
@@ -80,7 +80,7 @@ export default function ConflictResolutionModal({
       error={error}
     >
       <div className="form-group">
-        <label className="form-label">Conflict Resolution Fallback</label>
+        <label className="form-label">If they can&rsquo;t be separated</label>
         <select
           className="form-select"
           value={value}
@@ -91,7 +91,7 @@ export default function ConflictResolutionModal({
           ))}
         </select>
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
-          Fallback behavior when the banned-pair cascade resolver runs out of options. The engine recognizes these two values.
+          Aegis always tries to move one of the two to a different shift first. This sets what it does if that turns out to be impossible.
         </div>
       </div>
 

@@ -18,9 +18,9 @@ interface Props {
 }
 
 const OPTIONS: { value: VeteranPreferenceValue; label: string }[] = [
-  { value: 'none',         label: 'None' },
-  { value: 'prioritize',   label: 'Prioritize veterans' },
-  { value: 'at_least_one', label: 'Require at least one per shift' },
+  { value: 'none',         label: 'No preference' },
+  { value: 'prioritize',   label: 'Prefer veterans' },
+  { value: 'at_least_one', label: 'At least one veteran per shift' },
   { value: 'only',         label: 'Veterans only' },
 ]
 
@@ -92,7 +92,7 @@ export default function VeteranPreferenceModal({
           ))}
         </select>
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-          Applied to every schedule build. &lsquo;Prioritize&rsquo; is a soft preference; &lsquo;at least one&rsquo; and &lsquo;only&rsquo; are hard constraints.
+          Applies to every schedule Aegis builds. &lsquo;Prefer veterans&rsquo; is just a tiebreaker; &lsquo;at least one&rsquo; and &lsquo;veterans only&rsquo; are firm rules Aegis won&rsquo;t break.
         </div>
       </div>
 

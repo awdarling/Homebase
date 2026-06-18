@@ -109,7 +109,7 @@ export default function HoursFairnessModal({
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{qualifier}</div>
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
-          At weight 1.0 Aegis always picks the candidate with the fewest hours so far. At 0.0 hours are ignored. Most clubs run somewhere around 0.7–0.8.
+          Slide it all the way right and Aegis always gives the next shift to whoever has worked the fewest hours so far. All the way left, it ignores hours. Most clubs keep it high so the work is shared evenly.
         </div>
       </div>
 
