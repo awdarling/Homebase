@@ -43,8 +43,27 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  if (user && pathname.startsWith('/login')) {
-    return NextResponse.redirect(new URL('/', request.url))
+  if (user) {
+    // Revoked-access lockout: a revoked user keeps their login account (so we
+    // can recognize them) but is blocked from every page and routed to the
+    // login screen with a clear "access removed" message.
+    const { data: profile } = await supabase
+      .from('users')
+      .select('access_revoked_at')
+      .eq('id', user.id)
+      .maybeSingle()
+    const revoked = !!(profile as { access_revoked_at: string | null } | null)?.access_revoked_at
+
+    if (revoked) {
+      // Let them land on /login to read the message; block everything else.
+      if (pathname.startsWith('/login')) return response
+      return NextResponse.redirect(new URL('/login?revoked=1', request.url))
+    }
+
+    // An active user shouldn't sit on the login page.
+    if (pathname.startsWith('/login')) {
+      return NextResponse.redirect(new URL('/', request.url))
+    }
   }
 
   return response

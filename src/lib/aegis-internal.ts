@@ -24,6 +24,7 @@ export type AegisInternalEndpoint =
   | '/internal/apply-custom-availability-decision'
   | '/internal/recompute-to-recommendation'
   | '/internal/recheck-to-reply'
+  | '/internal/notify-access-removed'
 
 export class AegisInternalError extends Error {
   constructor(
