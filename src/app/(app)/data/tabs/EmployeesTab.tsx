@@ -5,6 +5,7 @@ import { useQuria } from '@/lib/hooks/useQuria'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { logActivity as logActivityFn } from '@/lib/activity'
+import { VetBadge } from '@/components/common/VetBadge'
 import type {
   Employee,
   CustomAvailability,
@@ -90,25 +91,6 @@ function TrashIcon() {
       <path d="M14 11v6" />
       <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
     </svg>
-  )
-}
-
-function VeteranBadge() {
-  return (
-    <span style={{
-      display: 'inline-block',
-      padding: '1px 7px',
-      borderRadius: 'var(--radius-pill)',
-      fontSize: 9,
-      fontWeight: 700,
-      letterSpacing: '0.08em',
-      textTransform: 'uppercase',
-      background: 'rgba(220, 38, 38, 0.1)',
-      border: '1px solid rgba(220, 38, 38, 0.25)',
-      color: '#dc2626',
-    }}>
-      Veteran
-    </span>
   )
 }
 
@@ -802,7 +784,7 @@ export default function EmployeesTab() {
                     </div>
                   </td>
                   <td style={{ textAlign: 'center' }}>
-                    {emp.is_veteran && <VeteranBadge />}
+                    {emp.is_veteran && <VetBadge />}
                   </td>
                   <td style={{ textAlign: 'center' }}>
                     {isCustomAvailActive(customAvailability[emp.id]) && (
@@ -1032,8 +1014,8 @@ export default function EmployeesTab() {
                     width: 38,
                     height: 22,
                     borderRadius: 11,
-                    background: form.is_veteran ? '#dc2626' : 'var(--bg-surface-3)',
-                    border: `1px solid ${form.is_veteran ? 'rgba(220,38,38,0.5)' : 'var(--border-default)'}`,
+                    background: form.is_veteran ? 'var(--accent)' : 'var(--bg-surface-3)',
+                    border: `1px solid ${form.is_veteran ? 'var(--accent-border)' : 'var(--border-default)'}`,
                     cursor: 'pointer',
                     padding: 0,
                     flexShrink: 0,
