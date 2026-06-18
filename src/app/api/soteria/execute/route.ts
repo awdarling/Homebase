@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
 import { capabilityRoleFor } from '@/lib/soteria/capabilities'
+import { postToAegisInternal, AegisInternalConfigError } from '@/lib/aegis-internal'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -925,59 +926,60 @@ export async function POST(request: NextRequest) {
           veteran_preference?: string
         }
 
-        const aegisUrl = process.env.AEGIS_URL
-        if (!aegisUrl) {
+        // Build via the authenticated internal bridge (same one the email-action
+        // dispatchers use). This builds + saves a draft synchronously and returns
+        // a summary — no manager phone or SMS round-trip required, so it works
+        // email-first. The new draft then shows in Homebase to review + publish.
+        try {
+          const result = await postToAegisInternal<{
+            ok: boolean
+            schedule_id?: string
+            week_start?: string
+            week_end?: string
+            total_filled?: number
+            total_required?: number
+            gaps?: number
+          }>('/internal/build-schedule', {
+            company_id: companyId,
+            target_week: d.target_week,
+            ...(d.veteran_preference ? { veteran_preference: d.veteran_preference } : {}),
+          })
+
+          const filledNote =
+            result?.total_filled != null && result?.total_required != null
+              ? ` (${result.total_filled}/${result.total_required} slots filled)`
+              : ''
+
+          await supabase.from('activity_log').insert({
+            company_id: companyId,
+            actor: 'soteria',
+            action: 'schedule_build_triggered',
+            entity_type: 'schedule',
+            entity_id: result?.schedule_id ?? null,
+            summary: `Soteria built the ${d.target_week} week schedule${filledNote}`,
+            metadata: {
+              target_week: d.target_week,
+              veteran_preference: d.veteran_preference ?? null,
+              schedule_id: result?.schedule_id ?? null,
+              gaps: result?.gaps ?? null,
+            },
+          })
+
+          return NextResponse.json({ success: true, data: result })
+        } catch (e) {
+          if (e instanceof AegisInternalConfigError) {
+            return NextResponse.json(
+              { error: "The schedule build service isn't connected yet. Reach out to support to set this up." },
+              { status: 500 }
+            )
+          }
+          const msg = e instanceof Error ? e.message : 'Unknown error'
+          console.error('Soteria trigger_schedule_build failed:', msg)
           return NextResponse.json(
-            { error: 'The schedule build service isn\'t configured yet. Reach out to support to set this up.' },
-            { status: 500 }
-          )
-        }
-
-        const { data: manager } = await supabase
-          .from('employees')
-          .select('contact_phone')
-          .eq('company_id', companyId)
-          .eq('primary_role', 'Manager')
-          .not('contact_phone', 'is', null)
-          .limit(1)
-          .maybeSingle()
-
-        const fromPhone = (manager as { contact_phone?: string } | null)?.contact_phone
-        if (!fromPhone) {
-          return NextResponse.json(
-            { error: 'No manager with a phone number on file — Aegis needs a manager phone to authenticate the request.' },
-            { status: 400 }
-          )
-        }
-
-        let bodyText = `Build ${d.target_week} week's schedule`
-        if (d.veteran_preference) {
-          bodyText += `. ${d.veteran_preference}`
-        }
-
-        const aegisRes = await fetch(`${aegisUrl}/webhooks/sms`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ From: fromPhone, Body: bodyText }).toString(),
-        })
-
-        await supabase.from('activity_log').insert({
-          company_id: companyId,
-          actor: 'soteria',
-          action: 'schedule_build_triggered',
-          entity_type: 'schedule',
-          summary: `Soteria triggered schedule build for ${d.target_week} week`,
-          metadata: { target_week: d.target_week, veteran_preference: d.veteran_preference ?? null, aegis_status: aegisRes.status },
-        })
-
-        if (!aegisRes.ok) {
-          return NextResponse.json(
-            { error: `The schedule build service couldn't accept that request. Please try again in a moment.` },
+            { error: "I couldn't build the schedule just now — please try again in a moment." },
             { status: 502 }
           )
         }
-
-        return NextResponse.json({ success: true, target_week: d.target_week })
       }
 
 
