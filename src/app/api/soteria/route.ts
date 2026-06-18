@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
 import * as XLSX from 'xlsx'
 import mammoth from 'mammoth'
+import { capabilitySection, capabilityRoleFor, type CapabilityRole } from '@/lib/soteria/capabilities'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -75,7 +76,10 @@ async function getCompanyContext(companyId: string) {
   }
 }
 
-function buildSystemPrompt(context: Awaited<ReturnType<typeof getCompanyContext>>) {
+function buildSystemPrompt(
+  context: Awaited<ReturnType<typeof getCompanyContext>>,
+  capRole: CapabilityRole
+) {
   const { company, profile, employees, shiftTypes, shifts, policies, conflicts, memory, roles, wageRates, events, isNewCompany, summary } = context
   const today = new Date().toISOString().slice(0, 10)
   const currentYear = today.slice(0, 4)
@@ -123,6 +127,13 @@ RESPONSE LENGTH RULES:
 - Opening message (when the manager opens the panel for the first time, or after a long pause): 1-2 sentences, warm and brief. Acknowledge that you can help across employees, shifts, schedules, time off, policies, conflicts, wages, and operational events. Do not list capabilities exhaustively — invite the manager to describe what they need.
 - All other responses: concise and focused. Never more than 3-4 short paragraphs.
 - Ask one question at a time. Never stack multiple questions.
+
+WHAT YOU CAN DO FOR THIS USER (role-aware — this is the canonical list):
+${capabilitySection(capRole)}
+
+USING THAT LIST:
+- If the user asks what you can do, what they can ask for, how this works, or simply says "help" / "what can you do" / "what can I ask for", answer warmly with the list above, grouped exactly as shown, in plain language. No jargon.
+- If the user asks for something OUTSIDE this list (or outside their role — e.g. an employee asking for a manager-only action), do NOT dead-end with "I can't" or "I didn't understand." Kindly say that one isn't something you can do for them, then point them to what you CAN help with from the list above. Always leave them with a next step.${capRole === 'employee' ? '\n- This user is an EMPLOYEE. Only the personal actions apply. Manager/setup actions (building schedules, editing the team, setting rules, approving requests) are not available to them — redirect those kindly to a manager.' : ''}
 
 COMPANY: ${company?.name ?? 'Unknown'}
 ONBOARDING NEEDED: ${isNewCompany ? 'YES — this company has no data yet' : 'NO — data exists'}
@@ -370,15 +381,16 @@ export async function POST(request: NextRequest) {
     }
     const { data: userRow } = await ssr
       .from('users')
-      .select('company_id')
+      .select('company_id, role')
       .eq('id', user.id)
       .single()
     if (!userRow || (userRow as { company_id: string }).company_id !== companyId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
+    const capRole = capabilityRoleFor((userRow as { role?: string }).role)
 
     const context = await getCompanyContext(companyId)
-    const systemPrompt = buildSystemPrompt(context)
+    const systemPrompt = buildSystemPrompt(context, capRole)
 
     // ── Server-side file processing ─────────────────────────────────────────
     // Excel/Word are parsed here and inlined as text in the last user message.

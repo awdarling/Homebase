@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
+import { capabilityRoleFor } from '@/lib/soteria/capabilities'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -30,11 +31,20 @@ export async function POST(request: NextRequest) {
     }
     const { data: userRow } = await ssr
       .from('users')
-      .select('company_id')
+      .select('company_id, role')
       .eq('id', user.id)
       .single()
     if (!userRow || (userRow as { company_id: string }).company_id !== companyId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    // Scope guard: Soteria's write actions are manager/owner work. If an employee
+    // somehow reaches the executor, refuse kindly instead of writing data.
+    if (capabilityRoleFor((userRow as { role?: string }).role) === 'employee') {
+      return NextResponse.json(
+        { error: "That one's a manager action — a manager or owner can make that change. You can still ask me about time off, your availability, your shifts, and shift swaps." },
+        { status: 403 }
+      )
     }
 
     switch (action.type) {
