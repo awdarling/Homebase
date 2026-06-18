@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -16,6 +16,7 @@ import type { Schedule, ScheduleTemplate, ScheduleAssignment, ColumnConfig } fro
 import { parseYMD, toYMD } from '@/lib/utils/dates'
 import { resolveAssignmentForSlot } from '@/lib/schedule/resolveAssignment'
 import { resolveCellAppearance, hexWithAlpha } from '@/lib/schedule/resolveCellAppearance'
+import { VetBadge } from '@/components/common/VetBadge'
 
 interface ScheduleRendererProps {
   schedule: Schedule
@@ -29,8 +30,10 @@ interface ScheduleRendererProps {
   onReopenDay?: (date: string) => void
   /** Employee ids flagged as veterans — drives the "VET" name badge. */
   veteranIds?: Set<string>
-  /** Shift NAME → short veteran-rule label (e.g. "Veterans only", "≥2 veterans"). */
+  /** Shift NAME → short veteran-rule label (e.g. "Veterans only", "≥2 veterans"). Whole-week rules only. */
   shiftRuleLabels?: Record<string, string>
+  /** Shift NAME → plain-English notes for day-scoped rules (e.g. "Veterans only on Saturdays & Sundays"), shown behind an expandable marker. */
+  shiftRuleNotes?: Record<string, string[]>
 }
 
 const FONT_SIZES = {
@@ -56,28 +59,8 @@ function cellDropId(shiftName: string, date: string): string {
 }
 
 // ── Veteran indicators ────────────────────────────────────────────────────────
-
-function VetBadge() {
-  return (
-    <span style={{
-      flexShrink: 0,
-      display: 'inline-flex',
-      alignItems: 'center',
-      padding: '0 4px',
-      height: 13,
-      borderRadius: 'var(--radius-sm)',
-      background: 'var(--accent-dim)',
-      color: 'var(--accent)',
-      fontSize: 9,
-      fontWeight: 800,
-      letterSpacing: '0.06em',
-      lineHeight: 1,
-      textTransform: 'uppercase',
-    }}>
-      VET
-    </span>
-  )
-}
+// VetBadge is the shared component (src/components/common/VetBadge.tsx) so the
+// schedule grid and the employees/data tab show the exact same orange badge.
 
 function ShiftRuleTag({ label }: { label: string }) {
   return (
@@ -97,6 +80,82 @@ function ShiftRuleTag({ label }: { label: string }) {
     }}>
       {label}
     </span>
+  )
+}
+
+// A compact "Rules ▾" marker shown on a shift row that has day-scoped veteran
+// rules (e.g. Afternoon = veterans only on Sat & Sun). Clicking it expands a
+// small plain-English note, so the row itself is never badged as if the rule
+// ran all week. Whole-week rules use ShiftRuleTag instead.
+function ShiftRuleNoteMarker({ notes }: { notes: string[] }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDocClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [open])
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-flex' }}>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o) }}
+        aria-label="View veteran rules for this shift"
+        title="View veteran rules for this shift"
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 3,
+          padding: '1px 6px',
+          borderRadius: 'var(--radius-pill)',
+          background: 'var(--accent-dim)',
+          border: '1px solid var(--accent-border)',
+          color: 'var(--accent)',
+          fontSize: 9, fontWeight: 800, letterSpacing: '0.04em',
+          lineHeight: 1.3, whiteSpace: 'nowrap', cursor: 'pointer',
+          textTransform: 'uppercase',
+        }}
+      >
+        Rules
+        <span style={{ fontSize: 8 }}>{open ? '▴' : '▾'}</span>
+      </button>
+      {open && (
+        <div
+          role="tooltip"
+          style={{
+            position: 'absolute',
+            left: '100%', top: 0, marginLeft: 6,
+            zIndex: 30,
+            width: 188,
+            padding: '8px 10px',
+            background: 'var(--bg-surface-3)',
+            border: '1px solid var(--accent-border)',
+            borderRadius: 'var(--radius-md)',
+            boxShadow: '0 6px 20px rgba(0,0,0,0.35)',
+            textAlign: 'left',
+            writingMode: 'horizontal-tb',
+          }}
+        >
+          <div style={{
+            fontSize: 9, fontWeight: 800, letterSpacing: '0.06em',
+            textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 4,
+          }}>
+            Veteran rule{notes.length === 1 ? '' : 's'}
+          </div>
+          {notes.map((n, i) => (
+            <div key={i} style={{
+              fontSize: 11, lineHeight: 1.45, color: 'var(--text-secondary)',
+              marginTop: i === 0 ? 0 : 4,
+            }}>
+              {n}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -494,6 +553,7 @@ function ShiftRowsDayColumns({
   onReopenDay,
   veteranIds,
   shiftRuleLabels,
+  shiftRuleNotes,
 }: {
   schedule: Schedule
   template: ScheduleTemplate
@@ -506,6 +566,7 @@ function ShiftRowsDayColumns({
   onReopenDay?: (date: string) => void
   veteranIds?: Set<string>
   shiftRuleLabels?: Record<string, string>
+  shiftRuleNotes?: Record<string, string[]>
 }) {
   const closedDateSet = new Set(closedDates)
   const { display_options, row_config, column_config, color_config } = template
@@ -682,6 +743,9 @@ function ShiftRowsDayColumns({
               {shiftRuleLabels?.[row.id] && (
                 <ShiftRuleTag label={shiftRuleLabels[row.id]} />
               )}
+              {shiftRuleNotes?.[row.id]?.length ? (
+                <ShiftRuleNoteMarker notes={shiftRuleNotes[row.id]} />
+              ) : null}
             </div>,
 
             // Data cells
@@ -809,6 +873,7 @@ export default function ScheduleRenderer({
   onReopenDay,
   veteranIds,
   shiftRuleLabels,
+  shiftRuleNotes,
 }: ScheduleRendererProps) {
   const containerStyle: React.CSSProperties = {
     background: 'var(--bg-surface-1)',
@@ -834,6 +899,7 @@ export default function ScheduleRenderer({
           onReopenDay={onReopenDay}
           veteranIds={veteranIds}
           shiftRuleLabels={shiftRuleLabels}
+          shiftRuleNotes={shiftRuleNotes}
         />
       </div>
     )

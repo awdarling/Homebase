@@ -585,6 +585,7 @@ function HistoryCard({
   onDelete,
   veteranIds,
   shiftRuleLabels,
+  shiftRuleNotes,
 }: {
   schedule: Schedule
   template: ScheduleTemplate
@@ -594,6 +595,7 @@ function HistoryCard({
   onDelete: () => void
   veteranIds: Set<string>
   shiftRuleLabels: Record<string, string>
+  shiftRuleNotes: Record<string, string[]>
 }) {
   const weekLabel = `${formatDateLong(schedule.week_start)} – ${formatDateLong(schedule.week_end)}`
 
@@ -669,6 +671,7 @@ function HistoryCard({
               mode="view"
               veteranIds={veteranIds}
               shiftRuleLabels={shiftRuleLabels}
+                shiftRuleNotes={shiftRuleNotes}
             />
           </ScaledContainer>
           <HistoryReportDetail schedule={schedule} />
@@ -807,6 +810,7 @@ interface UpcomingCardProps {
   onReopenDay: (date: string) => void
   veteranIds: Set<string>
   shiftRuleLabels: Record<string, string>
+  shiftRuleNotes: Record<string, string[]>
 }
 
 function UpcomingCard({
@@ -836,6 +840,7 @@ function UpcomingCard({
   onReopenDay,
   veteranIds,
   shiftRuleLabels,
+  shiftRuleNotes,
 }: UpcomingCardProps) {
   const closedDates = schedule.data?.closed_dates ?? []
   const weekLabel = `${formatDateLong(schedule.week_start)} – ${formatDateLong(schedule.week_end)}`
@@ -1001,6 +1006,7 @@ function UpcomingCard({
             onReopenDay={onReopenDay}
             veteranIds={veteranIds}
             shiftRuleLabels={shiftRuleLabels}
+                shiftRuleNotes={shiftRuleNotes}
           />
 
           {/* Wage breakdown — reflects pendingAssignments live while editing */}
@@ -1051,6 +1057,9 @@ export default function SchedulePage() {
   // name badge; shift NAME → veteran-rule tag on the shift row header.
   const [veteranIds, setVeteranIds] = useState<Set<string>>(new Set())
   const [shiftRuleLabels, setShiftRuleLabels] = useState<Record<string, string>>({})
+  // Day-scoped veteran rules → plain-English notes shown behind an expandable
+  // marker on the shift row (so a Sat/Sun-only rule isn't badged as all-week).
+  const [shiftRuleNotes, setShiftRuleNotes] = useState<Record<string, string[]>>({})
 
   // Edit state — at most one schedule at a time, across all sections.
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null)
@@ -1106,7 +1115,7 @@ export default function SchedulePage() {
         .eq('is_veteran', true),
       supabase
         .from('shift_experience_rules')
-        .select('shift_type_id, mode, min_count')
+        .select('shift_type_id, mode, min_count, days_of_week, role')
         .eq('company_id', companyId)
         .eq('active', true),
       supabase
@@ -1122,16 +1131,54 @@ export default function SchedulePage() {
       nameByTypeId.set(st.id, st.name)
     }
 
+    // A rule with NO specific days (days_of_week null/empty) applies the whole
+    // week → it gets the always-on orange badge on the shift row. A rule scoped
+    // to specific days (e.g. Afternoon on Sat & Sun) does NOT badge the whole
+    // row — it becomes a plain-English expandable note on that shift instead, so
+    // the row badge never implies "every day" when it isn't.
+    const DOW_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+    const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0] // Monday-first so weekends read "Saturdays & Sundays"
+    const formatDays = (days: number[]): string => {
+      const names = DOW_ORDER.filter(d => days.includes(d)).map(d => `${DOW_NAMES[d]}s`)
+      if (names.length === 0) return ''
+      if (names.length === 1) return names[0]
+      if (names.length === 2) return `${names[0]} & ${names[1]}`
+      return `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]}`
+    }
+    const ruleNoteText = (mode: string, minCount: number | null, days: number[], role: string | null): string => {
+      const who = mode === 'all_veterans'
+        ? 'Veterans only'
+        : `At least ${minCount ?? 1} veteran${(minCount ?? 1) === 1 ? '' : 's'}`
+      const roleScope = role ? ` (${role} only)` : ''
+      return `${who} on ${formatDays(days)}${roleScope}`
+    }
+
     const labels: Record<string, string> = {}
-    for (const r of (rulesRes.data as { shift_type_id: string | null; mode: string; min_count: number | null }[]) ?? []) {
+    const notes: Record<string, string[]> = {}
+    for (const r of (rulesRes.data as {
+      shift_type_id: string | null
+      mode: string
+      min_count: number | null
+      days_of_week: number[] | null
+      role: string | null
+    }[]) ?? []) {
       if (!r.shift_type_id) continue
       const shiftName = nameByTypeId.get(r.shift_type_id)
-      if (!shiftName || labels[shiftName]) continue // first rule per shift wins
-      labels[shiftName] = r.mode === 'all_veterans'
-        ? 'Veterans only'
-        : `≥${r.min_count ?? 1} veterans`
+      if (!shiftName) continue
+      const dayScoped = Array.isArray(r.days_of_week) && r.days_of_week.length > 0
+      if (dayScoped) {
+        ;(notes[shiftName] ??= []).push(
+          ruleNoteText(r.mode, r.min_count, r.days_of_week as number[], r.role)
+        )
+      } else if (!labels[shiftName]) {
+        // first full-week rule per shift wins
+        labels[shiftName] = r.mode === 'all_veterans'
+          ? 'Veterans only'
+          : `≥${r.min_count ?? 1} veterans`
+      }
     }
     setShiftRuleLabels(labels)
+    setShiftRuleNotes(notes)
   }
 
   async function fetchSchedules() {
@@ -1705,6 +1752,7 @@ export default function SchedulePage() {
                 onReopenDay={(date) => handleReopenDay(currentSchedule.id, date)}
                 veteranIds={veteranIds}
                 shiftRuleLabels={shiftRuleLabels}
+                shiftRuleNotes={shiftRuleNotes}
               />
             )}
 
@@ -1753,6 +1801,7 @@ export default function SchedulePage() {
                 onReopenDay={(date) => handleReopenDay(s.id, date)}
                 veteranIds={veteranIds}
                 shiftRuleLabels={shiftRuleLabels}
+                shiftRuleNotes={shiftRuleNotes}
               />
             ))}
           </div>
@@ -1839,6 +1888,7 @@ export default function SchedulePage() {
                 onReopenDay={(date) => handleReopenDay(s.id, date)}
                 veteranIds={veteranIds}
                 shiftRuleLabels={shiftRuleLabels}
+                shiftRuleNotes={shiftRuleNotes}
               />
             ))}
           </div>
@@ -1909,6 +1959,7 @@ export default function SchedulePage() {
                 onDelete={() => requestDeleteSchedule(s)}
                 veteranIds={veteranIds}
                 shiftRuleLabels={shiftRuleLabels}
+                shiftRuleNotes={shiftRuleNotes}
               />
             ))}
           </div>
