@@ -73,7 +73,7 @@ export default function DoublesPolicyModal({
   return (
     <RulesModalShell
       open={open}
-      title={existing ? 'Edit doubles policy' : 'Set doubles policy'}
+      title={existing ? 'Edit: two shifts in one day' : 'Set: two shifts in one day'}
       onClose={onClose}
       onSave={handleSave}
       saving={saving}
@@ -81,7 +81,7 @@ export default function DoublesPolicyModal({
       error={error}
     >
       <div className="form-group">
-        <label className="form-label">Doubles Policy</label>
+        <label className="form-label">Can someone work two shifts in one day?</label>
         <select
           className="form-select"
           value={value}
@@ -92,7 +92,7 @@ export default function DoublesPolicyModal({
           ))}
         </select>
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
-          Controls whether Aegis considers an employee for additional shifts after they&rsquo;ve already been assigned on the same date.
+          This decides whether Aegis can put the same person on a second shift on a day they&rsquo;re already working.
         </div>
       </div>
 
