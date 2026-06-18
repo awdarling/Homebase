@@ -12,7 +12,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
-import type { Schedule, ScheduleTemplate, ScheduleAssignment, ColumnConfig } from '@/lib/types'
+import type { Schedule, ScheduleTemplate, ScheduleAssignment, ColumnConfig, RowConfig } from '@/lib/types'
 import { parseYMD, toYMD } from '@/lib/utils/dates'
 import { resolveAssignmentForSlot } from '@/lib/schedule/resolveAssignment'
 import { resolveCellAppearance, hexWithAlpha } from '@/lib/schedule/resolveCellAppearance'
@@ -619,6 +619,29 @@ function ShiftRowsDayColumns({
     }
   }
 
+  // Special-event shifts (item 6): one-off shifts the engine added for a date
+  // (e.g. a Swim Meet) live in the assignments/gaps but are NOT template rows —
+  // so without this they're invisible on the grid. Surface every shift name that
+  // appears in the schedule but has no template row as its own row, so the
+  // manager sees exactly what's scheduled (and what staff get on distribution).
+  const templateRowIds = new Set(row_config.map(r => r.id))
+  const eventRowNames: string[] = []
+  const seenEventRow = new Set<string>()
+  for (const a of assignments) {
+    if (!templateRowIds.has(a.shift_name) && !seenEventRow.has(a.shift_name)) {
+      seenEventRow.add(a.shift_name); eventRowNames.push(a.shift_name)
+    }
+  }
+  for (const g of gaps) {
+    if (!templateRowIds.has(g.shift_name) && !seenEventRow.has(g.shift_name)) {
+      seenEventRow.add(g.shift_name); eventRowNames.push(g.shift_name)
+    }
+  }
+  const eventRows: RowConfig[] = eventRowNames.map((name, i) => ({
+    id: name, label: name, height: 80, visible: true, order: 100000 + i,
+  }))
+  const allRows = [...visibleRows, ...eventRows]
+
   const orderedDates = visibleCols
     .map(col => weekDates.find(d => parseYMD(d).getDay() === col.day))
     .filter((d): d is string => d !== undefined)
@@ -713,8 +736,8 @@ function ShiftRowsDayColumns({
           )
         })}
 
-        {/* Data rows */}
-        {visibleRows.map(row => {
+        {/* Data rows (template rows + any special-event shift rows) */}
+        {allRows.map(row => {
           const rowHeight = Math.max(row.height, MIN_ROW_HEIGHT)
 
           return [

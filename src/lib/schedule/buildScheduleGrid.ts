@@ -226,13 +226,14 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
   // the download either (true parity).
   const showRole = template.display_options.show_role
 
-  const rows: GridRow[] = visibleRows.map(row => {
-    const shift = shiftByName.get(row.id)
-    const cells: GridCell[] = columns.map(col => {
+  // Cell builder shared by template rows AND special-event rows, keyed by the
+  // shift name (= row.id for template rows, = the event shift's name otherwise).
+  function buildCells(shiftId: string): GridCell[] {
+    return columns.map(col => {
       if (col.isClosed) {
         return {
           kind: 'closed',
-          shiftId: row.id,
+          shiftId,
           date: col.date,
           employees: [],
           gapRole: null,
@@ -240,12 +241,12 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
           appearance: resolveCellAppearance({
             colorConfig: template.color_config,
             columnColor: col.color,
-            rowId: row.id,
+            rowId: shiftId,
             kind: 'closed',
           }),
         }
       }
-      const key = `${row.id}||${col.date}`
+      const key = `${shiftId}||${col.date}`
       const asgs = asgByKey.get(key) ?? []
       const gap = gapByKey.get(key)
       // Full name + role per assignment, matching the on-screen card exactly
@@ -265,7 +266,7 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
       else kind = 'filled'
       return {
         kind,
-        shiftId: row.id,
+        shiftId,
         date: col.date,
         employees,
         gapRole: gap?.role ?? null,
@@ -273,18 +274,44 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
         appearance: resolveCellAppearance({
           colorConfig: template.color_config,
           columnColor: col.color,
-          rowId: row.id,
+          rowId: shiftId,
           kind,
         }),
       }
     })
-    return {
-      shiftId: row.id,
-      label: row.label,
-      meta: buildShiftMetaLabel(shift),
-      height: row.height ?? 80,
-      cells,
-    }
+  }
+
+  const templateRows: GridRow[] = visibleRows.map(row => ({
+    shiftId: row.id,
+    label: row.label,
+    meta: buildShiftMetaLabel(shiftByName.get(row.id)),
+    height: row.height ?? 80,
+    cells: buildCells(row.id),
+  }))
+
+  // Special-event shifts (item 6): one-off shifts the engine added for a
+  // specific date (e.g. "Swim Meet 07:00–15:30") live in the schedule data but
+  // are NOT template rows — so without this they'd be invisible on the download
+  // and to staff. Surface every shift name that appears in assignments/gaps but
+  // has no template row, as its own row, so the rendered schedule matches what
+  // the engine built and what employees are actually given.
+  const templateRowIds = new Set(visibleRows.map(r => r.id))
+  const eventNames: string[] = []
+  const seenEvent = new Set<string>()
+  const eventTimes = new Map<string, { start: string; end: string }>()
+  const noteEventShift = (name: string, start?: string, end?: string) => {
+    if (!name || templateRowIds.has(name)) return
+    if (!seenEvent.has(name)) { seenEvent.add(name); eventNames.push(name) }
+    if (start && end && !eventTimes.has(name)) eventTimes.set(name, { start, end })
+  }
+  for (const a of assignments) noteEventShift(a.shift_name, a.start_time, a.end_time)
+  for (const g of gaps) noteEventShift(g.shift_name)
+
+  const hhmm = (t: string): string => (t ?? '').slice(0, 5)
+  const eventRows: GridRow[] = eventNames.map(name => {
+    const t = eventTimes.get(name)
+    const meta = t ? `Special event • ${hhmm(t.start)}–${hhmm(t.end)}` : 'Special event'
+    return { shiftId: name, label: name, meta, height: 80, cells: buildCells(name) }
   })
 
   return {
@@ -294,6 +321,6 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
     weekRangeLabel: weekRangeLabel(schedule.week_start, schedule.week_end),
     generatedAt: new Date().toISOString(),
     columns,
-    rows,
+    rows: [...templateRows, ...eventRows],
   }
 }
