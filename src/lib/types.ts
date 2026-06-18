@@ -292,6 +292,12 @@ export interface Schedule {
   approved_at: string | null
   distributed_at: string | null
   deleted_at: string | null
+  // Publish/republish source-of-truth fields (migration 016).
+  // published_at: non-null = this is the live published schedule for its week.
+  // archived_at + superseded_by: set when a republish replaces this row.
+  published_at: string | null
+  archived_at: string | null
+  superseded_by: string | null
   data: ScheduleData
   staffing_report: StaffingReport | null
 }

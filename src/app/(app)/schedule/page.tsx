@@ -598,11 +598,13 @@ function HistoryCard({
   const weekLabel = `${formatDateLong(schedule.week_start)} – ${formatDateLong(schedule.week_end)}`
 
   const statusBadge =
-    schedule.status === 'approved'
-      ? { cls: 'badge badge-ready', label: 'Approved' }
-      : schedule.status === 'published'
+    schedule.archived_at
+      ? { cls: 'badge badge-review', label: 'Superseded' }
+      : schedule.published_at
         ? { cls: 'badge badge-ready', label: 'Published' }
-        : { cls: 'badge badge-review', label: 'Draft' }
+        : schedule.status === 'approved'
+          ? { cls: 'badge badge-ready', label: 'Approved' }
+          : { cls: 'badge badge-review', label: 'Draft' }
 
   return (
     <div style={{
@@ -790,6 +792,9 @@ interface UpcomingCardProps {
   changesCount: number
   canStartEdit: boolean
   canDeleteSchedule: boolean
+  canPublish: boolean
+  isRepublish: boolean
+  onPublish: () => void
   onStartEdit: () => void
   onCancelEdit: () => void
   onAddShift: () => void
@@ -816,6 +821,9 @@ function UpcomingCard({
   changesCount,
   canStartEdit,
   canDeleteSchedule,
+  canPublish,
+  isRepublish,
+  onPublish,
   onStartEdit,
   onCancelEdit,
   onAddShift,
@@ -832,11 +840,12 @@ function UpcomingCard({
   const closedDates = schedule.data?.closed_dates ?? []
   const weekLabel = `${formatDateLong(schedule.week_start)} – ${formatDateLong(schedule.week_end)}`
 
+  // published_at is the source of truth (item 9), not the status enum.
   const statusBadge =
-    schedule.status === 'approved'
-      ? { cls: 'badge badge-ready', label: 'Approved' }
-      : schedule.status === 'published'
-        ? { cls: 'badge badge-ready', label: 'Published' }
+    schedule.published_at
+      ? { cls: 'badge badge-ready', label: 'Published' }
+      : schedule.status === 'approved'
+        ? { cls: 'badge badge-ready', label: 'Approved' }
         : { cls: 'badge badge-review', label: 'Draft' }
 
   const gaps = schedule.data?.gaps ?? []
@@ -893,6 +902,14 @@ function UpcomingCard({
             </button>
           )}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {canPublish && !isEditing && !schedule.published_at && (
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={onPublish}
+              >
+                {isRepublish ? 'Publish & Replace' : 'Publish'}
+              </button>
+            )}
             <DownloadMenu scheduleId={schedule.id} companyId={companyId} />
             <button
               className="btn btn-secondary btn-sm"
@@ -1013,10 +1030,22 @@ export default function SchedulePage() {
     if (userRole === 'manager') return classifySchedule(schedule) !== 'past'
     return false
   }
+  // Build + Publish are manager/owner/quria actions (item 9).
+  const canManageSchedule = isQuria || userRole === 'owner' || userRole === 'manager'
   const { template, saveTemplate } = useScheduleTemplate()
 
   const [allSchedules, setAllSchedules] = useState<Schedule[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Build-from-Homebase state (item 9)
+  const [building, setBuilding] = useState(false)
+  const [buildError, setBuildError] = useState<string | null>(null)
+
+  // Publish / republish state (items 9 + 12)
+  const [publishTarget, setPublishTarget] = useState<Schedule | null>(null)
+  const [publishing, setPublishing] = useState(false)
+  const [publishError, setPublishError] = useState<string | null>(null)
+  const [publishResult, setPublishResult] = useState<string | null>(null)
 
   // Veteran indicators for the schedule grid: veteran employee ids → "VET"
   // name badge; shift NAME → veteran-rule tag on the shift row header.
@@ -1119,11 +1148,23 @@ export default function SchedulePage() {
   }
 
   // ── Categorize schedules ────────────────────────────────────────────────
-  const currentSchedule = allSchedules
-    .filter(s => classifySchedule(s) === 'current')
-    .sort((a, b) => b.generated_at.localeCompare(a.generated_at))[0] ?? null
+  // Archived (superseded) schedules are kept in the DB for history/undo but are
+  // hidden from the live current/upcoming views — the schedule that replaced
+  // them is the one shown. They still appear under Past Schedules (Superseded).
+  //
+  // A week can carry more than one non-archived schedule (e.g. a manager built a
+  // second, alternate version to republish). The published one is the primary;
+  // any others are "alternates" the manager can review/edit and then Publish &
+  // Replace (item 12). Primary preference: published first, then newest build.
+  const currentWeekSchedules = allSchedules
+    .filter(s => classifySchedule(s) === 'current' && !s.archived_at)
+    .sort((a, b) =>
+      (b.published_at ? 1 : 0) - (a.published_at ? 1 : 0)
+      || b.generated_at.localeCompare(a.generated_at))
+  const currentSchedule = currentWeekSchedules[0] ?? null
+  const currentAlternates = currentWeekSchedules.slice(1)
   const upcomingSchedules = allSchedules
-    .filter(s => classifySchedule(s) === 'upcoming')
+    .filter(s => classifySchedule(s) === 'upcoming' && !s.archived_at)
     .sort((a, b) => a.week_start.localeCompare(b.week_start))
   const historySchedules = allSchedules
     .filter(s => classifySchedule(s) === 'past')
@@ -1201,6 +1242,104 @@ export default function SchedulePage() {
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Network error')
       setDeleting(false)
+    }
+  }
+
+  // ── Build a schedule from Homebase (item 9) ──────────────────────────────
+  async function handleBuild(targetWeek: 'this' | 'next') {
+    if (building) return
+    setBuilding(true)
+    setBuildError(null)
+    try {
+      const res = await fetch('/api/schedule/build', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetWeek }),
+      })
+      const json = await res.json().catch(() => ({} as { error?: string })) as { error?: string }
+      if (!res.ok) {
+        setBuildError(json.error || `Request failed (${res.status})`)
+        setBuilding(false)
+        return
+      }
+      setBuilding(false)
+      await fetchSchedules()
+    } catch (err) {
+      setBuildError(err instanceof Error ? err.message : 'Network error')
+      setBuilding(false)
+    }
+  }
+
+  // ── Publish / republish (items 9 + 12) ───────────────────────────────────
+  // A republish happens when a DIFFERENT non-archived published schedule already
+  // exists for the same week — used only to tailor the confirm copy; the route
+  // makes the real determination server-side.
+  function priorPublishedForWeek(schedule: Schedule): Schedule | null {
+    return allSchedules.find(s =>
+      s.id !== schedule.id &&
+      s.week_start === schedule.week_start &&
+      !!s.published_at &&
+      !s.archived_at &&
+      !s.deleted_at,
+    ) ?? null
+  }
+
+  function requestPublish(schedule: Schedule) {
+    setPublishTarget(schedule)
+    setPublishError(null)
+    setPublishResult(null)
+  }
+
+  function cancelPublish() {
+    if (publishing) return
+    setPublishTarget(null)
+    setPublishError(null)
+    setPublishResult(null)
+  }
+
+  async function confirmPublish() {
+    if (!publishTarget) return
+    setPublishing(true)
+    setPublishError(null)
+    try {
+      const res = await fetch('/api/schedule/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scheduleId: publishTarget.id }),
+      })
+      const json = await res.json().catch(() => ({} as Record<string, unknown>)) as {
+        error?: string
+        mode?: string
+        warning?: string
+        notified?: number
+        sent?: number
+        total_employees?: number
+        already_distributed?: boolean
+        changed_employees?: string[]
+      }
+      if (!res.ok) {
+        setPublishError((json.error as string) || `Request failed (${res.status})`)
+        setPublishing(false)
+        return
+      }
+      let msg: string
+      if (json.mode === 'republished') {
+        msg = json.warning
+          ? json.warning
+          : `Republished. Notified ${json.notified ?? 0} employee${(json.notified ?? 0) === 1 ? '' : 's'} whose shifts changed.`
+      } else {
+        msg = json.warning
+          ? json.warning
+          : json.already_distributed
+            ? 'Published. This schedule had already been sent to staff, so no duplicate emails went out.'
+            : `Published and sent to ${json.sent ?? 0} of ${json.total_employees ?? 0} staff.`
+      }
+      setPublishResult(msg)
+      setPublishing(false)
+      await fetchSchedules()
+    } catch (err) {
+      setPublishError(err instanceof Error ? err.message : 'Network error')
+      setPublishing(false)
     }
   }
 
@@ -1441,6 +1580,24 @@ export default function SchedulePage() {
                 {currentSchedule && (
                   <DownloadMenu scheduleId={currentSchedule.id} companyId={companyId} />
                 )}
+                {currentSchedule && canManageSchedule && !currentSchedule.published_at && (
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={() => requestPublish(currentSchedule)}
+                  >
+                    {priorPublishedForWeek(currentSchedule) ? 'Publish & Replace' : 'Publish'}
+                  </button>
+                )}
+                {currentSchedule && canManageSchedule && currentSchedule.published_at && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    disabled={building}
+                    onClick={() => handleBuild('this')}
+                    title="Build a second version of this week's schedule to review, then Publish & Replace"
+                  >
+                    {building ? 'Building…' : 'Build alternate'}
+                  </button>
+                )}
                 <button
                   className="btn btn-secondary btn-sm"
                   onClick={() => setEditTemplateMode(true)}
@@ -1502,6 +1659,20 @@ export default function SchedulePage() {
               <div className="empty-state-desc">
                 Ask Aegis to build one.
               </div>
+              {canManageSchedule && (
+                <div style={{ marginTop: 12 }}>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    disabled={building}
+                    onClick={() => handleBuild('this')}
+                  >
+                    {building ? 'Building…' : "Build this week's schedule"}
+                  </button>
+                  {buildError && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: '#ef4444' }}>{buildError}</div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -1545,6 +1716,47 @@ export default function SchedulePage() {
             />
           </div>
         )}
+
+        {/* Alternate versions for this week (item 12 — republish). Each can be
+            reviewed/edited and then Publish & Replace'd to swap in for the week. */}
+        {currentAlternates.length > 0 && template && (
+          <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>
+              Alternate version{currentAlternates.length === 1 ? '' : 's'} for this week — review, then Publish &amp; Replace
+            </div>
+            {currentAlternates.map(s => (
+              <UpcomingCard
+                key={s.id}
+                schedule={s}
+                template={template}
+                companyId={companyId}
+                expanded={expandedUpcomingId === s.id}
+                onToggle={() => toggleUpcomingExpanded(s.id)}
+                isEditing={editingScheduleId === s.id}
+                removeMode={removeMode}
+                pendingAssignments={pendingAssignments}
+                changesCount={editingScheduleId === s.id ? changesCount : 0}
+                canStartEdit={canStartNewEdit}
+                canDeleteSchedule={canDeleteScheduleFor(s)}
+                canPublish={canManageSchedule}
+                isRepublish={!!priorPublishedForWeek(s)}
+                onPublish={() => requestPublish(s)}
+                onStartEdit={() => enterEditMode(s)}
+                onCancelEdit={cancelEditMode}
+                onAddShift={() => setAddShiftOpen(true)}
+                onToggleRemove={() => setRemoveMode(v => !v)}
+                onReview={() => setReviewPanelOpen(true)}
+                onAssignmentChange={setPendingAssignments}
+                onResolveGap={gap => setResolveTarget({ gap, scheduleId: s.id })}
+                onDelete={() => requestDeleteSchedule(s)}
+                onCloseDay={(date) => requestCloseDay(s.id, date)}
+                onReopenDay={(date) => handleReopenDay(s.id, date)}
+                veteranIds={veteranIds}
+                shiftRuleLabels={shiftRuleLabels}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ══ SECTION 2: UPCOMING SCHEDULES ═══════════════════════════════════ */}
@@ -1580,6 +1792,20 @@ export default function SchedulePage() {
               <div className="empty-state-desc">
                 Ask Aegis to build next week&rsquo;s schedule.
               </div>
+              {canManageSchedule && (
+                <div style={{ marginTop: 12 }}>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    disabled={building}
+                    onClick={() => handleBuild('next')}
+                  >
+                    {building ? 'Building…' : "Build next week's schedule"}
+                  </button>
+                  {buildError && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: '#ef4444' }}>{buildError}</div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -1598,6 +1824,9 @@ export default function SchedulePage() {
                 changesCount={editingScheduleId === s.id ? changesCount : 0}
                 canStartEdit={canStartNewEdit}
                 canDeleteSchedule={canDeleteScheduleFor(s)}
+                canPublish={canManageSchedule}
+                isRepublish={!!priorPublishedForWeek(s)}
+                onPublish={() => requestPublish(s)}
                 onStartEdit={() => enterEditMode(s)}
                 onCancelEdit={cancelEditMode}
                 onAddShift={() => setAddShiftOpen(true)}
@@ -1768,6 +1997,78 @@ export default function SchedulePage() {
           saveTemplate={saveTemplate}
           onClose={() => setEditTemplateMode(false)}
         />
+      )}
+
+      {/* ══ Publish / Republish Confirmation ═════════════════════════════════ */}
+      {publishTarget && (
+        <div
+          onClick={cancelPublish}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            zIndex: 400,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'var(--bg-surface-1)',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '20px 24px',
+              maxWidth: 460,
+              width: '100%',
+              boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+            }}
+          >
+            {(() => {
+              const isRepublish = !!priorPublishedForWeek(publishTarget)
+              if (publishResult) {
+                return (
+                  <>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-display)', marginBottom: 10 }}>
+                      Done
+                    </div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55, marginBottom: 20 }}>
+                      {publishResult}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <button className="btn btn-primary btn-sm" onClick={cancelPublish}>Close</button>
+                    </div>
+                  </>
+                )
+              }
+              return (
+                <>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-display)', marginBottom: 10 }}>
+                    {isRepublish ? 'Replace the published schedule?' : 'Publish this schedule?'}
+                  </div>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55, marginBottom: 16 }}>
+                    {isRepublish
+                      ? 'This will swap in this version as the published schedule for the week. The previous version is archived (kept for your records), and only the employees whose shifts actually changed are emailed their updated shifts.'
+                      : 'This will send the schedule to all staff and mark it as the published schedule for the week.'}
+                  </div>
+                  {publishError && (
+                    <div style={{ fontSize: 12, color: '#ef4444', marginBottom: 12 }}>{publishError}</div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                    <button className="btn btn-secondary btn-sm" onClick={cancelPublish} disabled={publishing}>
+                      Cancel
+                    </button>
+                    <button className="btn btn-primary btn-sm" onClick={confirmPublish} disabled={publishing}>
+                      {publishing ? (isRepublish ? 'Replacing…' : 'Publishing…') : (isRepublish ? 'Publish & Replace' : 'Publish')}
+                    </button>
+                  </div>
+                </>
+              )
+            })()}
+          </div>
+        </div>
       )}
 
       {/* ══ Delete Schedule Confirmation ═════════════════════════════════════ */}
