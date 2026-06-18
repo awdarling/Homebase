@@ -119,7 +119,11 @@ export default function AccessPage() {
     }
     setCurrentUser(currentUserData)
 
-    let usersQuery = supabase.from('users').select('*').order('created_at')
+    let usersQuery = supabase
+      .from('users')
+      .select('*')
+      .is('access_revoked_at', null) // hide revoked users from the active list
+      .order('created_at')
     if (currentUserData.role === 'owner' || currentUserData.role === 'manager') {
       usersQuery = usersQuery.eq('company_id', COMPANY_ID)
     }
@@ -195,6 +199,8 @@ function HomebaseSection({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null)
+  const [revoking, setRevoking] = useState(false)
+  const [revokeError, setRevokeError] = useState('')
 
   const canEditRole = (targetRole: string) => {
     if (currentUser?.role === 'quria') return true
@@ -252,7 +258,29 @@ function HomebaseSection({
   }
 
   async function handleRevoke(userId: string) {
-    await supabase.from('users').delete().eq('id', userId)
+    // Goes through the secure server route (service role), which actually marks
+    // the account revoked + locks them out — unlike the old client-side delete,
+    // which the database silently blocked (the "confirmed but still listed" bug).
+    setRevoking(true)
+    setRevokeError('')
+    try {
+      const res = await fetch('/api/revoke-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId }),
+      })
+      const result = (await res.json()) as { success?: boolean; error?: string }
+      if (!res.ok || !result.success) {
+        setRevokeError(result.error ?? `Couldn't revoke access (HTTP ${res.status}).`)
+        setRevoking(false)
+        return
+      }
+    } catch (err) {
+      setRevokeError(err instanceof Error ? err.message : 'Failed to reach the server.')
+      setRevoking(false)
+      return
+    }
+    setRevoking(false)
     setConfirmRevokeId(null)
     onChange()
   }
@@ -467,20 +495,35 @@ function HomebaseSection({
               Revoke Access
             </div>
             <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.6 }}>
-              This user will be immediately locked out of Homebase. This cannot be undone — they would need to be re-added to regain access.
+              This user will be immediately locked out of Homebase, and they&rsquo;ll see a clear message at sign-in. To restore access later, an owner or Quria admin can re-add them.
             </div>
+            {revokeError && (
+              <div style={{
+                fontSize: 12,
+                color: 'var(--status-blocked-text)',
+                marginBottom: 16,
+                padding: '8px 12px',
+                background: 'var(--status-blocked-bg)',
+                border: '1px solid var(--status-blocked-border)',
+                borderRadius: 'var(--radius-md)',
+              }}>
+                {revokeError}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => setConfirmRevokeId(null)}>Cancel</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => { setConfirmRevokeId(null); setRevokeError('') }}>Cancel</button>
               <button
                 className="btn btn-sm"
                 onClick={() => handleRevoke(confirmRevokeId)}
+                disabled={revoking}
                 style={{
                   background: 'var(--status-blocked-bg)',
                   color: 'var(--status-blocked-text)',
                   border: '1px solid var(--status-blocked-border)',
+                  opacity: revoking ? 0.6 : 1,
                 }}
               >
-                Revoke Access
+                {revoking ? 'Revoking…' : 'Revoke Access'}
               </button>
             </div>
           </div>
@@ -573,11 +616,14 @@ function AegisSection({
   const quriaEmails = new Set(quriaStaff.map((q) => q.email.toLowerCase()))
 
   async function saveAccess(employeeId: string, value: AegisAccess) {
+    // Routed through the server so the role gate + company binding are enforced,
+    // and so setting someone to "blocked" fires the Aegis removal notice.
     setSaving(true)
-    await supabase
-      .from('employees')
-      .update({ aegis_access: value })
-      .eq('id', employeeId)
+    await fetch('/api/aegis-access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employee_id: employeeId, access: value }),
+    })
     setSaving(false)
     setEditingId(null)
     onChange()

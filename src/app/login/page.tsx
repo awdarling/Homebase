@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
@@ -13,9 +13,20 @@ export default function LoginPage() {
   const [forgotEmail, setForgotEmail] = useState('')
   const [forgotSent, setForgotSent] = useState(false)
   const [forgotLoading, setForgotLoading] = useState(false)
+  const [revoked, setRevoked] = useState(false)
 
   const supabase = createClient()
   const router = useRouter()
+
+  // If the middleware bounced a revoked user here, show a clear message and
+  // clear their now-defunct session so they're fully signed out.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (new URLSearchParams(window.location.search).get('revoked') === '1') {
+      setRevoked(true)
+      void supabase.auth.signOut()
+    }
+  }, [supabase])
 
   async function handleLogin() {
     if (!email || !password) {
@@ -88,6 +99,21 @@ export default function LoginPage() {
           borderRadius: 'var(--radius-xl)',
           padding: 28,
         }}>
+
+          {revoked && (
+            <div style={{
+              fontSize: 13,
+              color: 'var(--status-blocked-text)',
+              marginBottom: 18,
+              padding: '12px 14px',
+              background: 'var(--status-blocked-bg)',
+              border: '1px solid var(--status-blocked-border)',
+              borderRadius: 'var(--radius-md)',
+              lineHeight: 1.55,
+            }}>
+              Your access has been removed. Please contact your administrator or your manager if you think this is a mistake.
+            </div>
+          )}
 
           {!showForgot ? (
             <>
