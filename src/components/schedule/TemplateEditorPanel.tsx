@@ -275,6 +275,11 @@ export default function TemplateEditorPanel({
                     </option>
                   ))}
                 </select>
+                {local.layout_type !== 'shift-rows-day-columns' && (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
+                    Downloads (Excel &amp; PDF) still use the Shifts × Days layout for now — matching downloads to this layout is coming.
+                  </div>
+                )}
               </div>
             </Section>
 
