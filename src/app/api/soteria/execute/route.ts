@@ -5,6 +5,7 @@ import { capabilityRoleFor } from '@/lib/soteria/capabilities'
 import { throwOnWriteError } from '@/lib/soteria/persistGuard'
 import { planConfiguration, summarizePlan, type ConfigBundle, type ExistingConfig } from '@/lib/soteria/ingestionPlanner'
 import { planRosterImport, type RosterRowInput } from '@/lib/soteria/rosterImport'
+import { inferShiftStructureFromSchedule, type ScheduleRowInput } from '@/lib/soteria/scheduleInference'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -2087,6 +2088,82 @@ export async function POST(request: NextRequest) {
         })
 
         return NextResponse.json({ success: true, applied, warnings: plan.warnings, summary: summarizePlan(plan) })
+      }
+
+      case 'import_schedule_structure': {
+        // Pillar 2: read an existing schedule and set up the shift structure it
+        // implies. Inference (pure, tested) → the same ingestion planner →
+        // apply only the role + shift-type steps it produces.
+        const d = action.data as { rows?: ScheduleRowInput[] }
+        if (!Array.isArray(d?.rows) || d.rows.length === 0) {
+          return NextResponse.json({ error: 'I need the schedule rows to read the structure from.' }, { status: 400 })
+        }
+
+        const inference = inferShiftStructureFromSchedule(d.rows)
+
+        const [rolesRes, shiftTypesRes] = await Promise.all([
+          supabase.from('roles').select('name').eq('company_id', companyId),
+          supabase.from('shift_types').select('name').eq('company_id', companyId),
+        ])
+        throwOnWriteError(rolesRes.error, 'read existing roles')
+        throwOnWriteError(shiftTypesRes.error, 'read existing shifts')
+
+        const existing: ExistingConfig = {
+          roleNames: (rolesRes.data ?? []).map((r: { name: string }) => r.name),
+          shiftTypeNames: (shiftTypesRes.data ?? []).map((s: { name: string }) => s.name),
+          wageRoleNames: [],
+          policyKeys: [],
+        }
+
+        const plan = planConfiguration(inference.bundle, existing)
+        const applied = { roles: 0, shift_types: 0, role_requirements: 0 }
+
+        for (const step of plan.steps) {
+          if (step.kind === 'role') {
+            const { error } = await supabase.from('roles').insert({ company_id: companyId, name: step.data.name, color: step.data.color ?? '#6b7280' })
+            throwOnWriteError(error, `add role ${step.data.name}`)
+            applied.roles++
+          } else if (step.kind === 'shift_type') {
+            const { data: stRow, error } = await supabase.from('shift_types').insert({
+              company_id: companyId,
+              name: step.data.name,
+              start_time: step.data.start_time,
+              end_time: step.data.end_time,
+              days_active: step.data.days_active,
+              active: true,
+            }).select('id, name, start_time, end_time, days_active').single()
+            throwOnWriteError(error, `add shift ${step.data.name}`)
+            const created = stRow as { id: string; name: string; start_time: string; end_time: string; days_active: number[] }
+            applied.shift_types++
+            for (const req of step.requirements) {
+              const { error: reqErr } = await supabase.from('shift_requirements').insert({
+                company_id: companyId,
+                shift_type_id: created.id,
+                role: req.accepted_roles[0],
+                accepted_roles: req.accepted_roles,
+                required_count: req.required_count,
+                shift_name: created.name,
+                start_time: created.start_time,
+                end_time: created.end_time,
+                days_active: created.days_active,
+              })
+              throwOnWriteError(reqErr, `add a role slot to ${created.name}`)
+              applied.role_requirements++
+            }
+          }
+        }
+
+        const warnings = [...inference.warnings, ...plan.warnings]
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'import_schedule_structure',
+          entity_type: 'company',
+          summary: `Soteria set up ${applied.shift_types} shift${applied.shift_types === 1 ? '' : 's'} and ${applied.roles} role${applied.roles === 1 ? '' : 's'} from an existing schedule`,
+          metadata: { applied, warnings },
+        })
+
+        return NextResponse.json({ success: true, applied, warnings })
       }
 
       default:
