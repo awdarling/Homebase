@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
 import { capabilityRoleFor } from '@/lib/soteria/capabilities'
 import { throwOnWriteError } from '@/lib/soteria/persistGuard'
+import { planConfiguration, summarizePlan, type ConfigBundle, type ExistingConfig } from '@/lib/soteria/ingestionPlanner'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -1929,6 +1930,157 @@ export async function POST(request: NextRequest) {
           metadata: { employee_id: d.employee_id, cleared_row_id: activeRow.id },
         })
         return NextResponse.json({ success: true })
+      }
+
+      case 'apply_setup_plan': {
+        // Pillar 2: configure Homebase from a document in one reviewed step.
+        // The planner (pure, tested) orders + validates the extracted bundle;
+        // here we apply each step in dependency order, threading created IDs.
+        const d = action.data as { bundle?: ConfigBundle }
+        const bundle = d?.bundle
+        if (!bundle || typeof bundle !== 'object') {
+          return NextResponse.json({ error: 'I need a setup plan to apply.' }, { status: 400 })
+        }
+
+        const [rolesRes, shiftTypesRes, wagesRes, policiesRes] = await Promise.all([
+          supabase.from('roles').select('id, name').eq('company_id', companyId),
+          supabase.from('shift_types').select('id, name, start_time, end_time, days_active').eq('company_id', companyId),
+          supabase.from('wage_rates').select('role').eq('company_id', companyId),
+          supabase.from('policies').select('id, policy_key, version').eq('company_id', companyId),
+        ])
+        throwOnWriteError(rolesRes.error, 'read existing roles')
+        throwOnWriteError(shiftTypesRes.error, 'read existing shifts')
+        throwOnWriteError(wagesRes.error, 'read existing wage rates')
+        throwOnWriteError(policiesRes.error, 'read existing rules')
+
+        const existing: ExistingConfig = {
+          roleNames: (rolesRes.data ?? []).map((r: { name: string }) => r.name),
+          shiftTypeNames: (shiftTypesRes.data ?? []).map((s: { name: string }) => s.name),
+          wageRoleNames: (wagesRes.data ?? []).map((w: { role: string }) => w.role),
+          policyKeys: (policiesRes.data ?? []).map((p: { policy_key: string }) => p.policy_key),
+        }
+
+        const plan = planConfiguration(bundle, existing)
+
+        type STRow = { id: string; name: string; start_time: string; end_time: string; days_active: number[] }
+        const shiftTypeByName = new Map<string, STRow>()
+        for (const s of (shiftTypesRes.data ?? []) as STRow[]) shiftTypeByName.set(s.name.trim().toLowerCase(), s)
+        const policyByKey = new Map<string, { id: string; version?: number }>()
+        for (const p of (policiesRes.data ?? []) as { id: string; policy_key: string; version?: number }[]) {
+          policyByKey.set(p.policy_key.trim().toLowerCase(), { id: p.id, version: p.version })
+        }
+
+        const applied = { profile: 0, roles: 0, wage_rates: 0, shift_types: 0, role_requirements: 0, policies: 0, veteran_rules: 0 }
+
+        for (const step of plan.steps) {
+          if (step.kind === 'profile') {
+            const existingProfile = await supabase.from('company_profiles').select('id').eq('company_id', companyId).maybeSingle()
+            throwOnWriteError(existingProfile.error, 'read the company profile')
+            if (existingProfile.data) {
+              const { error } = await supabase.from('company_profiles').update({ ...step.data, updated_at: new Date().toISOString() }).eq('company_id', companyId)
+              throwOnWriteError(error, 'update the company profile')
+            } else {
+              const { error } = await supabase.from('company_profiles').insert({ company_id: companyId, ...step.data })
+              throwOnWriteError(error, 'save the company profile')
+            }
+            applied.profile++
+          } else if (step.kind === 'role') {
+            const { error } = await supabase.from('roles').insert({ company_id: companyId, name: step.data.name, color: step.data.color ?? '#6b7280' })
+            throwOnWriteError(error, `add role ${step.data.name}`)
+            applied.roles++
+          } else if (step.kind === 'wage_rate') {
+            const { error } = await supabase.from('wage_rates').insert({ company_id: companyId, role: step.data.role, hourly_rate: step.data.hourly_rate })
+            throwOnWriteError(error, `set the ${step.data.role} wage`)
+            applied.wage_rates++
+          } else if (step.kind === 'shift_type') {
+            const { data: stRow, error } = await supabase.from('shift_types').insert({
+              company_id: companyId,
+              name: step.data.name,
+              start_time: step.data.start_time,
+              end_time: step.data.end_time,
+              days_active: step.data.days_active,
+              active: true,
+            }).select('id, name, start_time, end_time, days_active').single()
+            throwOnWriteError(error, `add shift ${step.data.name}`)
+            const created = stRow as STRow
+            shiftTypeByName.set(created.name.trim().toLowerCase(), created)
+            applied.shift_types++
+            for (const req of step.requirements) {
+              const { error: reqErr } = await supabase.from('shift_requirements').insert({
+                company_id: companyId,
+                shift_type_id: created.id,
+                role: req.accepted_roles[0],
+                accepted_roles: req.accepted_roles,
+                required_count: req.required_count,
+                shift_name: created.name,
+                start_time: created.start_time,
+                end_time: created.end_time,
+                days_active: created.days_active,
+              })
+              throwOnWriteError(reqErr, `add a role slot to ${created.name}`)
+              applied.role_requirements++
+            }
+          } else if (step.kind === 'policy') {
+            const key = step.data.policy_key
+            const prior = policyByKey.get(key.trim().toLowerCase())
+            const hasJson = Object.prototype.hasOwnProperty.call(step.data, 'policy_value_json')
+            if (prior) {
+              const updates: Record<string, unknown> = { policy_value: step.data.policy_value, version: (prior.version ?? 1) + 1 }
+              if (hasJson) updates.policy_value_json = step.data.policy_value_json ?? null
+              if (step.data.policy_type !== undefined) updates.policy_type = step.data.policy_type
+              if (step.data.description !== undefined) updates.description = step.data.description
+              const { error } = await supabase.from('policies').update(updates).eq('id', prior.id).eq('company_id', companyId)
+              throwOnWriteError(error, `update rule ${key}`)
+            } else {
+              const { data: ins, error } = await supabase.from('policies').insert({
+                company_id: companyId,
+                policy_key: key,
+                policy_value: step.data.policy_value,
+                policy_value_json: hasJson ? (step.data.policy_value_json ?? null) : null,
+                policy_type: step.data.policy_type ?? 'custom',
+                description: step.data.description ?? null,
+                version: 1,
+              }).select('id').single()
+              throwOnWriteError(error, `save rule ${key}`)
+              policyByKey.set(key.trim().toLowerCase(), { id: (ins as { id: string }).id, version: 1 })
+            }
+            applied.policies++
+          } else if (step.kind === 'veteran_rule') {
+            let shiftTypeId: string | null = null
+            if (step.data.shift_name) {
+              const row = shiftTypeByName.get(step.data.shift_name.trim().toLowerCase())
+              if (!row) {
+                plan.warnings.push(`Couldn't attach a veteran rule to "${step.data.shift_name}" — that shift wasn't found.`)
+                continue
+              }
+              shiftTypeId = row.id
+            }
+            const { error } = await supabase.from('shift_experience_rules').insert({
+              company_id: companyId,
+              shift_type_id: shiftTypeId,
+              days_of_week: step.data.days_of_week,
+              role: step.data.role,
+              mode: step.data.mode,
+              min_count: step.data.mode === 'min_veterans' ? step.data.min_count : null,
+              season_start: step.data.season_start,
+              season_end: step.data.season_end,
+              created_by: 'soteria',
+            })
+            throwOnWriteError(error, 'add a veteran staffing rule')
+            applied.veteran_rules++
+          }
+        }
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'apply_setup_plan',
+          entity_type: 'company',
+          summary: `Soteria configured from a document — ${summarizePlan(plan)}`,
+          metadata: { applied, warnings: plan.warnings },
+        })
+
+        return NextResponse.json({ success: true, applied, warnings: plan.warnings, summary: summarizePlan(plan) })
       }
 
       default:

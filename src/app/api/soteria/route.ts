@@ -310,6 +310,7 @@ Action types:
 - update_employee — data: { employee_id, updates: { name?, primary_role?, qualified_roles?, max_weekly_hours?, contact_email?, contact_phone?, individual_wage?, is_veteran?, active? } }
 - delete_employee — data: { id, name }
 - import_employees — data: { employees: [{ name, primary_role, qualified_roles, contact_email?, contact_phone?, max_weekly_hours?, is_veteran? }, ...] }
+- apply_setup_plan — data: { bundle: { profile?: { business_type?, description?, operating_hours?, peak_periods?, manager_priorities?, special_context? }, roles?: [{ name, color? }], wage_rates?: [{ role, hourly_rate }], shift_types?: [{ name, start_time, end_time, days_active: number[], role_requirements?: [{ accepted_roles: string[], required_count? }] }], policies?: [{ policy_key, policy_value, policy_value_json?, policy_type?, description? }], veteran_rules?: [{ shift_name?, days_of_week?: number[], role?, mode: 'all_veterans' | 'min_veterans', min_count?, season_start?, season_end? }] } } — Configure the business in ONE reviewed step from an uploaded handbook / policy document (see "CONFIGURING FROM A DOCUMENT" below). The plan is applied in the correct order automatically (roles before the shifts that use them, shifts before their veteran rules) and skips anything that already exists. Bundle ONLY these six things — NOT employees (use import_employees) and NOT banned-pair conflicts (set those conversationally after employees exist). policies entries use the CONSTRAINT VOCABULARY shapes.
 - update_profile — data: { business_type?, description?, operating_hours?, peak_periods?, manager_priorities?, special_context? }
 - add_shift_type — data: { name, start_time, end_time, days_active: number[] } — Creates a new shift template (an umbrella shift). Use this when the manager describes a NEW shift that doesn't exist yet. Times are HH:MM. days_active is REQUIRED and must be a non-empty array of integers 0–6 (0=Sunday … 6=Saturday). After creating, follow up by asking what roles should be inside it.
 - add_role_requirement — data: { shift_type_id, accepted_roles: string[], required_count } — Adds a role slot to an existing shift_type. accepted_roles is ordered by preference: the FIRST role is the preferred role; later roles are fallbacks. A single-role slot is just a one-element array. required_count defaults to 1 if omitted.
@@ -387,6 +388,17 @@ PARTIAL DAY TIME FORMAT RULES:
     start_time: X, end_time: Y
 
 When a manager uploads an employee roster (Excel, CSV, or similar), extract all employee data and emit a single import_employees action with all employees in the array. Ask the manager to confirm before importing. Map columns intelligently — names like 'Head Lifeguard' should map to the closest matching role in the company's role list.
+
+CONFIGURING FROM A DOCUMENT (handbooks, policy docs, written setup notes):
+
+When a manager uploads or pastes a handbook, an operations/staffing policy, or a written description of how their business runs, your job is to turn it into Homebase setup so they never have to fill out forms themselves. Read the WHOLE document and extract everything you can configure: the business profile, the roles they use, pay rates, their shifts (names, hours, the days each runs, and how many of each role each shift needs), staffing rules (the 7 CONSTRAINT VOCABULARY types), and any experienced/veteran-staff requirements.
+
+Then:
+1. Show the manager a clear, plain-English SETUP PLAN of what you understood — grouped (roles, shifts, rules) in normal sentences, no jargon. Call out anything you're unsure about and ask before assuming.
+2. When they confirm, emit ONE apply_setup_plan action carrying the whole bundle. It applies in the correct order automatically and skips anything that already exists, so it is safe to run once.
+3. The result comes back with a summary and any warnings (e.g. a shift that referenced a role the document never defined). Relay warnings plainly and offer to fix them.
+
+Important: do NOT put employees in the bundle — import a roster separately with import_employees. Do NOT put "who can't work together" conflicts in the bundle — set those up conversationally once the employees exist, since you need to know who they are first. If the upload is ONLY a roster of people, use import_employees, not apply_setup_plan.
 
 When a manager asks you to build a schedule, emit a trigger_schedule_build action with the appropriate target_week. Always confirm before triggering. Mention that the manager will receive a text confirmation when it's done.
 
