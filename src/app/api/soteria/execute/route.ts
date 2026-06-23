@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
 import { capabilityRoleFor } from '@/lib/soteria/capabilities'
+import { throwOnWriteError } from '@/lib/soteria/persistGuard'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -164,8 +165,18 @@ export async function POST(request: NextRequest) {
 
       case 'delete_employee': {
         const d = action.data as { id: string; name: string }
-        await supabase.from('availability').delete().eq('employee_id', d.id)
-        await supabase.from('employees').delete().eq('id', d.id).eq('company_id', companyId)
+        const { error: availErr } = await supabase
+          .from('availability')
+          .delete()
+          .eq('employee_id', d.id)
+          .eq('company_id', companyId)
+        throwOnWriteError(availErr, `remove ${d.name}'s availability`)
+        const { error: empErr } = await supabase
+          .from('employees')
+          .delete()
+          .eq('id', d.id)
+          .eq('company_id', companyId)
+        throwOnWriteError(empErr, `delete employee ${d.name}`)
         await supabase.from('activity_log').insert({
           company_id: companyId,
           actor: 'soteria',
@@ -224,16 +235,19 @@ export async function POST(request: NextRequest) {
           .select('id')
           .eq('company_id', companyId)
           .maybeSingle()
+        throwOnWriteError(existing.error, 'read the company profile')
         if (existing.data) {
-          await supabase.from('company_profiles').update({
+          const { error: updErr } = await supabase.from('company_profiles').update({
             ...action.data,
             updated_at: new Date().toISOString(),
           }).eq('company_id', companyId)
+          throwOnWriteError(updErr, 'update the company profile')
         } else {
-          await supabase.from('company_profiles').insert({
+          const { error: insErr } = await supabase.from('company_profiles').insert({
             company_id: companyId,
             ...action.data,
           })
+          throwOnWriteError(insErr, 'save the company profile')
         }
         await supabase.from('activity_log').insert({
           company_id: companyId,
@@ -780,7 +794,8 @@ export async function POST(request: NextRequest) {
 
       case 'delete_policy': {
         const d = action.data as { id: string; policy_key: string }
-        await supabase.from('policies').delete().eq('id', d.id).eq('company_id', companyId)
+        const { error: delErr } = await supabase.from('policies').delete().eq('id', d.id).eq('company_id', companyId)
+        throwOnWriteError(delErr, `delete policy ${d.policy_key}`)
         await supabase.from('activity_log').insert({
           company_id: companyId,
           actor: 'soteria',
@@ -865,11 +880,12 @@ export async function POST(request: NextRequest) {
         let slotsToInsert = d.slots ?? []
 
         if (d.replace_all) {
-          await supabase
+          const { error: delErr } = await supabase
             .from('availability')
             .delete()
             .eq('employee_id', d.employee_id)
             .eq('company_id', companyId)
+          throwOnWriteError(delErr, `clear ${d.employee_name}'s existing availability`)
         } else {
           const { data: existing } = await supabase
             .from('availability')
@@ -923,11 +939,12 @@ export async function POST(request: NextRequest) {
           }[]
         }
 
-        await supabase
+        const { error: deactivateErr } = await supabase
           .from('custom_availability')
           .update({ active: false })
           .eq('employee_id', d.employee_id)
           .eq('company_id', companyId)
+        throwOnWriteError(deactivateErr, `clear ${d.employee_name}'s previous custom availability`)
 
         const patterns =
           d.type === 'date_limited' ? (d.patterns ?? []) : (d.weekly_patterns ?? [])
