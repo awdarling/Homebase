@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { Schedule, ScheduleTemplate } from '@/lib/types'
 import type { SaveTemplateResult } from '@/lib/schedule/templateSave'
+import { LAYOUT_META, isLayoutSupported } from '@/lib/schedule/templateLayouts'
 import ScheduleRenderer from './ScheduleRenderer'
 
 // ── Mock schedule for preview when no current schedule exists ────────────────
@@ -138,12 +139,6 @@ interface TemplateEditorPanelProps {
 
 const DAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
-const LAYOUT_OPTIONS: { value: ScheduleTemplate['layout_type']; label: string }[] = [
-  { value: 'shift-rows-day-columns',    label: 'Shifts × Days' },
-  { value: 'employee-rows-day-columns', label: 'Employees × Days' },
-  { value: 'role-rows-day-columns',     label: 'Roles × Days' },
-]
-
 export default function TemplateEditorPanel({
   template, currentSchedule, saveTemplate, onClose,
 }: TemplateEditorPanelProps) {
@@ -162,6 +157,9 @@ export default function TemplateEditorPanel({
   const previewSchedule = currentSchedule ?? MOCK_SCHEDULE
 
   function setLayout(value: ScheduleTemplate['layout_type']) {
+    // Defensive: never let an unbuilt layout be selected (the option is also
+    // disabled in the dropdown). Saving one would break the live schedule.
+    if (!isLayoutSupported(value)) return
     setLocal(t => ({ ...t, layout_type: value }))
   }
 
@@ -271,8 +269,10 @@ export default function TemplateEditorPanel({
                   value={local.layout_type}
                   onChange={e => setLayout(e.target.value as ScheduleTemplate['layout_type'])}
                 >
-                  {LAYOUT_OPTIONS.map(o => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
+                  {LAYOUT_META.map(o => (
+                    <option key={o.value} value={o.value} disabled={!o.supported}>
+                      {o.supported ? o.label : `${o.label} (coming soon)`}
+                    </option>
                   ))}
                 </select>
               </div>

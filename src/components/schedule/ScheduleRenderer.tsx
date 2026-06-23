@@ -16,6 +16,7 @@ import type { Schedule, ScheduleTemplate, ScheduleAssignment, ColumnConfig, RowC
 import { parseYMD, toYMD } from '@/lib/utils/dates'
 import { resolveAssignmentForSlot } from '@/lib/schedule/resolveAssignment'
 import { resolveCellAppearance, hexWithAlpha } from '@/lib/schedule/resolveCellAppearance'
+import { layoutLabel } from '@/lib/schedule/templateLayouts'
 import { VetBadge } from '@/components/common/VetBadge'
 
 interface ScheduleRendererProps {
@@ -931,7 +932,7 @@ export default function ScheduleRenderer({
   return (
     <div style={{ ...containerStyle, padding: '48px 24px', textAlign: 'center' }}>
       <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-        Layout type <code>{template.layout_type}</code> is not yet supported.
+        The “{layoutLabel(template.layout_type)}” layout is coming soon. Your schedule is still using the Shifts × Days layout.
       </div>
     </div>
   )
