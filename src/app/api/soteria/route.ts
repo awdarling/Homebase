@@ -5,6 +5,11 @@ import { createClient as createServerSupabase } from '@/lib/supabase/server'
 import * as XLSX from 'xlsx'
 import mammoth from 'mammoth'
 import { capabilitySection, capabilityRoleFor, type CapabilityRole } from '@/lib/soteria/capabilities'
+import {
+  formatAvailabilitySection,
+  formatCustomAvailabilitySection,
+  formatVeteranRulesSection,
+} from '@/lib/soteria/contextFormatters'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -30,6 +35,9 @@ async function getCompanyContext(companyId: string) {
     { data: roles },
     { data: wageRates },
     { data: events },
+    { data: availability },
+    { data: customAvailability },
+    { data: veteranRules },
   ] = await Promise.all([
     supabase.from('companies').select('*').eq('id', companyId).single(),
     supabase.from('company_profiles').select('*').eq('company_id', companyId).maybeSingle(),
@@ -43,6 +51,9 @@ async function getCompanyContext(companyId: string) {
     supabase.from('roles').select('id, name, color').eq('company_id', companyId).order('name'),
     supabase.from('wage_rates').select('id, role, hourly_rate').eq('company_id', companyId).order('role'),
     supabase.from('events').select('id, event_type, title, date, description, staffing_notes').eq('company_id', companyId).gte('date', today).order('date').limit(30),
+    supabase.from('availability').select('*').eq('company_id', companyId),
+    supabase.from('custom_availability').select('*').eq('company_id', companyId).eq('active', true),
+    supabase.from('shift_experience_rules').select('*').eq('company_id', companyId).eq('active', true),
   ])
 
   const employeeCount = employees?.length ?? 0
@@ -61,6 +72,9 @@ async function getCompanyContext(companyId: string) {
     roles,
     wageRates,
     events,
+    availability,
+    customAvailability,
+    veteranRules,
     isNewCompany,
     summary: {
       employeeCount,
@@ -72,6 +86,8 @@ async function getCompanyContext(companyId: string) {
       roleCount: roles?.length ?? 0,
       wageRateCount: wageRates?.length ?? 0,
       upcomingEventCount: events?.length ?? 0,
+      activeCustomAvailabilityCount: customAvailability?.length ?? 0,
+      veteranRuleCount: veteranRules?.length ?? 0,
     }
   }
 }
@@ -80,7 +96,14 @@ function buildSystemPrompt(
   context: Awaited<ReturnType<typeof getCompanyContext>>,
   capRole: CapabilityRole
 ) {
-  const { company, profile, employees, shiftTypes, shifts, policies, conflicts, memory, roles, wageRates, events, isNewCompany, summary } = context
+  const { company, profile, employees, shiftTypes, shifts, policies, conflicts, memory, roles, wageRates, events, availability, customAvailability, veteranRules, isNewCompany, summary } = context
+  const empLite = (employees ?? []).map((e: { id: string; name: string }) => ({ id: e.id, name: e.name }))
+  const shiftTypeNameById = new Map<string, string>(
+    (shiftTypes ?? []).map((st: { id: string; name: string }) => [st.id, st.name])
+  )
+  const availabilityText = formatAvailabilitySection(empLite, availability ?? [])
+  const customAvailabilityText = formatCustomAvailabilitySection(empLite, customAvailability ?? [])
+  const veteranRulesText = formatVeteranRulesSection(veteranRules ?? [], shiftTypeNameById)
   const today = new Date().toISOString().slice(0, 10)
   const currentYear = today.slice(0, 4)
   const formatEventDate = (iso: string | null | undefined): string => {
@@ -148,6 +171,8 @@ CURRENT DATA SUMMARY:
 - Pending time-off: ${summary.pendingTimeOff}
 - Conflict pairs: ${summary.conflictCount}
 - Upcoming events (next 30 days+): ${summary.upcomingEventCount}
+- Active custom-availability overrides: ${summary.activeCustomAvailabilityCount}
+- Active veteran (experience) rules: ${summary.veteranRuleCount}
 ${conflictWarnings()}
 
 ${profile ? `
@@ -211,6 +236,16 @@ ${policies && policies.length > 0 ? `
 POLICIES:
 ${policies.map((p: { policy_key: string; policy_value: string; policy_type: string }) => `- ${p.policy_key}: ${p.policy_value} (${p.policy_type})`).join('\n')}
 ` : 'POLICIES: None added yet'}
+${availabilityText ? `
+EMPLOYEE AVAILABILITY (recurring weekly hours each person is normally free to work — reference this before changing anyone's availability):
+${availabilityText}
+` : ''}${customAvailabilityText ? `
+ACTIVE CUSTOM AVAILABILITY (temporary overrides that REPLACE the normal availability above until the listed end date):
+${customAvailabilityText}
+` : ''}${veteranRulesText ? `
+VETERAN / EXPERIENCE RULES (the schedule engine enforces these experienced-staff requirements when it builds):
+${veteranRulesText}
+` : ''}
 
 CONSTRAINT VOCABULARY:
 
