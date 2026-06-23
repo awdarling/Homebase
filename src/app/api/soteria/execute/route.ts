@@ -4,6 +4,7 @@ import { createClient as createServerSupabase } from '@/lib/supabase/server'
 import { capabilityRoleFor } from '@/lib/soteria/capabilities'
 import { throwOnWriteError } from '@/lib/soteria/persistGuard'
 import { planConfiguration, summarizePlan, type ConfigBundle, type ExistingConfig } from '@/lib/soteria/ingestionPlanner'
+import { planRosterImport, type RosterRowInput } from '@/lib/soteria/rosterImport'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -189,45 +190,50 @@ export async function POST(request: NextRequest) {
       }
 
       case 'import_employees': {
-        const d = action.data as {
-          employees: {
-            name: string
-            primary_role: string
-            qualified_roles?: string[]
-            contact_email?: string | null
-            contact_phone?: string | null
-            max_weekly_hours?: number
-            is_veteran?: boolean
-          }[]
+        const d = action.data as { employees: RosterRowInput[] }
+
+        // Normalize + de-dupe against the existing team and known roles before
+        // writing, so a re-run doesn't duplicate people and role spellings line
+        // up with the company's defined roles (the engine matches role by name).
+        const [existingEmps, knownRoles] = await Promise.all([
+          supabase.from('employees').select('name').eq('company_id', companyId),
+          supabase.from('roles').select('name').eq('company_id', companyId),
+        ])
+        throwOnWriteError(existingEmps.error, 'read the existing team')
+        throwOnWriteError(knownRoles.error, 'read the role list')
+
+        const plan = planRosterImport(d.employees ?? [], {
+          existingEmployeeNames: (existingEmps.data ?? []).map((e: { name: string }) => e.name),
+          knownRoleNames: (knownRoles.data ?? []).map((r: { name: string }) => r.name),
+        })
+
+        let importedCount = 0
+        if (plan.toInsert.length > 0) {
+          const rows = plan.toInsert.map((e) => ({
+            company_id: companyId,
+            name: e.name,
+            primary_role: e.primary_role,
+            qualified_roles: e.qualified_roles,
+            contact_email: e.contact_email,
+            contact_phone: e.contact_phone,
+            max_weekly_hours: e.max_weekly_hours,
+            is_veteran: e.is_veteran,
+            active: true,
+          }))
+          const { data, error } = await supabase.from('employees').insert(rows).select('id')
+          throwOnWriteError(error, 'import the roster')
+          importedCount = data?.length ?? 0
         }
 
-        const rows = (d.employees ?? []).map((e) => ({
-          company_id: companyId,
-          name: e.name,
-          primary_role: e.primary_role,
-          qualified_roles: e.qualified_roles?.length ? e.qualified_roles : [e.primary_role],
-          contact_email: e.contact_email ?? null,
-          contact_phone: e.contact_phone ?? null,
-          max_weekly_hours: e.max_weekly_hours ?? 40,
-          is_veteran: e.is_veteran ?? false,
-          active: true,
-        }))
-
-        const { data, error } = await supabase
-          .from('employees')
-          .insert(rows)
-          .select('id')
-        if (error) throw error
-
-        const importedCount = data?.length ?? 0
         await supabase.from('activity_log').insert({
           company_id: companyId,
           actor: 'soteria',
           action: 'employees_imported',
           entity_type: 'employee',
-          summary: `Soteria imported ${importedCount} employee${importedCount === 1 ? '' : 's'}`,
+          summary: `Soteria imported ${importedCount} employee${importedCount === 1 ? '' : 's'}${plan.skipped ? ` (skipped ${plan.skipped})` : ''}`,
+          metadata: { imported: importedCount, skipped: plan.skipped, warnings: plan.warnings },
         })
-        return NextResponse.json({ success: true, imported: importedCount })
+        return NextResponse.json({ success: true, imported: importedCount, skipped: plan.skipped, warnings: plan.warnings })
       }
 
       case 'update_profile': {
