@@ -3,7 +3,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
 import { withAnthropicRetry } from '@/lib/anthropic-retry'
-import type { ScheduleAssignment } from '@/lib/types'
+import type { ScheduleAssignment, CustomAvailability } from '@/lib/types'
+import {
+  validateScheduleEdit,
+  type ScheduleEditIssue,
+  type ValidatorAssignment,
+  type ValidatorAvailability,
+  type ValidatorEmployee,
+} from '@/lib/soteria/validateScheduleEdit'
 
 console.log('[soteria] API key present:', !!process.env.ANTHROPIC_API_KEY)
 
@@ -88,6 +95,7 @@ export async function POST(req: NextRequest) {
     { data: company },
     { data: employees },
     { data: availability },
+    { data: customAvailability },
     { data: timeOff },
     { data: conflicts },
     { data: policies },
@@ -102,6 +110,13 @@ export async function POST(req: NextRequest) {
       .select('employee_id, day_of_week, start_time, end_time')
       .eq('company_id', company_id)
       .in('employee_id', touchedEmployeeIds.length > 0 ? touchedEmployeeIds : ['00000000-0000-0000-0000-000000000000']),
+    // custom_availability was previously NEVER loaded — the root of the bug where
+    // a swap that violated an employee's custom availability was approved.
+    supabase.from('custom_availability')
+      .select('id, employee_id, company_id, type, end_date, cycle_weeks, cycle_start_date, patterns, active, created_at')
+      .eq('company_id', company_id)
+      .eq('active', true)
+      .in('employee_id', touchedEmployeeIds.length > 0 ? touchedEmployeeIds : ['00000000-0000-0000-0000-000000000000']),
     supabase.from('time_off_requests')
       .select('employee_id, start_date, end_date, status')
       .eq('company_id', company_id)
@@ -115,6 +130,52 @@ export async function POST(req: NextRequest) {
 
   const empById = new Map<string, { id: string; name: string; primary_role: string; qualified_roles: string[]; max_weekly_hours: number }>()
   for (const e of employees ?? []) empById.set(e.id, e)
+
+  // ── Deterministic, custom-availability-aware hard-rule validation ───────────
+  // The LLM pass below is kept ONLY for soft/fairness warnings. Every hard rule
+  // — qualification, availability, CUSTOM availability, approved time off, max
+  // weekly hours, overlapping double-booking, never-together pairs — is computed
+  // here so nothing can be silently missed. (The prior LLM-only path never even
+  // loaded custom availability and approved an impossible swap.)
+  const employeesById = new Map<string, ValidatorEmployee>()
+  for (const e of employees ?? []) {
+    employeesById.set(e.id, {
+      id: e.id,
+      name: e.name,
+      qualified_roles: (e.qualified_roles as string[]) ?? [],
+      max_weekly_hours: (e.max_weekly_hours as number) ?? 0,
+    })
+  }
+  const availByEmp = new Map<string, ValidatorAvailability[]>()
+  for (const av of availability ?? []) {
+    const list = availByEmp.get(av.employee_id) ?? []
+    list.push({ day_of_week: av.day_of_week, start_time: av.start_time, end_time: av.end_time })
+    availByEmp.set(av.employee_id, list)
+  }
+  const customByEmp = new Map<string, CustomAvailability | null>()
+  for (const ca of (customAvailability ?? []) as unknown as CustomAvailability[]) {
+    if (!customByEmp.has(ca.employee_id)) customByEmp.set(ca.employee_id, ca)
+  }
+  const deterministicIssues: ScheduleEditIssue[] = validateScheduleEdit({
+    weekStart: schedule?.week_start ?? '',
+    proposedAssignments: proposed_assignments.map((a): ValidatorAssignment => ({
+      employee_id: a.employee_id,
+      employee_name: a.employee_name ?? '',
+      date: a.date,
+      shift_name: a.shift_name,
+      role: a.role ?? '',
+      start_time: a.start_time ?? '',
+      end_time: a.end_time ?? '',
+      hours: a.hours ?? 0,
+    })),
+    touchedEmployeeIds,
+    employeesById,
+    availByEmp,
+    customByEmp,
+    timeOff: (timeOff ?? []).map(t => ({ employee_id: t.employee_id, start_date: t.start_date, end_date: t.end_date })),
+    conflicts: (conflicts ?? []).map(c => ({ employee_id_1: c.employee_id_1, employee_id_2: c.employee_id_2, severity: c.severity })),
+  })
+  const hasHardError = deterministicIssues.some(i => i.severity === 'error')
 
   // Compute proposed weekly hours per employee
   const proposedHoursByEmployee: Record<string, number> = {}
@@ -208,32 +269,46 @@ Return JSON with this exact shape:
 
 If there are no issues at all, return issues: [], approved: true, and a positive one-sentence summary.`
 
-  const message = await withAnthropicRetry(() =>
-    anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: userMessage }],
-      system: systemPrompt,
-    })
-  )
-
-  const raw = message.content[0].type === 'text' ? message.content[0].text.trim() : ''
-
-  let result: SoteriaResponse
+  // Soft warnings only from the LLM (fairness, fatigue, coverage drops). It is
+  // NEVER the source of truth for errors — those are the deterministic checks
+  // above. If the model is unavailable, we still return the deterministic verdict.
+  let llmWarnings: SoteraIssue[] = []
+  let llmSummary = ''
   try {
+    const message = await withAnthropicRetry(() =>
+      anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: userMessage }],
+        system: systemPrompt,
+      })
+    )
+    const raw = message.content[0].type === 'text' ? message.content[0].text.trim() : ''
     const jsonMatch = raw.match(/\{[\s\S]*\}/)
-    result = JSON.parse(jsonMatch ? jsonMatch[0] : raw)
-    if (!Array.isArray(result.issues)) result.issues = []
-    if (typeof result.approved !== 'boolean') {
-      result.approved = !result.issues.some(i => i.severity === 'error')
+    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : raw) as SoteriaResponse
+    if (Array.isArray(parsed.issues)) {
+      llmWarnings = parsed.issues
+        .filter(i => i && i.severity === 'warning')
+        .map(i => ({ severity: 'warning' as const, employee_name: i.employee_name, description: i.description, suggestion: i.suggestion ?? null }))
     }
-    if (typeof result.summary !== 'string') result.summary = 'Soteria reviewed the changes.'
-  } catch {
-    result = {
-      issues: [],
-      summary: 'Soteria could not parse a structured response. Manual review recommended.',
-      approved: true,
-    }
+    if (typeof parsed.summary === 'string') llmSummary = parsed.summary
+  } catch (llmErr) {
+    console.warn('[soteria] soft-warning pass unavailable:', llmErr)
+  }
+
+  const mappedHard: SoteraIssue[] = deterministicIssues.map(i => ({
+    severity: i.severity,
+    employee_name: i.employee_name,
+    description: i.description,
+    suggestion: i.suggestion,
+  }))
+  const errorCount = mappedHard.filter(i => i.severity === 'error').length
+  const result: SoteriaResponse = {
+    issues: [...mappedHard, ...llmWarnings],
+    approved: !hasHardError,
+    summary: hasHardError
+      ? `${errorCount} blocking issue${errorCount === 1 ? '' : 's'} must be fixed before publishing.`
+      : (llmSummary || (llmWarnings.length > 0 ? 'No blocking issues — a few things worth a look.' : 'Looks good — no issues found.')),
   }
 
   return NextResponse.json(result)
