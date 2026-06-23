@@ -6,6 +6,7 @@ import type {
   ScheduleTemplate,
 } from '@/lib/types'
 import { resolveCellAppearance, type CellAppearance } from './resolveCellAppearance'
+import { buildEmployeeRowModel, buildRoleRowModel } from './layoutGrids'
 
 // ── Cell + grid shape ────────────────────────────────────────────────────────
 //
@@ -24,7 +25,13 @@ export type CellKind =
 
 /** One assigned employee in a cell. `role` is '' when the template hides roles
  *  (`display_options.show_role === false`) or the assignment has no role —
- *  mirroring the on-screen card, which shows the full name and (gated) role. */
+ *  mirroring the on-screen card, which shows the full name and (gated) role.
+ *
+ *  INVARIANT: this grid feeds the downloadable/shareable schedule (xlsx + print
+ *  HTML), which can reach employees. It must NEVER carry veteran status or
+ *  veteran shift requirements — that is manager-only (shown only in the in-app
+ *  ScheduleRenderer + Employees tab). Do not add an is_veteran field, a VET
+ *  badge, or any "Veterans only / ≥N" rule tag to this cell or the rows. */
 export interface GridCellEmployee {
   name: string                     // full employee_name (first + last), as on-screen
   role: string                     // assignment role, or '' when gated/absent
@@ -225,6 +232,59 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
   // display_options.show_role. A tenant with show_role=false gets no roles in
   // the download either (true parity).
   const showRole = template.display_options.show_role
+
+  // ── Alternate layouts (employees×days / roles×days) ────────────────────────
+  // Re-pivot the SAME assignments via the shared pure model so the download
+  // matches the on-screen view for the manager's chosen layout. Day columns,
+  // widths, and colors still come from the template. The no-veteran download
+  // invariant (see GridCellEmployee) holds: cells carry only name + gated role,
+  // never veteran status. Editing stays in the shift-rows grid; this is display.
+  if (
+    template.layout_type === 'employee-rows-day-columns' ||
+    template.layout_type === 'role-rows-day-columns'
+  ) {
+    const isEmployee = template.layout_type === 'employee-rows-day-columns'
+    const model = isEmployee ? buildEmployeeRowModel(assignments) : buildRoleRowModel(assignments)
+    const ALT_ROW_HEIGHT = 56
+
+    const altRows: GridRow[] = model.map(row => {
+      const cells: GridCell[] = columns.map(col => {
+        const baseClosed = col.isClosed
+        const cellAsgs = baseClosed ? [] : (row.cellsByDate[col.date] ?? [])
+        const employees: GridCellEmployee[] = cellAsgs.map(a => isEmployee
+          // Employee rows: the person IS the row, so each cell names the SHIFT.
+          ? { name: a.shift_name ?? '', role: showRole ? (a.role ?? '') : '' }
+          // Role rows: the role IS the row, so each cell names the person.
+          : { name: a.employee_name ?? '', role: '' })
+        const kind: CellKind = baseClosed ? 'closed' : (employees.length > 0 ? 'filled' : 'empty')
+        return {
+          kind,
+          shiftId: row.id,
+          date: col.date,
+          employees,
+          gapRole: null,
+          unfilledCount: 0,
+          appearance: resolveCellAppearance({
+            colorConfig: template.color_config,
+            columnColor: col.color,
+            rowId: row.id,
+            kind,
+          }),
+        }
+      })
+      return { shiftId: row.id, label: row.label, meta: null, height: ALT_ROW_HEIGHT, cells }
+    })
+
+    return {
+      companyName,
+      weekStart: schedule.week_start,
+      weekEnd: schedule.week_end,
+      weekRangeLabel: weekRangeLabel(schedule.week_start, schedule.week_end),
+      generatedAt: new Date().toISOString(),
+      columns,
+      rows: altRows,
+    }
+  }
 
   // Cell builder shared by template rows AND special-event rows, keyed by the
   // shift name (= row.id for template rows, = the event shift's name otherwise).

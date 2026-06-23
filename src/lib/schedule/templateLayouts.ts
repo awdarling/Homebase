@@ -24,8 +24,8 @@ export interface LayoutMeta {
 // to true the moment its layout component is built.
 export const LAYOUT_META: LayoutMeta[] = [
   { value: 'shift-rows-day-columns', label: 'Shifts × Days', supported: true },
-  { value: 'employee-rows-day-columns', label: 'Employees × Days', supported: false },
-  { value: 'role-rows-day-columns', label: 'Roles × Days', supported: false },
+  { value: 'employee-rows-day-columns', label: 'Employees × Days', supported: true },
+  { value: 'role-rows-day-columns', label: 'Roles × Days', supported: true },
 ]
 
 const BY_VALUE = new Map<string, LayoutMeta>(LAYOUT_META.map((m) => [m.value, m]))

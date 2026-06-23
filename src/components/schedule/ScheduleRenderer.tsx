@@ -17,6 +17,7 @@ import { parseYMD, toYMD } from '@/lib/utils/dates'
 import { resolveAssignmentForSlot } from '@/lib/schedule/resolveAssignment'
 import { resolveCellAppearance, hexWithAlpha } from '@/lib/schedule/resolveCellAppearance'
 import { layoutLabel } from '@/lib/schedule/templateLayouts'
+import { buildEmployeeRowModel, buildRoleRowModel } from '@/lib/schedule/layoutGrids'
 import { VetBadge } from '@/components/common/VetBadge'
 
 interface ScheduleRendererProps {
@@ -885,6 +886,153 @@ function ShiftRowsDayColumns({
   )
 }
 
+// ── Alternate layouts (view-only): employee-rows + role-rows ──────────────────
+// These re-pivot the same assignments via the pure layoutGrids model. They are
+// display-only (no drag/drop): editing always happens in the shift-rows grid.
+
+// Chip for the employee-rows layout — headlines the SHIFT (the row is already
+// the person), mirroring AssignmentCardContent's styling.
+function AltShiftChip({
+  assignment, color, fontSize, showRole, showHours, showStartEnd,
+}: {
+  assignment: ScheduleAssignment
+  color: string
+  fontSize: { name: number; meta: number }
+  showRole: boolean
+  showHours: boolean
+  showStartEnd: boolean
+}) {
+  return (
+    <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 4, padding: '5px 7px', userSelect: 'none' }}>
+      <div style={{
+        fontSize: fontSize.name, fontWeight: 500, color: 'var(--text-primary)',
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3,
+      }}>
+        {assignment.shift_name}
+      </div>
+      {showRole && (
+        <div style={{ fontSize: fontSize.meta, color, lineHeight: 1.2, marginTop: 2, fontWeight: 500, opacity: 0.85 }}>
+          {assignment.role}
+        </div>
+      )}
+      {(showHours || showStartEnd) && (
+        <div style={{ fontSize: fontSize.meta, color: 'var(--text-muted)', lineHeight: 1.2, marginTop: 1 }}>
+          {showStartEnd ? `${assignment.start_time}–${assignment.end_time}` : `${assignment.hours}h`}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AltLayoutGrid({
+  schedule, template, rowKind, closedDates, veteranIds,
+}: {
+  schedule: Schedule
+  template: ScheduleTemplate
+  rowKind: 'employee' | 'role'
+  closedDates: string[]
+  veteranIds?: Set<string>
+}) {
+  const { display_options, column_config, color_config } = template
+  const fontSize = FONT_SIZES[display_options.font_size]
+  const closedDateSet = new Set(closedDates)
+  const assignments = schedule.data?.assignments ?? []
+  const weekDates = getWeekDates(schedule.week_start)
+
+  const visibleCols = [...column_config].filter(c => c.visible).sort((a, b) => a.order - b.order)
+  const colByDate = new Map<string, ColumnConfig>()
+  weekDates.forEach(date => {
+    const dow = parseYMD(date).getDay()
+    const col = visibleCols.find(c => c.day === dow)
+    if (col) colByDate.set(date, col)
+  })
+  const orderedDates = visibleCols
+    .map(col => weekDates.find(d => parseYMD(d).getDay() === col.day))
+    .filter((d): d is string => d !== undefined)
+
+  const rows = rowKind === 'employee' ? buildEmployeeRowModel(assignments) : buildRoleRowModel(assignments)
+
+  const LABEL_COL_WIDTH = 140
+  const MIN_ROW_HEIGHT = 64
+  const MIN_COL_WIDTH = 120
+
+  if (rows.length === 0) {
+    return (
+      <div style={{ padding: '48px 24px', textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
+        No shifts scheduled yet.
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ overflowX: 'auto', width: '100%' }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: `${LABEL_COL_WIDTH}px ${orderedDates.map(d => `${Math.max(colByDate.get(d)?.width ?? 180, MIN_COL_WIDTH)}px`).join(' ')}`,
+        minWidth: LABEL_COL_WIDTH + orderedDates.length * MIN_COL_WIDTH,
+      }}>
+        <div style={{
+          position: 'sticky', left: 0, zIndex: 10, background: 'var(--bg-surface-2)',
+          borderBottom: '1px solid var(--border-default)', borderRight: '1px solid var(--border-default)',
+        }} />
+
+        {orderedDates.map(date => {
+          const col = colByDate.get(date)!
+          return <DayHeader key={date} date={date} label={col.label} color={col.color} closed={closedDateSet.has(date)} />
+        })}
+
+        {rows.map(row => ([
+          <div key={`label-${row.id}`} style={{
+            position: 'sticky', left: 0, zIndex: 5, background: 'var(--bg-surface-2)',
+            borderBottom: '1px solid var(--border-subtle)', borderRight: '1px solid var(--border-default)',
+            padding: '10px 12px', display: 'flex', alignItems: 'center', minHeight: MIN_ROW_HEIGHT,
+          }}>
+            <span style={{ fontFamily: 'var(--font-display)', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
+              {row.label}
+            </span>
+          </div>,
+          ...orderedDates.map(date => {
+            const col = colByDate.get(date)!
+            const cellAssignments = row.cellsByDate[date] ?? []
+            const isEmpty = cellAssignments.length === 0
+            const appearance = resolveCellAppearance({
+              colorConfig: color_config, columnColor: col.color, rowId: row.id,
+              kind: isEmpty ? 'empty' : 'filled',
+            })
+            const closed = closedDateSet.has(date)
+            return (
+              <div key={`cell-${row.id}-${date}`} style={{
+                borderBottom: '1px solid var(--border-subtle)', borderRight: '1px solid var(--border-subtle)',
+                padding: 6, minHeight: MIN_ROW_HEIGHT, display: 'flex', flexDirection: 'column', gap: 4,
+                background: closed ? 'var(--bg-surface-3)' : appearance.background,
+              }}>
+                {isEmpty ? (
+                  <div style={{ flex: 1, border: '1px dashed var(--border-subtle)', borderRadius: 4, minHeight: 28 }} />
+                ) : cellAssignments.map((asg, j) => (
+                  rowKind === 'role' ? (
+                    <StaticAssignmentCard
+                      key={`${asg.employee_id}-${j}`}
+                      assignment={asg} color={appearance.color} fontSize={fontSize}
+                      showRole={false} showHours={display_options.show_hours} showStartEnd={display_options.show_start_end}
+                      isVeteran={veteranIds?.has(asg.employee_id) ?? false}
+                    />
+                  ) : (
+                    <AltShiftChip
+                      key={`${asg.shift_name}-${j}`}
+                      assignment={asg} color={appearance.color} fontSize={fontSize}
+                      showRole={display_options.show_role} showHours={display_options.show_hours} showStartEnd={display_options.show_start_end}
+                    />
+                  )
+                ))}
+              </div>
+            )
+          }),
+        ]))}
+      </div>
+    </div>
+  )
+}
+
 export default function ScheduleRenderer({
   schedule,
   template,
@@ -908,7 +1056,9 @@ export default function ScheduleRenderer({
 
   const resolvedClosedDates = closedDates ?? schedule.data?.closed_dates ?? []
 
-  if (template.layout_type === 'shift-rows-day-columns') {
+  // Editing always uses the editable shift-rows grid (drag/drop, gaps, closing
+  // days). The chosen layout governs how the FINISHED schedule is displayed.
+  if (mode === 'edit' || template.layout_type === 'shift-rows-day-columns') {
     return (
       <div style={containerStyle}>
         <ShiftRowsDayColumns
@@ -924,6 +1074,20 @@ export default function ScheduleRenderer({
           veteranIds={veteranIds}
           shiftRuleLabels={shiftRuleLabels}
           shiftRuleNotes={shiftRuleNotes}
+        />
+      </div>
+    )
+  }
+
+  if (template.layout_type === 'employee-rows-day-columns' || template.layout_type === 'role-rows-day-columns') {
+    return (
+      <div style={containerStyle}>
+        <AltLayoutGrid
+          schedule={schedule}
+          template={template}
+          rowKind={template.layout_type === 'employee-rows-day-columns' ? 'employee' : 'role'}
+          closedDates={resolvedClosedDates}
+          veteranIds={veteranIds}
         />
       </div>
     )

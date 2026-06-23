@@ -16,10 +16,10 @@ function expect(cond: unknown, msg: string): void {
   }
 }
 
-// ── Only the implemented layout is marked supported ──────────────────────────
-expect(isLayoutSupported('shift-rows-day-columns') === true, 'shift-rows layout is supported (it is implemented)')
-expect(isLayoutSupported('employee-rows-day-columns') === false, 'employee-rows layout is not supported yet')
-expect(isLayoutSupported('role-rows-day-columns') === false, 'role-rows layout is not supported yet')
+// ── All three layouts are now implemented and supported ──────────────────────
+expect(isLayoutSupported('shift-rows-day-columns') === true, 'shift-rows layout is supported')
+expect(isLayoutSupported('employee-rows-day-columns') === true, 'employee-rows layout is now supported')
+expect(isLayoutSupported('role-rows-day-columns') === true, 'role-rows layout is now supported')
 
 // ── Unknown / empty values are never "supported" ─────────────────────────────
 expect(isLayoutSupported('nonsense') === false, 'an unknown layout value is not supported')
@@ -28,7 +28,7 @@ expect(isLayoutSupported(undefined) === false, 'undefined is not supported')
 
 // ── Exactly one supported layout today, and the meta covers all three ────────
 expect(LAYOUT_META.length === 3, 'all three layouts are listed in the picker meta')
-expect(LAYOUT_META.filter(m => m.supported).length === 1, 'exactly one layout is currently buildable')
+expect(LAYOUT_META.filter(m => m.supported).length === 3, 'all three layouts are now buildable')
 
 // ── Labels resolve for known values, with a safe fallback ────────────────────
 expect(layoutLabel('shift-rows-day-columns') === 'Shifts × Days', 'a known layout resolves to its friendly label')
