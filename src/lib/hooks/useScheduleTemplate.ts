@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useCompany } from '@/lib/hooks/useCompany'
 import { buildDefault } from '@/lib/schedule/buildDefaultTemplate'
+import { toSaveTemplateResult, type SaveTemplateResult } from '@/lib/schedule/templateSave'
 import type { ScheduleTemplate } from '@/lib/types'
 
 export function useScheduleTemplate() {
@@ -44,8 +45,8 @@ export function useScheduleTemplate() {
     return () => { cancelled = true }
   }, [companyId])
 
-  const saveTemplate = useCallback(async (next: ScheduleTemplate) => {
-    if (!companyId) return
+  const saveTemplate = useCallback(async (next: ScheduleTemplate): Promise<SaveTemplateResult> => {
+    if (!companyId) return { ok: false, error: 'No company is loaded yet — please refresh and try again.' }
 
     // Strip empty id so the gen_random_uuid() default fires on first insert.
     // The unique constraint on company_id still routes upsert correctly:
@@ -58,15 +59,15 @@ export function useScheduleTemplate() {
       updated_at: new Date().toISOString(),
     }
 
-    const { data, error } = await supabase
+    const outcome = await supabase
       .from('schedule_templates')
       .upsert(payload, { onConflict: 'company_id' })
       .select()
       .single()
 
-    if (!error && data) {
-      setTemplate(data as ScheduleTemplate)
-    }
+    const result = toSaveTemplateResult(outcome)
+    if (result.ok) setTemplate(result.template)
+    return result
   }, [companyId])
 
   return { template, loading, saveTemplate }

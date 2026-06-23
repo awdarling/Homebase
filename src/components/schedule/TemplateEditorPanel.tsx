@@ -2,6 +2,7 @@
 
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { Schedule, ScheduleTemplate } from '@/lib/types'
+import type { SaveTemplateResult } from '@/lib/schedule/templateSave'
 import ScheduleRenderer from './ScheduleRenderer'
 
 // ── Mock schedule for preview when no current schedule exists ────────────────
@@ -131,7 +132,7 @@ function Toggle({
 interface TemplateEditorPanelProps {
   template: ScheduleTemplate
   currentSchedule: Schedule | null
-  saveTemplate: (t: ScheduleTemplate) => Promise<void>
+  saveTemplate: (t: ScheduleTemplate) => Promise<SaveTemplateResult>
   onClose: () => void
 }
 
@@ -156,6 +157,7 @@ export default function TemplateEditorPanel({
   const [rowHeight, setRowHeightState] = useState(template.row_config[0]?.height ?? 120)
   const [colWidth, setColWidthState] = useState(template.column_config[0]?.width ?? 180)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const previewSchedule = currentSchedule ?? MOCK_SCHEDULE
 
@@ -189,9 +191,15 @@ export default function TemplateEditorPanel({
 
   async function handleSave() {
     setSaving(true)
-    await saveTemplate(local)
+    setSaveError(null)
+    const result = await saveTemplate(local)
     setSaving(false)
-    onClose()
+    if (result.ok) {
+      onClose()
+    } else {
+      // Keep the panel open so the manager's edits aren't lost, and tell them.
+      setSaveError(result.error)
+    }
   }
 
   return (
@@ -440,6 +448,14 @@ export default function TemplateEditorPanel({
           flexShrink: 0,
           background: 'var(--bg-surface-1)',
         }}>
+          {saveError && (
+            <div role="alert" style={{
+              marginRight: 'auto', alignSelf: 'center', maxWidth: 460,
+              color: '#ef4444', fontSize: 13, lineHeight: 1.4,
+            }}>
+              {saveError}
+            </div>
+          )}
           <button className="btn btn-secondary btn-sm" onClick={onClose} disabled={saving}>
             Cancel
           </button>
