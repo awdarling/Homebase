@@ -55,6 +55,51 @@ export function buildEmployeeRowModel(assignments: ScheduleAssignment[]): AltGri
   return finalize(rows, (x, y) => x.label.localeCompare(y.label))
 }
 
+/**
+ * Translate a drag-and-drop in an alternate layout into the updated assignment
+ * list. In employee-rows, dropping a card onto another person/day reassigns that
+ * shift to that person on that day. In role-rows, dropping onto another role/day
+ * changes the assignment's role and day. Mirrors the shift-rows moveAssignment
+ * pattern (move the first matching assignment), so save + Soteria validation
+ * downstream are identical regardless of layout. Pure — unit-tested.
+ */
+export function applyAltMove(
+  assignments: ScheduleAssignment[],
+  source: ScheduleAssignment,
+  targetRowId: string,
+  targetDate: string,
+  rowKind: 'employee' | 'role',
+  employeeNameById?: Map<string, string>,
+): ScheduleAssignment[] {
+  const sameCell = rowKind === 'employee'
+    ? source.employee_id === targetRowId && source.date === targetDate
+    : source.role === targetRowId && source.date === targetDate
+  if (sameCell) return assignments
+
+  let moved = false
+  return (assignments ?? []).map(a => {
+    if (
+      !moved &&
+      a.employee_id === source.employee_id &&
+      a.shift_name === source.shift_name &&
+      a.date === source.date &&
+      a.role === source.role
+    ) {
+      moved = true
+      if (rowKind === 'employee') {
+        return {
+          ...a,
+          employee_id: targetRowId,
+          employee_name: employeeNameById?.get(targetRowId) ?? a.employee_name,
+          date: targetDate,
+        }
+      }
+      return { ...a, role: targetRowId, date: targetDate }
+    }
+    return a
+  })
+}
+
 /** One row per role; each cell = everyone working that role that day. */
 export function buildRoleRowModel(assignments: ScheduleAssignment[], roleOrder?: string[]): AltGridRow[] {
   const rows = new Map<string, { label: string; cells: Map<string, ScheduleAssignment[]> }>()
