@@ -17,7 +17,7 @@ import { parseYMD, toYMD } from '@/lib/utils/dates'
 import { resolveAssignmentForSlot } from '@/lib/schedule/resolveAssignment'
 import { resolveCellAppearance, hexWithAlpha } from '@/lib/schedule/resolveCellAppearance'
 import { layoutLabel } from '@/lib/schedule/templateLayouts'
-import { buildEmployeeRowModel, buildRoleRowModel } from '@/lib/schedule/layoutGrids'
+import { buildEmployeeRowModel, buildRoleRowModel, applyAltMove } from '@/lib/schedule/layoutGrids'
 import { VetBadge } from '@/components/common/VetBadge'
 
 interface ScheduleRendererProps {
@@ -886,9 +886,11 @@ function ShiftRowsDayColumns({
   )
 }
 
-// ── Alternate layouts (view-only): employee-rows + role-rows ──────────────────
-// These re-pivot the same assignments via the pure layoutGrids model. They are
-// display-only (no drag/drop): editing always happens in the shift-rows grid.
+// ── Alternate layouts: employee-rows + role-rows ──────────────────────────────
+// Re-pivot the same assignments via the pure layoutGrids model. These render in
+// BOTH view and edit, so a manager edits in exactly the layout that goes out.
+// Drag/drop reuses the same DroppableCell + onAssignmentChange flow as the
+// shift-rows grid, so save + Soteria validation are identical.
 
 // Chip for the employee-rows layout — headlines the SHIFT (the row is already
 // the person), mirroring AssignmentCardContent's styling.
@@ -924,20 +926,67 @@ function AltShiftChip({
   )
 }
 
+// Draggable wrapper for the alternate layouts (edit mode). Headlines the shift
+// for employee-rows, the person for role-rows; click-to-remove in remove mode.
+function DraggableAltCard({
+  assignment, rowKind, color, fontSize, display, removeMode, onRemove, isVeteran,
+}: {
+  assignment: ScheduleAssignment
+  rowKind: 'employee' | 'role'
+  color: string
+  fontSize: { name: number; meta: number }
+  display: ScheduleTemplate['display_options']
+  removeMode: boolean
+  onRemove: () => void
+  isVeteran?: boolean
+}) {
+  const id = assignmentDragId(assignment)
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id, data: { assignment }, disabled: removeMode })
+  return (
+    <div
+      ref={setNodeRef}
+      onClick={() => { if (removeMode) onRemove() }}
+      style={{
+        cursor: removeMode ? 'pointer' : 'grab', opacity: isDragging ? 0.3 : 1, touchAction: 'none',
+        borderRadius: 4, border: removeMode ? '1px solid rgba(239,68,68,0.4)' : undefined,
+      }}
+      {...listeners}
+      {...attributes}
+    >
+      {rowKind === 'role' ? (
+        <AssignmentCardContent assignment={assignment} color={color} fontSize={fontSize} showRole={false} showHours={display.show_hours} showStartEnd={display.show_start_end} removeMode={removeMode} isVeteran={isVeteran} />
+      ) : (
+        <AltShiftChip assignment={assignment} color={color} fontSize={fontSize} showRole={display.show_role} showHours={display.show_hours} showStartEnd={display.show_start_end} />
+      )}
+    </div>
+  )
+}
+
 function AltLayoutGrid({
   schedule, template, rowKind, closedDates, veteranIds,
+  mode, removeMode = false, pendingAssignments, onAssignmentChange,
 }: {
   schedule: Schedule
   template: ScheduleTemplate
   rowKind: 'employee' | 'role'
   closedDates: string[]
   veteranIds?: Set<string>
+  mode: 'view' | 'edit'
+  removeMode?: boolean
+  pendingAssignments?: ScheduleAssignment[]
+  onAssignmentChange?: (assignments: ScheduleAssignment[]) => void
 }) {
+  const editing = mode === 'edit'
   const { display_options, column_config, color_config } = template
   const fontSize = FONT_SIZES[display_options.font_size]
   const closedDateSet = new Set(closedDates)
-  const assignments = schedule.data?.assignments ?? []
+  const assignments = editing
+    ? (pendingAssignments ?? schedule.data?.assignments ?? [])
+    : (schedule.data?.assignments ?? [])
   const weekDates = getWeekDates(schedule.week_start)
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+  const [activeAssignment, setActiveAssignment] = useState<ScheduleAssignment | null>(null)
 
   const visibleCols = [...column_config].filter(c => c.visible).sort((a, b) => a.order - b.order)
   const colByDate = new Map<string, ColumnConfig>()
@@ -951,10 +1000,37 @@ function AltLayoutGrid({
     .filter((d): d is string => d !== undefined)
 
   const rows = rowKind === 'employee' ? buildEmployeeRowModel(assignments) : buildRoleRowModel(assignments)
+  const nameById = new Map<string, string>()
+  for (const a of assignments) if (a.employee_id && !nameById.has(a.employee_id)) nameById.set(a.employee_id, a.employee_name)
 
   const LABEL_COL_WIDTH = 140
   const MIN_ROW_HEIGHT = 64
   const MIN_COL_WIDTH = 120
+
+  function removeAssignment(target: ScheduleAssignment) {
+    if (!onAssignmentChange) return
+    let removed = false
+    const next = assignments.filter(a => {
+      if (!removed && a.employee_id === target.employee_id && a.shift_name === target.shift_name && a.date === target.date && a.role === target.role) {
+        removed = true; return false
+      }
+      return true
+    })
+    if (removed) onAssignmentChange(next)
+  }
+
+  function handleDragStart(e: DragStartEvent) {
+    const a = e.active.data.current?.assignment as ScheduleAssignment | undefined
+    if (a) setActiveAssignment(a)
+  }
+  function handleDragEnd(e: DragEndEvent) {
+    setActiveAssignment(null)
+    const source = e.active.data.current?.assignment as ScheduleAssignment | undefined
+    // DroppableCell carries the row identity in `shift_name` (= row.id here).
+    const over = e.over?.data.current as { shift_name?: string; date?: string } | undefined
+    if (!source || !over?.shift_name || !over?.date || !onAssignmentChange) return
+    onAssignmentChange(applyAltMove(assignments, source, over.shift_name, over.date, rowKind, nameById))
+  }
 
   if (rows.length === 0) {
     return (
@@ -964,7 +1040,7 @@ function AltLayoutGrid({
     )
   }
 
-  return (
+  const grid = (
     <div style={{ overflowX: 'auto', width: '100%' }}>
       <div style={{
         display: 'grid',
@@ -995,41 +1071,80 @@ function AltLayoutGrid({
             const col = colByDate.get(date)!
             const cellAssignments = row.cellsByDate[date] ?? []
             const isEmpty = cellAssignments.length === 0
+            const closed = closedDateSet.has(date)
             const appearance = resolveCellAppearance({
               colorConfig: color_config, columnColor: col.color, rowId: row.id,
-              kind: isEmpty ? 'empty' : 'filled',
+              kind: closed ? 'closed' : (isEmpty ? 'empty' : 'filled'),
             })
-            const closed = closedDateSet.has(date)
-            return (
+            const cards = isEmpty
+              ? <div style={{ flex: 1, border: '1px dashed var(--border-subtle)', borderRadius: 4, minHeight: 28 }} />
+              : cellAssignments.map((asg, j) => editing ? (
+                  <DraggableAltCard
+                    key={`${asg.employee_id}-${asg.shift_name}-${j}`}
+                    assignment={asg} rowKind={rowKind} color={appearance.color} fontSize={fontSize}
+                    display={display_options} removeMode={removeMode}
+                    onRemove={() => removeAssignment(asg)}
+                    isVeteran={veteranIds?.has(asg.employee_id) ?? false}
+                  />
+                ) : rowKind === 'role' ? (
+                  <StaticAssignmentCard
+                    key={`${asg.employee_id}-${j}`}
+                    assignment={asg} color={appearance.color} fontSize={fontSize}
+                    showRole={false} showHours={display_options.show_hours} showStartEnd={display_options.show_start_end}
+                    isVeteran={veteranIds?.has(asg.employee_id) ?? false}
+                  />
+                ) : (
+                  <AltShiftChip
+                    key={`${asg.shift_name}-${j}`}
+                    assignment={asg} color={appearance.color} fontSize={fontSize}
+                    showRole={display_options.show_role} showHours={display_options.show_hours} showStartEnd={display_options.show_start_end}
+                  />
+                ))
+            return editing ? (
+              <DroppableCell
+                key={`cell-${row.id}-${date}`}
+                shiftName={row.id}
+                date={date}
+                rowHeight={MIN_ROW_HEIGHT}
+                baseBackground={appearance.background}
+                enabled={editing && !removeMode && !closed}
+                editing={editing}
+                closed={closed}
+              >
+                {cards}
+              </DroppableCell>
+            ) : (
               <div key={`cell-${row.id}-${date}`} style={{
                 borderBottom: '1px solid var(--border-subtle)', borderRight: '1px solid var(--border-subtle)',
                 padding: 6, minHeight: MIN_ROW_HEIGHT, display: 'flex', flexDirection: 'column', gap: 4,
                 background: closed ? 'var(--bg-surface-3)' : appearance.background,
               }}>
-                {isEmpty ? (
-                  <div style={{ flex: 1, border: '1px dashed var(--border-subtle)', borderRadius: 4, minHeight: 28 }} />
-                ) : cellAssignments.map((asg, j) => (
-                  rowKind === 'role' ? (
-                    <StaticAssignmentCard
-                      key={`${asg.employee_id}-${j}`}
-                      assignment={asg} color={appearance.color} fontSize={fontSize}
-                      showRole={false} showHours={display_options.show_hours} showStartEnd={display_options.show_start_end}
-                      isVeteran={veteranIds?.has(asg.employee_id) ?? false}
-                    />
-                  ) : (
-                    <AltShiftChip
-                      key={`${asg.shift_name}-${j}`}
-                      assignment={asg} color={appearance.color} fontSize={fontSize}
-                      showRole={display_options.show_role} showHours={display_options.show_hours} showStartEnd={display_options.show_start_end}
-                    />
-                  )
-                ))}
+                {cards}
               </div>
             )
           }),
         ]))}
       </div>
     </div>
+  )
+
+  if (!editing) return grid
+
+  return (
+    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      {grid}
+      <DragOverlay dropAnimation={null}>
+        {activeAssignment && (
+          <div style={{ opacity: 0.85, borderRadius: 4, background: hexWithAlpha('#60a5fa', 0.18), border: '1px solid rgba(96,165,250,0.5)' }}>
+            {rowKind === 'role' ? (
+              <AssignmentCardContent assignment={activeAssignment} color="#60a5fa" fontSize={fontSize} showRole={false} showHours={display_options.show_hours} showStartEnd={display_options.show_start_end} />
+            ) : (
+              <AltShiftChip assignment={activeAssignment} color="#60a5fa" fontSize={fontSize} showRole={display_options.show_role} showHours={display_options.show_hours} showStartEnd={display_options.show_start_end} />
+            )}
+          </div>
+        )}
+      </DragOverlay>
+    </DndContext>
   )
 }
 
@@ -1056,9 +1171,10 @@ export default function ScheduleRenderer({
 
   const resolvedClosedDates = closedDates ?? schedule.data?.closed_dates ?? []
 
-  // Editing always uses the editable shift-rows grid (drag/drop, gaps, closing
-  // days). The chosen layout governs how the FINISHED schedule is displayed.
-  if (mode === 'edit' || template.layout_type === 'shift-rows-day-columns') {
+  // Each layout renders in BOTH view and edit, so managers edit in exactly the
+  // layout that goes out. Shift-rows keeps its full-featured grid; the alternate
+  // layouts share the same drag/drop + save flow via AltLayoutGrid.
+  if (template.layout_type === 'shift-rows-day-columns') {
     return (
       <div style={containerStyle}>
         <ShiftRowsDayColumns
@@ -1088,6 +1204,10 @@ export default function ScheduleRenderer({
           rowKind={template.layout_type === 'employee-rows-day-columns' ? 'employee' : 'role'}
           closedDates={resolvedClosedDates}
           veteranIds={veteranIds}
+          mode={mode}
+          removeMode={removeMode}
+          pendingAssignments={pendingAssignments}
+          onAssignmentChange={onAssignmentChange}
         />
       </div>
     )
