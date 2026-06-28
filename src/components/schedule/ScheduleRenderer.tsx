@@ -18,6 +18,7 @@ import { resolveAssignmentForSlot } from '@/lib/schedule/resolveAssignment'
 import { resolveCellAppearance, hexWithAlpha } from '@/lib/schedule/resolveCellAppearance'
 import { layoutLabel } from '@/lib/schedule/templateLayouts'
 import { buildEmployeeRowModel, buildRoleRowModel, applyAltMove } from '@/lib/schedule/layoutGrids'
+import { compareByRoleThenName } from '@/lib/schedule/cellOrder'
 import { VetBadge } from '@/components/common/VetBadge'
 
 interface ScheduleRendererProps {
@@ -610,6 +611,8 @@ function ShiftRowsDayColumns({
     if (!assignmentMap.has(key)) assignmentMap.set(key, [])
     assignmentMap.get(key)!.push(a)
   }
+  // #9: order each cell by role then name, matching the download + emailed grid.
+  for (const list of Array.from(assignmentMap.values())) list.sort(compareByRoleThenName)
 
   // gap lookup: shiftName+date -> unfilled count (only meaningful for the original schedule)
   const gapMap = new Map<string, number>()
