@@ -477,7 +477,7 @@ function HistoryReportDetail({ schedule }: { schedule: Schedule }) {
       )}
 
       {/* Concurrent sex-coverage flags — manager review items */}
-      <CoverageFlags flaggedIssues={schedule.data?.flagged_issues} />
+      <CoverageFlags flaggedIssues={schedule.data?.flagged_issues} scheduleId={schedule.id} />
 
       {/* Top + Bottom contributors */}
       {report && (report.top_contributors.length > 0 || (report.bottom_contributors?.length ?? 0) > 0) && (
