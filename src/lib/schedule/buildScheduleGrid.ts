@@ -7,6 +7,7 @@ import type {
 } from '@/lib/types'
 import { resolveCellAppearance, type CellAppearance } from './resolveCellAppearance'
 import { buildEmployeeRowModel, buildRoleRowModel } from './layoutGrids'
+import { compareByRoleThenName } from './cellOrder'
 
 // ── Cell + grid shape ────────────────────────────────────────────────────────
 //
@@ -313,7 +314,7 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
       // (which shows `employee_name` then the role line, role gated by show_role).
       const employees: GridCellEmployee[] = asgs
         .slice()
-        .sort((a, b) => (a.employee_name ?? '').localeCompare(b.employee_name ?? ''))
+        .sort(compareByRoleThenName)
         .map(a => ({
           name: a.employee_name ?? '',
           role: showRole ? (a.role ?? '') : '',
