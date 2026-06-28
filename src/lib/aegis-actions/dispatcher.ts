@@ -557,6 +557,53 @@ export async function dispatchSwapProposal(
   }
 }
 
+// ── #10 swap broadcast: requester agrees / declines a proposed trade ─────────
+
+async function handleSwapProposalDecision(
+  decision: 'agree' | 'decline',
+  row: TokenRow,
+  supabase: SupabaseClient,
+): Promise<DispatchResult> {
+  const requester_id = strOrNull(row.payload.requester_id)
+  if (!requester_id) {
+    return { ok: false, message: 'This link is missing some details. Please contact your manager.' }
+  }
+
+  try {
+    const res = await postToAegisInternal<{ ok?: boolean; message?: string }>(
+      '/internal/swap-proposal-decision',
+      { company_id: row.company_id, requester_id, decision },
+    )
+    const ok = res.ok !== false
+    if (ok) {
+      await logDecision(supabase, {
+        company_id: row.company_id,
+        action: decision === 'agree' ? 'swap_trade_agreed_via_email' : 'swap_trade_declined_via_email',
+        entity_type: 'employee',
+        entity_id: requester_id,
+        summary: `Requester ${decision === 'agree' ? 'agreed to' : 'declined'} a proposed trade`,
+        metadata: { decided_by_email: row.issued_to_email, source: 'magic_link', mode: 'swap' },
+      })
+    }
+    return { ok, message: res.message ?? (ok ? 'Done — thanks!' : 'That didn\'t go through. Please contact your manager.') }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    await logAegisDeliveryFailure(supabase, {
+      company_id: row.company_id,
+      entity_type: 'employee',
+      entity_id: requester_id,
+      aegis_endpoint: '/internal/swap-proposal-decision',
+      error: errMsg,
+      issued_to_user_id: row.issued_to_user_id,
+      issued_to_email: row.issued_to_email,
+    })
+    if (err instanceof AegisInternalConfigError) {
+      return { ok: false, message: 'Could not record your decision — the Aegis connection is not configured. Please contact your manager.' }
+    }
+    return { ok: false, message: 'Something went wrong recording your decision. Please contact your manager.' }
+  }
+}
+
 // ── Public entry point ───────────────────────────────────────────────────────
 
 export async function dispatchAction(
@@ -582,6 +629,10 @@ export async function dispatchAction(
       return handleCustomAvailabilityDecision('denied', row, supabase)
     case 'swap_pickup':
       return handleSwapPickup(row, supabase)
+    case 'swap_agree':
+      return handleSwapProposalDecision('agree', row, supabase)
+    case 'swap_decline':
+      return handleSwapProposalDecision('decline', row, supabase)
 
     // The remaining action types are still pending real handlers — they
     // continue to stub-dispatch so the token consume + audit flow keeps

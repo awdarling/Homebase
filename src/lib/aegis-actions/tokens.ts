@@ -18,6 +18,9 @@ export type ActionType =
   // shift-picker page (two-way trade, built in Stage 3b).
   | 'swap_pickup'
   | 'swap_trade_select'
+  // The requester's response to a proposed trade.
+  | 'swap_agree'
+  | 'swap_decline'
 
 // Mirrors the live aegis_action_tokens schema (Aegis-side migration 015 +
 // follow-ups). issued_to_* are the manager identity captured at token-mint
