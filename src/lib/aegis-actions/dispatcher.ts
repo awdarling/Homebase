@@ -442,6 +442,59 @@ async function handleCustomAvailabilityDecision(
   }
 }
 
+// ── #10 swap broadcast: pickup (one-way) ─────────────────────────────────────
+
+async function handleSwapPickup(
+  row: TokenRow,
+  supabase: SupabaseClient,
+): Promise<DispatchResult> {
+  const payload = row.payload
+  const requester_id = strOrNull(payload.requester_id)
+  const receiver_id = strOrNull(payload.receiver_id)
+
+  if (!requester_id || !receiver_id) {
+    return { ok: false, message: 'This link is missing some details. Please contact your manager.' }
+  }
+
+  // The pickup business logic (lock the broadcast, create the pending-manager
+  // request, notify the requester, email the manager) lives in Aegis. The Aegis
+  // endpoint returns { ok, message } — including the "already grabbed" case — so
+  // we surface its message directly.
+  try {
+    const res = await postToAegisInternal<{ ok?: boolean; message?: string }>(
+      '/internal/swap-pickup-commit',
+      { company_id: row.company_id, requester_id, receiver_id },
+    )
+    const ok = res.ok !== false
+    if (ok) {
+      await logDecision(supabase, {
+        company_id: row.company_id,
+        action: 'swap_pickup_via_email',
+        entity_type: 'employee',
+        entity_id: receiver_id,
+        summary: `Shift pickup offered via broadcast (requester ${requester_id})`,
+        metadata: { decided_by_email: row.issued_to_email, source: 'magic_link', mode: 'pickup' },
+      })
+    }
+    return { ok, message: res.message ?? (ok ? 'Thanks! Your manager has been asked to approve.' : 'That didn\'t go through. Please contact your manager.') }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    await logAegisDeliveryFailure(supabase, {
+      company_id: row.company_id,
+      entity_type: 'employee',
+      entity_id: receiver_id,
+      aegis_endpoint: '/internal/swap-pickup-commit',
+      error: errMsg,
+      issued_to_user_id: row.issued_to_user_id,
+      issued_to_email: row.issued_to_email,
+    })
+    if (err instanceof AegisInternalConfigError) {
+      return { ok: false, message: 'Could not record your pickup — the Aegis connection is not configured. Please contact your manager.' }
+    }
+    return { ok: false, message: 'Something went wrong recording your pickup. Please contact your manager.' }
+  }
+}
+
 // ── Public entry point ───────────────────────────────────────────────────────
 
 export async function dispatchAction(
@@ -465,6 +518,8 @@ export async function dispatchAction(
       return handleCustomAvailabilityDecision('approved', row, supabase)
     case 'deny_custom_availability':
       return handleCustomAvailabilityDecision('denied', row, supabase)
+    case 'swap_pickup':
+      return handleSwapPickup(row, supabase)
 
     // The remaining action types are still pending real handlers — they
     // continue to stub-dispatch so the token consume + audit flow keeps

@@ -13,6 +13,11 @@ export type ActionType =
   | 'confirm_distribution'
   | 'request_additional_batch'
   | 'recheck_to'
+  // #10 undirected swap broadcast: a candidate's two email options.
+  // swap_pickup → confirm page (one-way pickup); swap_trade_select → the
+  // shift-picker page (two-way trade, built in Stage 3b).
+  | 'swap_pickup'
+  | 'swap_trade_select'
 
 // Mirrors the live aegis_action_tokens schema (Aegis-side migration 015 +
 // follow-ups). issued_to_* are the manager identity captured at token-mint

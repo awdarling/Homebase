@@ -218,6 +218,12 @@ function describeAction(action_type: ActionType, payload: Record<string, unknown
         : 'Send the schedule to all employees?'
     case 'request_additional_batch':
       return 'Search for more coverage candidates?'
+    case 'swap_pickup': {
+      const requester = get('requester_name')
+      return shiftName && date
+        ? `Pick up${requester ? ` ${requester}'s` : ''} ${shiftName} shift on ${date} and add it to your schedule?`
+        : 'Pick up this shift and add it to your schedule?'
+    }
     default:
       return 'Confirm this action?'
   }
