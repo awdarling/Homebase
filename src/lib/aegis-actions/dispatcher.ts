@@ -495,6 +495,68 @@ async function handleSwapPickup(
   }
 }
 
+// ── #10 swap broadcast: trade proposal (two-way) ─────────────────────────────
+// Not part of dispatchAction's single-confirm switch — the swap picker page reads
+// the SELECTED shift from the form, so the route calls this directly with it.
+export async function dispatchSwapProposal(
+  row: TokenRow,
+  selectedShift: Record<string, unknown>,
+  supabase: SupabaseClient,
+): Promise<DispatchResult> {
+  const payload = row.payload
+  const requester_id = strOrNull(payload.requester_id)
+  const receiver_id = strOrNull(payload.receiver_id)
+
+  if (!requester_id || !receiver_id) {
+    return { ok: false, message: 'This link is missing some details. Please contact your manager.' }
+  }
+
+  try {
+    const res = await postToAegisInternal<{ ok?: boolean; message?: string }>(
+      '/internal/swap-propose',
+      {
+        company_id: row.company_id,
+        requester_id,
+        receiver_id,
+        selected_shift: {
+          date: selectedShift.date,
+          shift_name: selectedShift.shift_name,
+          role: selectedShift.role,
+          start_time: selectedShift.start_time,
+          end_time: selectedShift.end_time,
+        },
+      },
+    )
+    const ok = res.ok !== false
+    if (ok) {
+      await logDecision(supabase, {
+        company_id: row.company_id,
+        action: 'swap_proposed_via_email',
+        entity_type: 'employee',
+        entity_id: receiver_id,
+        summary: `Trade proposed via broadcast (requester ${requester_id})`,
+        metadata: { decided_by_email: row.issued_to_email, source: 'magic_link', mode: 'swap' },
+      })
+    }
+    return { ok, message: res.message ?? (ok ? 'Thanks — we\'ve recorded your offer.' : 'That didn\'t go through. Please contact your manager.') }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    await logAegisDeliveryFailure(supabase, {
+      company_id: row.company_id,
+      entity_type: 'employee',
+      entity_id: receiver_id,
+      aegis_endpoint: '/internal/swap-propose',
+      error: errMsg,
+      issued_to_user_id: row.issued_to_user_id,
+      issued_to_email: row.issued_to_email,
+    })
+    if (err instanceof AegisInternalConfigError) {
+      return { ok: false, message: 'Could not record your trade offer — the Aegis connection is not configured. Please contact your manager.' }
+    }
+    return { ok: false, message: 'Something went wrong recording your trade offer. Please contact your manager.' }
+  }
+}
+
 // ── Public entry point ───────────────────────────────────────────────────────
 
 export async function dispatchAction(

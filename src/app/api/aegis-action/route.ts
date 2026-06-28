@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { verifyToken, consumeToken, type ActionType, type TokenRow } from '@/lib/aegis-actions/tokens'
-import { dispatchAction } from '@/lib/aegis-actions/dispatcher'
+import { dispatchAction, dispatchSwapProposal } from '@/lib/aegis-actions/dispatcher'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -273,6 +273,60 @@ function confirmPage(token: string, row: TokenRow): string {
   })
 }
 
+// ── Swap shift-picker page (#10, GET for swap_trade_select) ──────────────────
+// The candidate chooses which of their OWN shifts to trade for the requester's.
+// Options come from the token payload (self-contained); the form POSTs the chosen
+// index back, which the route resolves server-side against the same payload.
+
+function swapPickerPage(token: string, row: TokenRow): string {
+  const p = row.payload
+  const requester = (typeof p.requester_name === 'string' && p.requester_name) || 'your coworker'
+  const reqShift = (typeof p.shift_name === 'string' && p.shift_name) || 'their shift'
+  const reqDate = typeof p.date === 'string' ? p.date : ''
+  const shifts = Array.isArray(p.tradeable_shifts) ? (p.tradeable_shifts as Array<Record<string, unknown>>) : []
+
+  if (shifts.length === 0) {
+    return renderActionResultPage({
+      title: 'Nothing to trade here',
+      message: `You don't have a shift that fits a trade for ${escapeHtml(requester)}'s ${escapeHtml(reqShift)}. If you'd still like to help, use the "I'll pick it up" button in the email instead.`,
+      tone: 'info',
+    })
+  }
+
+  const options = shifts
+    .map((s, i) => {
+      const name = escapeHtml(String(s.shift_name ?? 'Shift'))
+      const date = escapeHtml(String(s.date ?? ''))
+      const role = escapeHtml(String(s.role ?? ''))
+      const start = escapeHtml(String(s.start_time ?? ''))
+      const end = escapeHtml(String(s.end_time ?? ''))
+      const meta = [date, role].filter(Boolean).join(', ')
+      const time = start && end ? ` (${start}–${end})` : ''
+      return `
+        <label style="display:block;text-align:left;border:1px solid #2a2a2a;border-radius:10px;padding:14px 16px;margin:0 0 10px;cursor:pointer;background:#0d0d0d;">
+          <input type="radio" name="shift_index" value="${i}" ${i === 0 ? 'checked' : ''} style="margin-right:10px;vertical-align:middle;">
+          <strong style="color:#e8e8e8;">${name}</strong><span style="color:#9a9a9a;">${meta ? ` — ${meta}` : ''}${time}</span>
+        </label>`
+    })
+    .join('')
+
+  const bodyExtra = `
+      <form method="POST" action="/api/aegis-action?token=${encodeURIComponent(token)}" class="actions" style="display:block;">
+        <div style="margin:0 0 18px;">${options}</div>
+        <button type="submit" class="btn-primary">Propose this trade</button>
+      </form>`
+
+  const intro = `You'd take ${escapeHtml(requester)}'s ${escapeHtml(reqShift)}${reqDate ? ` on ${escapeHtml(reqDate)}` : ''}. In return, choose one of your own shifts to give up:`
+
+  return renderActionResultPage({
+    title: 'Swap a shift',
+    message: intro,
+    tone: 'info',
+    bodyExtra,
+    footnote: 'Your coworker and your manager both confirm before anything changes.',
+  })
+}
+
 // ── Success page (POST success) ─────────────────────────────────────────────
 
 function successPage(message: string): string {
@@ -295,6 +349,12 @@ export async function GET(request: NextRequest) {
     return htmlResponse(errorPage(result.error), status)
   }
 
+  // The swap picker is interactive (choose which of your shifts to trade), so it
+  // gets its own page instead of the single-Confirm page.
+  if (result.row.action_type === 'swap_trade_select') {
+    return htmlResponse(swapPickerPage(token, result.row))
+  }
+
   return htmlResponse(confirmPage(token, result.row))
 }
 
@@ -309,6 +369,27 @@ export async function POST(request: NextRequest) {
   }
 
   const { row } = consumed
+
+  // Swap picker: the chosen shift comes from the form. Resolve the selected index
+  // server-side against the SAME token payload (don't trust client-sent details).
+  if (row.action_type === 'swap_trade_select') {
+    const form = await request.formData()
+    const idxRaw = form.get('shift_index')
+    const idx = typeof idxRaw === 'string' ? parseInt(idxRaw, 10) : NaN
+    const shifts = Array.isArray(row.payload.tradeable_shifts)
+      ? (row.payload.tradeable_shifts as Array<Record<string, unknown>>)
+      : []
+    const sel = Number.isInteger(idx) && idx >= 0 && idx < shifts.length ? shifts[idx] : null
+    if (!sel) {
+      return htmlResponse(errorPage('failed', 'No shift was selected — go back and pick one of your shifts to trade.'), 400)
+    }
+    const proposal = await dispatchSwapProposal(row, sel, supabase)
+    if (!proposal.ok) {
+      return htmlResponse(errorPage('failed', proposal.message), 500)
+    }
+    return htmlResponse(successPage(proposal.message))
+  }
+
   const dispatch = await dispatchAction(row, supabase)
 
   if (!dispatch.ok) {

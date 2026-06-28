@@ -26,6 +26,7 @@ export type AegisInternalEndpoint =
   | '/internal/recheck-to-reply'
   | '/internal/notify-access-removed'
   | '/internal/swap-pickup-commit'
+  | '/internal/swap-propose'
 
 export class AegisInternalError extends Error {
   constructor(
