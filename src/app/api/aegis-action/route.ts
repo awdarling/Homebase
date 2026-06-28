@@ -224,6 +224,15 @@ function describeAction(action_type: ActionType, payload: Record<string, unknown
         ? `Pick up${requester ? ` ${requester}'s` : ''} ${shiftName} shift on ${date} and add it to your schedule?`
         : 'Pick up this shift and add it to your schedule?'
     }
+    case 'swap_agree': {
+      const receiver = get('receiver_name')
+      const targetShift = get('target_shift_name')
+      return receiver && shiftName && targetShift
+        ? `Agree to trade your ${shiftName} for ${receiver}'s ${targetShift}? (Then it goes to your manager.)`
+        : 'Agree to this trade? (Then it goes to your manager.)'
+    }
+    case 'swap_decline':
+      return 'Decline this trade and keep your shift?'
     default:
       return 'Confirm this action?'
   }
