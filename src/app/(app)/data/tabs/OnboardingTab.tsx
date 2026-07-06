@@ -313,7 +313,9 @@ export default function OnboardingTab() {
 
       return {
         employee: emp,
-        status: emp.contact_phone ? 'not_started' : 'skipped',
+        // Reachable by phone OR email → onboarding can start. Only truly
+        // unreachable employees (neither on file) are "skipped".
+        status: (emp.contact_phone || emp.contact_email) ? 'not_started' : 'skipped',
         currentStep: null,
         availabilityFormatted: null,
         availabilityRaw: null,
