@@ -12,6 +12,30 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+// The scheduling engine reads STRUCTURED rules ONLY from policies.policy_value_json
+// (the plain-text policy_value is ignored by the constraint parser — see
+// Aegis src/lib/constraints/parser.ts). If a structured rule is updated with only
+// policy_value set, the Rules page shows the new text while the engine keeps
+// enforcing the OLD json — the "changed the rule but it's still enforced" bug.
+// So: for these keys we refuse a text-only write. The edit must carry
+// policy_value_json (Soteria's prompt already instructs this), or it fails
+// visibly instead of silently leaving stale json. Mirrors the parser's key set.
+const STRUCTURED_POLICY_KEYS = new Set<string>([
+  'attribute_mix', 'minimum_attribute_mix',
+  'hours_fairness_weight',
+  'partial_shifts_allowed', 'allow_partial_shifts',
+  'veteran_preference_default', 'veteran_default',
+  'doubles_policy',
+  'conflict_resolution_preference', 'conflict_resolution',
+  'week_start_day',
+  'max_consecutive_days_worked', 'max_consecutive_days', 'max_consecutive_work_days',
+])
+
+/** True when a text-only policy write would leave a structured rule's json stale. */
+function isStaleStructuredWrite(policyKey: string, hasJson: boolean): boolean {
+  return STRUCTURED_POLICY_KEYS.has((policyKey ?? '').trim().toLowerCase()) && !hasJson
+}
+
 function formatEventDate(iso: string | null | undefined): string {
   if (!iso) return '(no date)'
   const [y, m, d] = iso.split('-').map(Number)
@@ -691,6 +715,14 @@ export async function POST(request: NextRequest) {
 
         const humanKey = d.policy_key.replace(/_/g, ' ')
         const hasJson = Object.prototype.hasOwnProperty.call(action.data, 'policy_value_json')
+
+        // Guard: never leave a structured rule's engine-read json stale (item 3 fix).
+        if (isStaleStructuredWrite(d.policy_key, hasJson)) {
+          return NextResponse.json({
+            success: false,
+            error: `Couldn't change "${humanKey}" — the scheduling engine reads its structured value (policy_value_json), and this update only changed the display text. Re-issue the change with the structured value so the engine actually picks it up.`,
+          }, { status: 422 })
+        }
 
         let entityId: string
         let beforeJson: unknown = null
@@ -2031,6 +2063,11 @@ export async function POST(request: NextRequest) {
             const key = step.data.policy_key
             const prior = policyByKey.get(key.trim().toLowerCase())
             const hasJson = Object.prototype.hasOwnProperty.call(step.data, 'policy_value_json')
+            // Skip (don't half-write) a structured rule missing its engine-read json.
+            if (isStaleStructuredWrite(key, hasJson)) {
+              plan.warnings.push(`Skipped rule "${key.replace(/_/g, ' ')}" — it needs a structured value (policy_value_json) for the engine to enforce it, which wasn't provided.`)
+              continue
+            }
             if (prior) {
               const updates: Record<string, unknown> = { policy_value: step.data.policy_value, version: (prior.version ?? 1) + 1 }
               if (hasJson) updates.policy_value_json = step.data.policy_value_json ?? null
