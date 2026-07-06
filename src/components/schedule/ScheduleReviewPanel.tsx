@@ -49,6 +49,9 @@ interface ScheduleReviewPanelProps {
   pendingAssignments: ScheduleAssignment[]
   onClose: () => void
   onSaved: (updated: Schedule) => void
+  // Item 1b: apply Soteria's auto-fix by replacing the pending assignments in the
+  // parent, so the manager doesn't have to fix blocking issues by hand.
+  onApplyFix?: (assignments: ScheduleAssignment[]) => void
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -146,17 +149,23 @@ export default function ScheduleReviewPanel({
   pendingAssignments,
   onClose,
   onSaved,
+  onApplyFix,
 }: ScheduleReviewPanelProps) {
   const supabase = createClient()
 
-  const [phase, setPhase] = useState<'idle' | 'validating' | 'reviewed' | 'saving'>('idle')
+  const [phase, setPhase] = useState<'idle' | 'validating' | 'reviewed' | 'saving' | 'fixing'>('idle')
   const [result, setResult] = useState<SoteriaResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Item 1: manager override (publish past blocking issues, with a required reason).
+  const [overrideOpen, setOverrideOpen] = useState(false)
+  const [overrideReason, setOverrideReason] = useState('')
+  // Item 1b: what Soteria changed on the last auto-fix (shown after fixing).
+  const [fixNote, setFixNote] = useState<string | null>(null)
 
   const errors = result?.issues.filter(i => i.severity === 'error') ?? []
   const warnings = result?.issues.filter(i => i.severity === 'warning') ?? []
 
-  async function runSoteriaCheck() {
+  async function runSoteriaCheck(assignmentsOverride?: ScheduleAssignment[]) {
     setPhase('validating')
     setResult(null)
     setError(null)
@@ -168,7 +177,7 @@ export default function ScheduleReviewPanel({
           company_id: companyId,
           schedule_id: schedule.id,
           original_assignments: originalAssignments,
-          proposed_assignments: pendingAssignments,
+          proposed_assignments: assignmentsOverride ?? pendingAssignments,
           changes,
         }),
       })
@@ -186,7 +195,7 @@ export default function ScheduleReviewPanel({
     }
   }
 
-  async function save() {
+  async function save(override?: { reason: string }) {
     setPhase('saving')
     setError(null)
     try {
@@ -220,9 +229,59 @@ export default function ScheduleReviewPanel({
         .single()
       if (updateErr) throw updateErr
 
+      // Item 1: audit a deliberate override (the save already succeeded above).
+      if (override) {
+        try {
+          await fetch('/api/schedule-override-log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              company_id: companyId,
+              schedule_id: schedule.id,
+              reason: override.reason,
+              issues: errors.map(e => ({ severity: e.severity, employee_name: e.employee_name, description: e.description })),
+            }),
+          })
+        } catch { /* best-effort audit; the save itself is already committed */ }
+      }
+
       onSaved((saved as Schedule) ?? { ...schedule, data: newData, staffing_report: newReport })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed')
+      setPhase('reviewed')
+    }
+  }
+
+  // Item 1b: ask Soteria to resolve the blocking issues for you. It returns a
+  // corrected set of assignments (guaranteed to clear the hard errors), which we
+  // push back into the editor via onApplyFix and then re-run the check.
+  async function fixIssues() {
+    if (!onApplyFix) { onClose(); return }
+    setPhase('fixing')
+    setError(null)
+    setFixNote(null)
+    try {
+      const res = await fetch('/api/soteria-fix-schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_id: companyId,
+          schedule_id: schedule.id,
+          original_assignments: originalAssignments,
+          proposed_assignments: pendingAssignments,
+          changes,
+          issues: errors,
+        }),
+      })
+      if (!res.ok) throw new Error(`Soteria couldn't auto-fix (${res.status})`)
+      const data = await res.json() as { corrected_assignments?: ScheduleAssignment[]; summary?: string }
+      if (!Array.isArray(data.corrected_assignments)) throw new Error('Soteria returned no fix.')
+      onApplyFix(data.corrected_assignments)
+      setFixNote(data.summary ?? 'Soteria adjusted the schedule to clear the blocking issues.')
+      // Re-validate the corrected schedule so the manager sees it's clear.
+      await runSoteriaCheck(data.corrected_assignments)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Auto-fix failed')
       setPhase('reviewed')
     }
   }
@@ -313,7 +372,7 @@ export default function ScheduleReviewPanel({
           {phase === 'idle' && (
             <button
               className="btn btn-primary btn-sm"
-              onClick={runSoteriaCheck}
+              onClick={() => runSoteriaCheck()}
               disabled={changes.length === 0}
               style={{ alignSelf: 'flex-start' }}
             >
@@ -335,6 +394,37 @@ export default function ScheduleReviewPanel({
               <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
                 Checking qualifications, conflicts, time off, and policies
               </div>
+            </div>
+          )}
+
+          {phase === 'fixing' && (
+            <div style={{
+              padding: '20px 16px',
+              background: 'var(--bg-surface-2)',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-lg)',
+              textAlign: 'center',
+            }}>
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 6 }}>
+                Soteria is working out a fix…
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                Resolving the blocking issues for you
+              </div>
+            </div>
+          )}
+
+          {fixNote && phase !== 'fixing' && (
+            <div style={{
+              padding: '12px 14px',
+              background: 'rgba(59,130,246,0.07)',
+              border: '1px solid rgba(59,130,246,0.3)',
+              borderRadius: 'var(--radius-md)',
+              fontSize: 12,
+              color: 'var(--text-secondary)',
+              lineHeight: 1.5,
+            }}>
+              <span style={{ fontWeight: 600, color: '#3b82f6' }}>Soteria fixed it: </span>{fixNote}
             </div>
           )}
 
@@ -427,20 +517,72 @@ export default function ScheduleReviewPanel({
         }}>
           <button
             className="btn btn-secondary btn-sm"
-            onClick={onClose}
-            disabled={phase === 'saving'}
+            onClick={phase === 'reviewed' && errors.length > 0 && onApplyFix ? fixIssues : onClose}
+            disabled={phase === 'saving' || phase === 'fixing'}
           >
-            {phase === 'reviewed' && (errors.length > 0 || warnings.length > 0) ? 'Fix Issues' : 'Close'}
+            {phase === 'fixing'
+              ? 'Fixing…'
+              : phase === 'reviewed' && errors.length > 0 && onApplyFix
+                ? 'Fix Issues'
+                : 'Close'}
           </button>
+          {phase === 'reviewed' && errors.length > 0 && (
+            <button
+              className="btn btn-sm"
+              onClick={() => { setOverrideReason(''); setOverrideOpen(true) }}
+              style={{ background: 'rgba(239,68,68,0.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.4)' }}
+            >
+              Override &amp; Save
+            </button>
+          )}
           <button
             className="btn btn-primary btn-sm"
-            onClick={save}
+            onClick={() => save()}
             disabled={!canSave}
           >
             {saveLabel}
           </button>
         </div>
       </div>
+
+      {/* Item 1: manager override confirmation (delete-schedule-style, reason required) */}
+      {overrideOpen && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+          onClick={() => setOverrideOpen(false)}
+        >
+          <div onClick={e => e.stopPropagation()} style={{ width: 460, maxWidth: '100%', background: 'var(--bg-surface-1)', border: '1px solid rgba(239,68,68,0.45)', borderRadius: 'var(--radius-lg)', padding: 22, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#ef4444', marginBottom: 8 }}>⚠ Override Soteria and save anyway?</div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.55, marginBottom: 12 }}>
+              You&apos;re about to save this schedule with <strong>{errors.length} unresolved blocking issue{errors.length === 1 ? '' : 's'}</strong>. Soteria flags these because they break a hard rule — availability, approved time off, double-booking, a never-together pair, or an hours limit. This override is recorded in the activity log.
+            </div>
+            <div style={{ maxHeight: 120, overflowY: 'auto', marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {errors.map((e, i) => (
+                <div key={i} style={{ fontSize: 11.5, color: 'var(--text-secondary)', padding: '6px 10px', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius-sm)' }}>{e.description}</div>
+              ))}
+            </div>
+            <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: 5 }}>Reason for overriding (required)</label>
+            <textarea
+              value={overrideReason}
+              onChange={e => setOverrideReason(e.target.value)}
+              placeholder="e.g. Jack is covering both shifts during the transition; the overlap is intentional."
+              rows={3}
+              style={{ width: '100%', fontSize: 12.5, padding: '8px 10px', background: 'var(--bg-surface-2)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)', color: 'var(--text-primary)', resize: 'vertical', marginBottom: 16, fontFamily: 'inherit' }}
+            />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => setOverrideOpen(false)}>Cancel</button>
+              <button
+                className="btn btn-sm"
+                disabled={overrideReason.trim().length === 0}
+                onClick={() => { const reason = overrideReason.trim(); setOverrideOpen(false); save({ reason }) }}
+                style={{ background: overrideReason.trim().length === 0 ? 'rgba(239,68,68,0.35)' : '#ef4444', color: '#fff', border: '1px solid #ef4444', opacity: overrideReason.trim().length === 0 ? 0.6 : 1 }}
+              >
+                Override &amp; Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }

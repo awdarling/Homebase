@@ -2014,6 +2014,7 @@ export default function SchedulePage() {
           pendingAssignments={pendingAssignments}
           onClose={() => setReviewPanelOpen(false)}
           onSaved={handleScheduleSaved}
+          onApplyFix={(assignments) => setPendingAssignments(assignments)}
         />
       )}
 
