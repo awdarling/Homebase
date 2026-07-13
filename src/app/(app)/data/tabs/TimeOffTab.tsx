@@ -301,13 +301,35 @@ export default function TimeOffTab() {
       .single()
     const roles = (empRow as { qualified_roles?: string[] } | null)?.qualified_roles ?? []
     if (roles.length === 0) return []
+    // RULE 0 — the shift's name, hours and active days come from the shift the
+    // MANAGER defined (`shift_types`), never from the copies on
+    // shift_requirements. Those copies drifted in production (D4: 8 of 12
+    // Watermark rows, one by 2.5 hours), which meant this picker could offer an
+    // employee a partial-day window that doesn't match the real shift — and the
+    // resulting time_off_requests.partial_days row would then block the wrong hours.
+    // The requirement is used only for what it actually owns: which ROLE the shift
+    // needs. Filtering on the shift type's days_active also fixes the fact that
+    // shift_requirements.days_active was dormant and could be stale (D9).
     const { data } = await supabase
       .from('shift_requirements')
-      .select('id, shift_name, start_time, end_time, role, days_active')
+      .select('id, role, shift_types!inner(name, start_time, end_time, days_active)')
       .eq('company_id', COMPANY_ID)
       .in('role', roles)
-      .contains('days_active', [dow])
-    return (data as ShiftOption[] | null) ?? []
+      .contains('shift_types.days_active', [dow])
+
+    type JoinedRow = {
+      id: string
+      role: string
+      shift_types: { name: string; start_time: string; end_time: string; days_active: number[] }
+    }
+    return ((data ?? []) as unknown as JoinedRow[]).map((r) => ({
+      id: r.id,
+      role: r.role,
+      shift_name: r.shift_types.name,
+      start_time: r.shift_types.start_time,
+      end_time: r.shift_types.end_time,
+      days_active: r.shift_types.days_active,
+    })) as ShiftOption[]
   }
 
   // Reset shift cache when the employee changes — shifts depend on qualified roles.

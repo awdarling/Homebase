@@ -220,16 +220,18 @@ export default function ShiftRequirementsTab() {
 
     if (reqModal?.mode === 'add') {
       const st = shiftTypes.find((s) => s.id === reqModal.shiftTypeId)
+      // RULE 0 — a requirement stores ONLY what it owns: which shift it belongs
+      // to, which role, and how many. It no longer stamps a COPY of the shift's
+      // name/hours/days onto itself. That copy was invisible to the manager, was
+      // never updated when the shift changed, and drifted in production (D4).
+      // Everything reads shift_types now. The four copied columns are dropped by
+      // Drop_Shift_Requirement_Mirrors.sql.
       const { data } = await supabase.from('shift_requirements').insert({
         company_id: COMPANY_ID,
         shift_type_id: reqModal.shiftTypeId,
         role: cleaned[0],
         accepted_roles: cleaned,
         required_count: count,
-        shift_name: st?.name ?? '',
-        start_time: st?.start_time ?? '00:00',
-        end_time: st?.end_time ?? '00:00',
-        days_active: st?.days_active ?? [],
       }).select().single()
       if (data) await logActivity(
         'shift_requirement_created',

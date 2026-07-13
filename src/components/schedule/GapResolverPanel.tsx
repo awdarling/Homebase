@@ -136,7 +136,13 @@ export default function GapResolverPanel({
       supabase.from('employees').select('id, name, primary_role, qualified_roles, contact_phone').eq('company_id', companyId).eq('active', true),
       supabase.from('availability').select('employee_id, day_of_week').eq('company_id', companyId),
       supabase.from('time_off_requests').select('employee_id').eq('company_id', companyId).eq('status', 'approved').lte('start_date', gap.date).gte('end_date', gap.date),
-      supabase.from('shift_requirements').select('start_time, end_time').eq('company_id', companyId).eq('shift_name', gap.shift_name).eq('role', gap.role).limit(1).maybeSingle(),
+      // RULE 0 — read the shift's hours from the shift the MANAGER defined
+      // (`shift_types`), not from the copy stamped onto shift_requirements.
+      // These hours go straight into the message we send the employee
+      // ("you've been added to the AM shift (11:30-15:30)"), so a stale copy
+      // told a real person the wrong start time. `gap.shift_name` is produced by
+      // the engine from shift_types.name, so matching on name here is exact.
+      supabase.from('shift_types').select('start_time, end_time').eq('company_id', companyId).eq('name', gap.shift_name).limit(1).maybeSingle(),
       supabase.from('roles').select('name').eq('company_id', companyId).order('name'),
     ])
 
