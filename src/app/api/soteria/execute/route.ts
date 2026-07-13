@@ -6,6 +6,7 @@ import { throwOnWriteError } from '@/lib/soteria/persistGuard'
 import { planConfiguration, summarizePlan, type ConfigBundle, type ExistingConfig } from '@/lib/soteria/ingestionPlanner'
 import { planRosterImport, type RosterRowInput } from '@/lib/soteria/rosterImport'
 import { inferShiftStructureFromSchedule, type ScheduleRowInput } from '@/lib/soteria/scheduleInference'
+import { postToAegisInternal, AegisInternalError, AegisInternalConfigError } from '@/lib/aegis-internal'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -79,6 +80,18 @@ function sanitizeEventShifts(input: unknown): Record<string, unknown>[] | null {
   }
   return out.length > 0 ? out : null
 }
+
+// NOTE (contract): `events.event_shifts` is the CANONICAL source of truth for a special
+// event's staffing exceptions. The engine reads it post-canvas in
+// Aegis src/lib/engine/event-shifts.ts (called from canvas.ts), and it is a strict
+// SUPERSET of the legacy `events.shift_overrides` column: it supports per-role count
+// overrides (`stretch` + roles[].count), time changes, AND brand-new one-off shifts
+// (`mode: 'add'`) — none of which shift_overrides can express.
+//
+// Do NOT also write `shift_overrides` here. Dual-writing the same concept into two
+// columns is exactly the drift that causes silent divergence (the legacy column applies
+// PRE-canvas and can disagree with event_shifts). `shift_overrides` is legacy and should
+// be retired, not mirrored.
 
 export async function POST(request: NextRequest) {
   try {
@@ -1019,59 +1032,90 @@ export async function POST(request: NextRequest) {
           veteran_preference?: string
         }
 
-        const aegisUrl = process.env.AEGIS_URL
-        if (!aegisUrl) {
+        const targetWeek: 'this' | 'next' = d.target_week === 'this' ? 'this' : 'next'
+
+        // Use the SAME Bearer-auth'd internal endpoint the Homebase "Build" button uses.
+        // The previous implementation FABRICATED an SMS to Aegis's /webhooks/sms using a
+        // manager employee's phone number. That required an `employees` row with
+        // primary_role='Manager' AND a phone on file (managers are `users`, so this often
+        // didn't exist → hard 400), and it depended on the SMS webhook — which is inert in
+        // email-only mode and returns 200 regardless, so the build could even report
+        // SUCCESS while doing nothing. Net effect: the manager confirmed the action card
+        // and the build silently never happened. This is the real, proven path.
+        try {
+          const result = await postToAegisInternal<{
+            ok: boolean
+            schedule_id?: string
+            week_start?: string
+            week_end?: string
+            total_filled?: number
+            total_required?: number
+            gaps?: number
+            reason?: string
+            error?: string
+          }>('/internal/build-schedule', {
+            company_id: companyId,
+            target_week: targetWeek,
+            ...(d.veteran_preference ? { veteran_preference: d.veteran_preference } : {}),
+          })
+
+          if (!result.ok) {
+            const msg = result.reason === 'no_shift_types'
+              ? "There aren't any active shift types set up yet — add shift types and role requirements under Scheduling, then I can build."
+              : `I couldn't save the build: ${result.error ?? 'unknown error'}.`
+            await supabase.from('activity_log').insert({
+              company_id: companyId,
+              actor: 'soteria',
+              action: 'schedule_build_failed',
+              entity_type: 'schedule',
+              summary: `Soteria's ${targetWeek}-week schedule build failed: ${result.reason ?? result.error ?? 'unknown'}`,
+              metadata: { target_week: targetWeek },
+            })
+            return NextResponse.json({ error: msg }, { status: 422 })
+          }
+
+          await supabase.from('activity_log').insert({
+            company_id: companyId,
+            actor: 'soteria',
+            action: 'schedule_build_triggered',
+            entity_type: 'schedule',
+            entity_id: result.schedule_id ?? null,
+            summary: `Soteria built the ${targetWeek}-week schedule (${result.total_filled ?? 0}/${result.total_required ?? 0} slots filled, ${result.gaps ?? 0} gaps)`,
+            metadata: {
+              target_week: targetWeek,
+              veteran_preference: d.veteran_preference ?? null,
+              schedule_id: result.schedule_id ?? null,
+              gaps: result.gaps ?? null,
+            },
+          })
+
+          return NextResponse.json({
+            success: true,
+            target_week: targetWeek,
+            schedule_id: result.schedule_id,
+            week_start: result.week_start,
+            week_end: result.week_end,
+            total_filled: result.total_filled,
+            total_required: result.total_required,
+            gaps: result.gaps,
+          })
+        } catch (err) {
+          const detail = err instanceof AegisInternalConfigError || err instanceof AegisInternalError
+            ? err.message
+            : err instanceof Error ? err.message : 'unknown error'
+          await supabase.from('activity_log').insert({
+            company_id: companyId,
+            actor: 'soteria',
+            action: 'schedule_build_failed',
+            entity_type: 'schedule',
+            summary: `Soteria's ${targetWeek}-week schedule build failed: ${detail}`,
+            metadata: { target_week: targetWeek },
+          })
           return NextResponse.json(
-            { error: 'The schedule build service isn\'t configured yet. Reach out to support to set this up.' },
-            { status: 500 }
-          )
-        }
-
-        const { data: manager } = await supabase
-          .from('employees')
-          .select('contact_phone')
-          .eq('company_id', companyId)
-          .eq('primary_role', 'Manager')
-          .not('contact_phone', 'is', null)
-          .limit(1)
-          .maybeSingle()
-
-        const fromPhone = (manager as { contact_phone?: string } | null)?.contact_phone
-        if (!fromPhone) {
-          return NextResponse.json(
-            { error: 'No manager with a phone number on file — Aegis needs a manager phone to authenticate the request.' },
-            { status: 400 }
-          )
-        }
-
-        let bodyText = `Build ${d.target_week} week's schedule`
-        if (d.veteran_preference) {
-          bodyText += `. ${d.veteran_preference}`
-        }
-
-        const aegisRes = await fetch(`${aegisUrl}/webhooks/sms`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ From: fromPhone, Body: bodyText }).toString(),
-        })
-
-        await supabase.from('activity_log').insert({
-          company_id: companyId,
-          actor: 'soteria',
-          action: 'schedule_build_triggered',
-          entity_type: 'schedule',
-          summary: `Soteria triggered schedule build for ${d.target_week} week`,
-          metadata: { target_week: d.target_week, veteran_preference: d.veteran_preference ?? null, aegis_status: aegisRes.status },
-        })
-
-        if (!aegisRes.ok) {
-          return NextResponse.json(
-            { error: `The schedule build service couldn't accept that request. Please try again in a moment.` },
+            { error: `I couldn't reach the scheduling engine: ${detail}` },
             { status: 502 }
           )
         }
-
-        return NextResponse.json({ success: true, target_week: d.target_week })
       }
 
 
