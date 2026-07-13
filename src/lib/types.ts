@@ -199,6 +199,16 @@ export interface ScheduleGap {
   date: string
   shift_name: string
   role: string
+  /**
+   * RULE 0b — every role the manager said may fill this slot ("Lifeguard or
+   * Headguard"). Written onto the gap by the Aegis engine so the gap-RESOLVER
+   * offers the manager exactly the people the engine itself would have accepted.
+   * Without it, the resolver filtered by the single `role` and hid qualified
+   * staff from the manager trying to fix the gap.
+   * Optional: schedules built before this existed don't have it — readers fall
+   * back to `[role]`, i.e. the old behaviour, never "nobody qualifies".
+   */
+  accepted_roles?: string[]
   required_count: number
   filled_count: number
   reason: string

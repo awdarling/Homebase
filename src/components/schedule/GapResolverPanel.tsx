@@ -155,8 +155,21 @@ export default function GapResolverPanel({
     setAllEmployees(employees.map(e => ({ id: e.id, name: e.name })))
     setAllRoles((rolesRes.data ?? []).map((r: { name: string }) => r.name))
 
+    // RULE 0b — offer the manager EVERYONE the engine itself would have accepted.
+    //
+    // This filtered on the single `gap.role`, so when a manager configured a slot
+    // to accept "Lifeguard OR Headguard" and it went unfilled, the panel they
+    // opened to FIX the gap hid every qualified Headguard from them. The engine
+    // and the gap resolver disagreed about who could work the same shift.
+    //
+    // `accepted_roles` is written onto the gap by the Aegis engine. Falls back to
+    // `[gap.role]` for schedules built before that existed — i.e. exactly the old
+    // behaviour, never "nobody qualifies".
+    const acceptedRoles: string[] = gap.accepted_roles?.length ? gap.accepted_roles : [gap.role]
+
     const qualified = employees.filter(emp =>
-      emp.primary_role === gap.role || (emp.qualified_roles ?? []).includes(gap.role)
+      acceptedRoles.includes(emp.primary_role) ||
+      acceptedRoles.some(r => (emp.qualified_roles ?? []).includes(r))
     )
     const available = qualified.filter(emp =>
       availability.some(a => a.employee_id === emp.id && a.day_of_week === gapDayOfWeek)
