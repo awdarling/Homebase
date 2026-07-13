@@ -81,41 +81,17 @@ function sanitizeEventShifts(input: unknown): Record<string, unknown>[] | null {
   return out.length > 0 ? out : null
 }
 
-// The scheduling ENGINE reads a special event's staffing override from
-// `events.shift_overrides`, shaped { [shift_name]: { [role]: required_count } }
-// (Aegis src/workflows/schedule-build.ts → applyShiftOverrides).
+// NOTE (contract): `events.event_shifts` is the CANONICAL source of truth for a special
+// event's staffing exceptions. The engine reads it post-canvas in
+// Aegis src/lib/engine/event-shifts.ts (called from canvas.ts), and it is a strict
+// SUPERSET of the legacy `events.shift_overrides` column: it supports per-role count
+// overrides (`stretch` + roles[].count), time changes, AND brand-new one-off shifts
+// (`mode: 'add'`) — none of which shift_overrides can express.
 //
-// Soteria only ever wrote the richer `events.event_shifts` array, leaving
-// shift_overrides NULL — so the engine applied NO override and built the week as if
-// the special event had no staffing change at all. The manager's "4 lifeguards on the
-// Afternoon shift" was saved, shown back to them, and then silently ignored by the build.
-//
-// Derive the engine-shaped override from the same sanitized input and write BOTH columns.
-// Only entries that actually change head-count (i.e. carry `roles`) contribute; a
-// time-only stretch doesn't alter required_count. Note `mode: 'add'` (a brand-new shift
-// for the event) is not representable in shift_overrides — the engine can only override
-// the required_count of EXISTING requirements — so those still need engine support.
-function deriveShiftOverrides(
-  eventShifts: Record<string, unknown>[] | null,
-): Record<string, Record<string, number>> | null {
-  if (!eventShifts || eventShifts.length === 0) return null
-  const out: Record<string, Record<string, number>> = {}
-  for (const entry of eventShifts) {
-    const shiftName = typeof entry.shift_name === 'string' ? entry.shift_name : ''
-    const roles = Array.isArray(entry.roles)
-      ? (entry.roles as { role?: unknown; count?: unknown }[])
-      : []
-    if (!shiftName || roles.length === 0) continue
-    for (const r of roles) {
-      if (!r || typeof r.role !== 'string' || !Number.isFinite(Number(r.count))) continue
-      const count = Math.floor(Number(r.count))
-      if (count <= 0) continue
-      out[shiftName] = out[shiftName] ?? {}
-      out[shiftName][r.role.trim()] = count
-    }
-  }
-  return Object.keys(out).length > 0 ? out : null
-}
+// Do NOT also write `shift_overrides` here. Dual-writing the same concept into two
+// columns is exactly the drift that causes silent divergence (the legacy column applies
+// PRE-canvas and can disagree with event_shifts). `shift_overrides` is legacy and should
+// be retired, not mirrored.
 
 export async function POST(request: NextRequest) {
   try {
@@ -1608,8 +1584,6 @@ export async function POST(request: NextRequest) {
           description,
           staffing_notes: notes,
           event_shifts: eventShifts,
-          // Engine-readable staffing override — without this the build ignores the event.
-          shift_overrides: deriveShiftOverrides(eventShifts),
           created_by: 'soteria',
         }).select().single()
         if (error) throw error
@@ -1672,11 +1646,7 @@ export async function POST(request: NextRequest) {
         }
         if (d.event_shifts !== undefined) {
           // null / empty clears the event's staffing exceptions back to "none".
-          const nextShifts = d.event_shifts === null ? null : sanitizeEventShifts(d.event_shifts)
-          updates.event_shifts = nextShifts
-          // Keep the ENGINE-readable override in lockstep — otherwise an edited event
-          // keeps a stale (or null) shift_overrides and the build ignores the change.
-          updates.shift_overrides = deriveShiftOverrides(nextShifts)
+          updates.event_shifts = d.event_shifts === null ? null : sanitizeEventShifts(d.event_shifts)
         }
         if (Object.keys(updates).length === 0) {
           return NextResponse.json(

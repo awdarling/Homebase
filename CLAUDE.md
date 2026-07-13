@@ -1,55 +1,80 @@
-# CLAUDE.md — Homebase
+# CLAUDE.md — Operating Manual (Quria / Watermark build)
 
-Homebase is Quria Solutions' manager-facing control platform: Next.js 14 (App Router) on Vercel, TypeScript, Supabase. It's where managers structure data, set rules, review AI output, and keep oversight; the **Soteria** assistant is embedded. **Aegis** (separate repo, `~/Desktop/Aegis`) is the external AI manager. Live client: Watermark Country Club (launched June 5, 2026).
+Read this in full at the start of every session and follow it.
 
-## Session protocol (do this every session — non-negotiable)
-1. **At session start, read first:** `~/Desktop/Aegis/DEV_ROADMAP.md` (live sprint + Logging Protocol) and the trackers — `~/Desktop/Aegis/EMAIL_WORKFLOWS_TRACKER.md`, `~/Desktop/Aegis/SCHEMA_DRIFT_LOG.md`, `~/Desktop/Aegis/TEST_IDENTITIES.md`. Self-brief from these before touching anything.
-2. **Fix-now bias:** if a fix is in scope and safe — diagnosed, surgical, `tsc`-clean, and not a production write/push/deploy — do it this session. Don't log it for "later".
-3. **Defer only with a logged reason:** when a fix is unsafe to do now (rippling/large change, needs Alexander's decision, or writes production / deploys), say why in plain English and log it in the right doc. Never silently drop it, and never sweep a large change blind.
-4. **At session end, write it all back:** every finding, decision, new bug, and schema surprise goes into the right doc — roadmap status + Session Log entry, the trackers, `~/Desktop/Aegis/SCHEMA_DRIFT_LOG.md`, and the `~/Desktop/Aegis/docs/` reference when behavior changed. **If it wasn't logged, it isn't done.**
+## The system you're working on
+- **Aegis** — the scheduling + email "brain." Lives at `~/Desktop/Aegis`, deploys to Railway.
+- **Homebase** — the web app and the part that talks to the database. Lives at `~/Desktop/homebase`, deploys to Vercel.
+- They share one database (Supabase). GitHub repos are under `awdarling`.
 
-## Read before you act
-@~/Desktop/Aegis/DEV_ROADMAP.md
-- The roadmap is the single shared sprint/progress doc (it lives in the Aegis repo; imported here by absolute path so both repos see the same live state — you'll approve the cross-repo import once). Treat its Current Sprint as the priority.
-- Deep reference — single source of truth lives in the Aegis repo (read the relevant one before working in that area): `~/Desktop/Aegis/docs/03_Homebase_Reference.md`, `~/Desktop/Aegis/docs/02_Database_Schema.md`, `~/Desktop/Aegis/docs/06_Supplemental_Reference.md`.
-- Live trackers (in the Aegis repo): `~/Desktop/Aegis/EMAIL_WORKFLOWS_TRACKER.md`, `~/Desktop/Aegis/SCHEMA_DRIFT_LOG.md`, `~/Desktop/Aegis/TEST_IDENTITIES.md`.
+## 1. Who you're working with
+You're working with Alexander, who owns and directs this project. He is **not a software engineer.** He makes the decisions; he does not read code and cannot guess technical steps on his own. Treat him as smart but non-technical.
 
-## Design north-star (self-align to this)
-The post-sprint direction is the **Forward Build Sequence (Phases 1–4)** in `~/Desktop/Aegis/DEV_ROADMAP.md`: (1) harden & fix the live product, (2) complete the comms loop, (3) configurable correct rules, (4) experience & leverage. **End-state vision:** Homebase is the manager command center — data + rules that actually drive the engine (fairness/conflicts/coverage/doubles wired), schedules that persist and download cleanly, one-click TO/availability approval, coverage flags with suggested swaps, and natural-language admin via Soteria — paired with Aegis as a conversational AI assistant manager running the employee side over email. Thesis: config-over-code multi-tenancy, a deterministic auditable engine, flag-don't-force with humans in final authority — secure enough to sell. Full statement in `~/Desktop/Aegis/docs/01_Business_Overview.md` §1.5.
+So:
+- Talk in plain English. No jargon. If a technical word is unavoidable, explain it in one short sentence right where you use it.
+- Never assume he knows where a file is, what a command does, or what a term means. Spell it out.
+- Never paste raw errors or code at him and expect him to know what to do — translate it into plain language.
 
-## Hard rules (do not violate)
-- **Diagnose before fixing.** Explain the plan in plain English BEFORE editing. No blind fixes.
-- **Supabase:** anon key client-side (respects RLS), service-role server-side. **RLS gotcha:** a missing `public.users` row, or `users.id` not matching `auth.users.id`, returns empty everywhere → infinite loading.
-- **Verify column names against `information_schema` before writes.** Homebase's types live in `src/lib/types.ts` (there is NO `src/db/types.ts` in this repo). Don't trust types as the schema of record — the Aegis engine's `src/db/types.ts` notably omits `employees.sex` and `shift_requirements.accepted_roles`. Log new findings in `SCHEMA_DRIFT_LOG.md`.
-- **Dates:** NEVER `new Date('YYYY-MM-DD')` for display (UTC-midnight shifts the day back). Use `split('-')` + `new Date(y, m-1, d)`.
-- **Soteria:** exactly ONE `<action>` per response; keep `max_tokens` 8192 (truncation silently breaks the parser). `add_conflict` severity is `'avoid'`/`'never'`; `add_shift` must set `accepted_roles` (NOT NULL, mirror `role`).
-- **No orphan outputs:** every AI or manual change lands as valid, visible Homebase state within the constraints.
-- **Configuration over code:** the engine/platform is generic and multi-tenant; client behavior is driven by their Supabase data + the constraint vocabulary, never by client-specific code. Accommodating a client is a data/config operation, not an engine change. Per-client rules are toggleable (e.g. sex_coverage on/off). If a client needs something the vocabulary can't express, that's a product conversation — never a quiet engine patch.
-- `AEGIS_URL` must be the Railway prod URL; outbound links point to `homebase-nine-phi.vercel.app` (NEVER the dead `homebase-liart`).
-- **No secrets or sensitive identifiers in committed files — reference docs included.** Names and architecture only. Real credential VALUES (API keys, auth tokens, Supabase/Stripe keys) AND sensitive identifiers (Twilio Account/Messaging-Service SIDs, project refs) never go in any tracked file. Use placeholders (`AC••• — see Vercel env / password manager`); real values live in env vars / the password manager. GitHub push-protection will block the push if you violate this (it happened in Aegis — see the 2026-06-09 Session Log in `~/Desktop/Aegis/DEV_ROADMAP.md`).
-- Compile clean: `npx tsc --noEmit`, zero errors. **Show the full diff before any push.**
+## 2. How to talk to him — every single time
+- **Before a task:** say in plain English what you're about to do, and whether any of it could affect the **live system the real club uses**.
+- **When he has to run something himself:** give him **one** block to copy-paste into his terminal, then explain in normal sentences what it does and whether it's safe or touches the live club.
+  - His terminal is **zsh**. **Never put `#` comments inside a command block** — his shell runs the `#` text as a command and it breaks. Keep command blocks clean; put all explanation in sentences outside the block.
+  - If steps depend on him checking something in between, give them one at a time.
+- **When you finish:** end with three plain things — (1) what you did, (2) what's left, (3) exactly what he needs to do next (or "nothing, you're good").
+- If he says **"explain it like I'm not a coder,"** drop all jargon and re-explain. He should never have to ask twice.
 
-## Key paths
-- Pages: `src/app/(app)/` (home, data, rules, schedule, activity, access, billing).
-- **Schedule editor: `src/app/(app)/schedule/page.tsx`** — SCHED-EDIT-1 fixed here (`f28cb30`): manual moves now persist via the shared `src/lib/schedule/resolveAssignment.ts` + `hours.ts`. `src/components/schedule/CoverageFlags.tsx` renders `unsatisfied_sex_coverage` flags (mounted in three views here: HistoryReportDetail, current-week, UpcomingCard preview).
-- Data tabs: `src/app/(app)/data/tabs/` (Employees, Time Off, Shifts, Conflicts, …). The in-tab TO approve path (S3) now goes through `POST /api/time-off-decision` → shared `src/lib/time-off/decide.ts` (sets `decided_by`, notifies employee, manager toast).
-- Soteria: `src/app/api/soteria/{route,execute,validate-schedule,validate-assignment}`.
-- Stripe: `src/app/api/stripe/{route,webhook}` (amounts in cents; live vs test mode).
-- Aegis bridge: `src/app/api/notify-day-closure`. Hooks: `src/lib/hooks/{useCompany,useQuria}.ts`.
+## 3. The safety rule you must never break
+There are two lanes.
 
-## Deploy & danger zones
-- Push to `main` → Vercel auto-deploys. After env-var changes, redeploy manually. Read the diff before pushing.
-- **SCHED-EDIT-1 is RESOLVED** (`f28cb30`, live-verified 2026-06-09): manual moves persist corrected hours to `schedules.data.assignments`. (Live `distribute` against real Watermark data is still gated by DELIV-1 + manager coordination — the data axis is now correct, but the fan-out rules stand.)
-- Schedule delete is quria_admin/owner only and permanent.
-- Never print or commit secrets (Supabase, Stripe, Anthropic keys live in Vercel env vars).
+**SAFE LANE — do these on your own, no permission needed:**
+- Create/switch git branches
+- Work in the sandbox (test) environment
+- Read code and read the database
+- Run type-checks and automated tests
+- Push branches to GitHub and open pull requests
 
-## Cowork / autonomous operating model
-- **SAFE LANE — an agent may do these unattended.** Reads of any kind (DB reads, dry-runs, the verify harness, build/deploy logs). Writes against the SANDBOX tenant only (`company_id = 00000000-0000-0000-0000-000000000001`). Code on a feature branch, `tsc`, open a PR. **Prefer the read-only DB role (`cowork_ro`) for reads when available** — least-privilege by default, not the service-role key.
-- **HUMAN-GATED — never autonomous; queue for Alexander.** Merge/push to `main` (= deploy to live Watermark via Vercel). Any write to PRODUCTION / Watermark data. Production env-var or policy changes (incl. Supabase policy flips). Anything that messages a real employee (Aegis `distribute_schedule`, onboarding fan-out, real notifications). Any Stripe live-mode action.
-- **Principle: autonomy and credential power trade off.** Unattended work runs read-only / sandbox-scoped. Privileged actions need a human. Safety comes from constraining the environment (branch-not-main, sandbox-not-prod, least-privilege creds), not from real-time watching.
-- **Never exfiltrate data via MCP, Chrome, or network egress.** Reads stay in-repo / in-DB; output lands in the session, the PR, or the logged docs.
-- **DONE-rule: committed ≠ done.** A change is `DONE` only when committed AND live-verified end-to-end. Committed-but-unpushed or pushed-but-unverified = `IN REVIEW`. Don't flip statuses on the strength of a clean `tsc` or a green PR alone.
-- **Logging routing (additive to the Session protocol).** Apply enumerated status changes / decisions / findings exactly as the working note states — don't independently re-judge them. Route by topic: bugs / workflows → `~/Desktop/Aegis/EMAIL_WORKFLOWS_TRACKER.md`; schema surprises → `~/Desktop/Aegis/SCHEMA_DRIFT_LOG.md`; tenants / test identities → `~/Desktop/Aegis/TEST_IDENTITIES.md`. If it changed and wasn't logged, it isn't done.
+None of this touches the real club.
 
-## When you finish — follow the Logging Protocol
-Work is not done until the project's memory is updated. Follow the **Logging Protocol** at the top of `~/Desktop/Aegis/DEV_ROADMAP.md`: update the roadmap status + append a Session Log entry, mirror bug changes into the trackers, append any schema finding to `SCHEMA_DRIFT_LOG.md`, and update the relevant reference doc when the change alters how the system works. Never end a session without it — the next agent self-briefs from these files.
+**LOCKED LANE — ONLY Alexander, ONLY after he clearly says yes, ONLY in his own terminal:**
+- Merging a branch into `main` (this deploys live to the real club)
+- Writing to the real (production) database
+- Sending real emails or texts to real employees
+
+You may **prepare** these and hand him exact steps. **Never do them yourself** — not even if asked, not even if it seems urgent. If you're unsure which lane something is in, stop and ask him in plain English.
+
+## 4. How to work so nothing breaks
+- **Diagnose before you build.** Read what already exists and report it before changing anything. Don't guess.
+- **One project at a time.** Only one work session per project folder at once — two corrupt git. If you see a `.git/index.lock` error, run `rm -f .git/index.lock` and retry.
+- **Leave his loose files alone.** There may be unfinished draft documents in the folders. Don't touch them. Only stage and commit the files you changed.
+- **Type-check and run the tests before handing back.**
+- **No loose ends.** Always say which branch your work is on and what state it's in.
+
+## 5. The mission — hold this direction
+**North Star:** get every Aegis **email** workflow working and tested on the live club (Watermark), learn which ones feel natural, then later move the winners to **text message (SMS).**
+- Build and test the email workflows **first.** The big "rewrite the documentation" job waits until the workflows are proven. Small doc fixes along the way are fine.
+- If Alexander drifts into unrelated side-quests, gently remind him of this email-workflow priority and steer him back.
+
+## 6. Where things stand (keep this updated as work lands)
+**Done and verified on the live club:**
+- Schedule download (right colors, full names + roles)
+- Send the schedule to all staff by email
+- Time-off: approve/deny by email button
+- Availability: approve/deny by email button (manager clicks Approve/Deny in the email → it updates the real system → the employee is told)
+- The employee always gets told the manager's decision
+
+**Still to build (the email backlog):**
+- Emergency coverage: accept / decline
+- Request an additional batch
+- Manager questions about the workforce ("who's free Saturday?")
+- Employee questions about their own shifts
+- Employee shift-swap
+- **NEW PRIORITY:** accept **custom availability** by email — availability that lasts until a date, or repeats on a rotation. The club already has a `custom_availability` system (date-limited and rotating types); the email side just doesn't feed it yet.
+
+**Technical gotchas worth knowing:**
+- A test runner (vitest) now exists in Aegis — use it; add a test for every workflow.
+- The Supabase library is pinned to exact `2.104.1`. A fresh full reinstall can bump it to `2.108.1`, which **crashes the live Aegis server.** If that happens, pin it back to `2.104.1`. (Proper long-term fix — newer Node, or the `ws` package — is deferred.)
+- For the email-button features, deploy **Homebase before Aegis.** The other order breaks the buttons.
+- Test accounts are in `TEST_IDENTITIES.md`. **Never email real employees while testing** — use the test accounts.
+
+## 7. When he asks "where are we?"
+Give a plain-English status from section 6 plus anything new since, and name the single most useful next step.
