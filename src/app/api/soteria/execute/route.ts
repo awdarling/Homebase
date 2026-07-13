@@ -1133,6 +1133,122 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // ── D7 — ask Aegis to SEND THE SCHEDULE TO THE TEAM ────────────────────
+      //
+      // This is the highest-consequence action Soteria can take: it emails EVERY
+      // employee at the company (~30 at Watermark). It is deliberately a thin
+      // pass-through to the SAME Aegis endpoint the Homebase "Distribute" button
+      // already uses — no second implementation, no fabricated message, no
+      // separate idea of what "distributed" means.
+      //
+      // Note the framing throughout: Soteria ASKS AEGIS. She does not send it
+      // herself, and the copy she returns says so. Aegis is the one who talks to
+      // employees; if Soteria quietly absorbs that, the manager stops using him
+      // and the product loses its point (see soteria/capabilities.ts).
+      //
+      // Re-send protection lives in Aegis (`already_distributed`), so an
+      // accidental second confirm cannot spam 30 people — Soteria reports back
+      // that it was already sent and does nothing.
+      case 'distribute_schedule': {
+        const d = action.data as { schedule_id?: string; force?: boolean }
+        if (!d.schedule_id || typeof d.schedule_id !== 'string') {
+          return NextResponse.json(
+            { error: "I need to know which schedule to send out. Build or publish one first, then tell me to send it." },
+            { status: 400 },
+          )
+        }
+
+        // Never take the LLM's word for which company a schedule belongs to.
+        const { data: schedRow, error: schedErr } = await supabase
+          .from('schedules')
+          .select('id, company_id, status, week_start, week_end')
+          .eq('id', d.schedule_id)
+          .eq('company_id', companyId)
+          .is('deleted_at', null)
+          .maybeSingle()
+        if (schedErr) throw schedErr
+        if (!schedRow) {
+          return NextResponse.json(
+            { error: "I couldn't find that schedule in this company." },
+            { status: 400 },
+          )
+        }
+        const sched = schedRow as { id: string; status: string; week_start: string; week_end: string }
+
+        try {
+          const result = await postToAegisInternal<{
+            ok: boolean
+            sent?: number
+            total_employees?: number
+            errors?: unknown[]
+            already_distributed?: boolean
+            distributed_at?: string | null
+          }>('/internal/distribute-schedule', {
+            schedule_id: sched.id,
+            ...(d.force === true ? { force: true } : {}),
+          })
+
+          if (result.already_distributed) {
+            await supabase.from('activity_log').insert({
+              company_id: companyId,
+              actor: 'soteria',
+              action: 'schedule_distribute_skipped',
+              entity_type: 'schedule',
+              entity_id: sched.id,
+              summary: `Soteria asked Aegis to send the ${sched.week_start} schedule — already sent, so nothing was re-sent.`,
+              metadata: { schedule_id: sched.id, distributed_at: result.distributed_at ?? null },
+            })
+            return NextResponse.json({
+              success: true,
+              already_distributed: true,
+              distributed_at: result.distributed_at ?? null,
+              message: 'That week has already gone out to the team, so Aegis left it alone. Tell me if you want him to deliberately re-send it.',
+            })
+          }
+
+          await supabase.from('activity_log').insert({
+            company_id: companyId,
+            actor: 'soteria',
+            action: 'schedule_distributed',
+            entity_type: 'schedule',
+            entity_id: sched.id,
+            summary: `Soteria asked Aegis to send the ${sched.week_start} schedule to the team (${result.sent ?? 0}/${result.total_employees ?? 0} reached)`,
+            metadata: {
+              schedule_id: sched.id,
+              sent: result.sent ?? 0,
+              total_employees: result.total_employees ?? 0,
+              forced: d.force === true,
+            },
+          })
+
+          return NextResponse.json({
+            success: true,
+            schedule_id: sched.id,
+            sent: result.sent ?? 0,
+            total_employees: result.total_employees ?? 0,
+            errors: result.errors ?? [],
+          })
+        } catch (err) {
+          const detail = err instanceof AegisInternalConfigError || err instanceof AegisInternalError
+            ? err.message
+            : err instanceof Error ? err.message : 'unknown error'
+          await supabase.from('activity_log').insert({
+            company_id: companyId,
+            actor: 'soteria',
+            action: 'schedule_distribute_failed',
+            entity_type: 'schedule',
+            entity_id: sched.id,
+            summary: `Soteria's request to Aegis to send the ${sched.week_start} schedule failed: ${detail}`,
+            metadata: { schedule_id: sched.id },
+          })
+          // No orphan outputs: say it did NOT go out.
+          return NextResponse.json(
+            { error: `I couldn't get that to Aegis, so nothing was sent to the team: ${detail}` },
+            { status: 502 },
+          )
+        }
+      }
+
 
       case 'add_role': {
         const d = action.data as { name?: string; color?: string }
