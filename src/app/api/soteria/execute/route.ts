@@ -522,14 +522,55 @@ export async function POST(request: NextRequest) {
           .single()
         if (error) throw error
 
+        // ── D4: cascade to the denormalized copies on shift_requirements ──────
+        //
+        // shift_requirements carries a COPY of the shift's name/start/end/days.
+        // They were written once at insert and never updated again, so editing a
+        // shift type left every requirement row holding stale hours. This is not
+        // theoretical — Watermark had 8 of 12 rows drifted (e.g. "Day/Greeter"
+        // said 12:00–18:00 while the real shift type was 11:00–19:30).
+        //
+        // Who reads the stale copy, and what it costs:
+        //   - Aegis time-off coverage simulator (lib/schedule-simulator.ts) uses
+        //     req.start_time/end_time to decide whether approving time off opens
+        //     a coverage gap → WRONG verdicts on a live workflow.
+        //   - Homebase GapResolverPanel builds the employee-facing "you've been
+        //     added to the X shift (11:30–15:30)" message from it → tells an
+        //     employee the wrong hours.
+        //
+        // shift_types remains the CANONICAL source (the schedule engine reads it
+        // via canvas.ts and is unaffected). These columns are a display/legacy
+        // mirror we cannot drop yet — they're NOT NULL and several UI components
+        // read them — so we keep them honest. Tracked as D4; the end state is to
+        // drop the mirror columns entirely.
+        const stAfter = data as { name: string; start_time: string; end_time: string; days_active: number[] }
+        const mirror: Record<string, unknown> = {}
+        if (updates.name !== undefined) mirror.shift_name = stAfter.name
+        if (updates.start_time !== undefined) mirror.start_time = stAfter.start_time
+        if (updates.end_time !== undefined) mirror.end_time = stAfter.end_time
+        if (updates.days_active !== undefined) mirror.days_active = stAfter.days_active
+
+        let mirroredCount = 0
+        if (Object.keys(mirror).length > 0) {
+          const { data: mirrored, error: mirrorErr } = await supabase
+            .from('shift_requirements')
+            .update(mirror)
+            .eq('company_id', companyId)
+            .eq('shift_type_id', d.id)
+            .select('id')
+          if (mirrorErr) throw mirrorErr
+          mirroredCount = mirrored?.length ?? 0
+        }
+
         await supabase.from('activity_log').insert({
           company_id: companyId,
           actor: 'soteria',
           action: 'update_shift_type',
           entity_type: 'shift_type',
           entity_id: d.id,
-          summary: `Soteria updated shift type: ${(data as { name: string }).name}`,
-          metadata: { before, after: data, changed_fields: Object.keys(updates) },
+          summary: `Soteria updated shift type: ${(data as { name: string }).name}`
+            + (mirroredCount > 0 ? ` (synced ${mirroredCount} role requirement${mirroredCount === 1 ? '' : 's'})` : ''),
+          metadata: { before, after: data, changed_fields: Object.keys(updates), requirements_synced: mirroredCount },
         })
         return NextResponse.json({ success: true, data })
       }
@@ -1236,6 +1277,14 @@ export async function POST(request: NextRequest) {
           employees_qualified_roles: 0,
           shift_req_accepted_roles: 0,
           shift_req_role_legacy: 0,
+          // D5 — these two were MISSING. A role is a free-text string matched by
+          // exact equality across five tables; the rename only updated three of
+          // them, so renaming "Lifeguard" → "Guard" silently orphaned the
+          // Lifeguard wage rate (wages fall back to nothing) and every veteran /
+          // experience rule scoped to that role (they simply stop applying).
+          // Nothing errors. The schedule just quietly gets worse.
+          wage_rates: 0,
+          shift_experience_rules: 0,
         }
 
         if (updates.name && beforeRow.name !== afterRow.name) {
@@ -1288,7 +1337,12 @@ export async function POST(request: NextRequest) {
             cascadeCounts.shift_req_accepted_roles++
           }
 
-          // 4. shift_requirements.role — legacy column, direct UPDATE WHERE
+          // 4. shift_requirements.role — direct UPDATE WHERE.
+          // NOTE: despite the old "legacy column" label, `role` is the column the
+          // schedule ENGINE actually matches on (eligibility compares
+          // employees.qualified_roles against slot.role). `accepted_roles` above
+          // is the one nothing reads yet (Role Groups unbuilt — drift D10).
+          // Getting this backwards would break every build, so: role is load-bearing.
           const { data: reqLegacy, error: errSL } = await supabase
             .from('shift_requirements')
             .update({ role: newName })
@@ -1297,13 +1351,42 @@ export async function POST(request: NextRequest) {
             .select('id')
           if (errSL) throw errSL
           cascadeCounts.shift_req_role_legacy = reqLegacy?.length ?? 0
+
+          // 5. D5 — wage_rates.role. Missed by the original cascade. A rename
+          // orphaned the role's pay rate: wages then fall back to
+          // employees.individual_wage or nothing at all, silently changing every
+          // cost estimate. Read by Aegis lib/schedule-simulator.ts.
+          const { data: wageRows, error: errWR } = await supabase
+            .from('wage_rates')
+            .update({ role: newName })
+            .eq('company_id', companyId)
+            .eq('role', oldName)
+            .select('id')
+          if (errWR) throw errWR
+          cascadeCounts.wage_rates = wageRows?.length ?? 0
+
+          // 6. D5 — shift_experience_rules.role. Also missed. These are the
+          // veteran / experience staffing rules ("Saturday nights must be all
+          // veterans"). Scoped by role string; after a rename they match nothing
+          // and stop being enforced — with no error and no gap flagged.
+          // Read by Aegis lib/engine/experience-rules.ts.
+          const { data: expRows, error: errXR } = await supabase
+            .from('shift_experience_rules')
+            .update({ role: newName })
+            .eq('company_id', companyId)
+            .eq('role', oldName)
+            .select('id')
+          if (errXR) throw errXR
+          cascadeCounts.shift_experience_rules = expRows?.length ?? 0
         }
 
         const totalCascade =
           cascadeCounts.employees_primary_role +
           cascadeCounts.employees_qualified_roles +
           cascadeCounts.shift_req_accepted_roles +
-          cascadeCounts.shift_req_role_legacy
+          cascadeCounts.shift_req_role_legacy +
+          cascadeCounts.wage_rates +
+          cascadeCounts.shift_experience_rules
         const renameSummary = updates.name
           ? (beforeRow.name === afterRow.name
               ? `Soteria updated role: ${afterRow.name}`
@@ -1337,6 +1420,11 @@ export async function POST(request: NextRequest) {
           { data: empsByQualified, error: errEQ },
           { data: reqsByLegacy, error: errSL },
           { data: reqsByAccepted, error: errSA },
+          // D5 — these two references were never checked, so a role could be
+          // deleted out from under its own wage rate and its veteran rules,
+          // leaving both pointing at a role that no longer exists.
+          { data: wageRefs, error: errWR },
+          { data: expRefs, error: errXR },
         ] = await Promise.all([
           supabase
             .from('employees')
@@ -1360,8 +1448,20 @@ export async function POST(request: NextRequest) {
             .select('id')
             .eq('company_id', companyId)
             .contains('accepted_roles', [name]),
+          supabase
+            .from('wage_rates')
+            .select('id')
+            .eq('company_id', companyId)
+            .eq('role', name),
+          supabase
+            .from('shift_experience_rules')
+            .select('id')
+            .eq('company_id', companyId)
+            .eq('role', name),
         ])
-        if (errEP || errEQ || errSL || errSA) throw errEP ?? errEQ ?? errSL ?? errSA
+        if (errEP || errEQ || errSL || errSA || errWR || errXR) {
+          throw errEP ?? errEQ ?? errSL ?? errSA ?? errWR ?? errXR
+        }
 
         // Dedupe employees across the two checks
         const empMap = new Map<string, string>()
@@ -1376,7 +1476,10 @@ export async function POST(request: NextRequest) {
           reqIds.add(r.id)
         }
         const reqCount = reqIds.size
-        if (empNames.length > 0 || reqCount > 0) {
+        const wageCount = (wageRefs ?? []).length
+        const expCount = (expRefs ?? []).length
+
+        if (empNames.length > 0 || reqCount > 0 || wageCount > 0 || expCount > 0) {
           const parts: string[] = []
           if (empNames.length > 0) {
             const sample = empNames.slice(0, 3).join(', ')
@@ -1386,8 +1489,14 @@ export async function POST(request: NextRequest) {
           if (reqCount > 0) {
             parts.push(`${reqCount} shift role requirement${reqCount === 1 ? '' : 's'} still accept${reqCount === 1 ? 's' : ''} the ${name} role`)
           }
+          if (wageCount > 0) {
+            parts.push(`${wageCount} wage rate${wageCount === 1 ? ' is' : 's are'} still set for ${name}`)
+          }
+          if (expCount > 0) {
+            parts.push(`${expCount} veteran/experience rule${expCount === 1 ? ' is' : 's are'} still scoped to ${name}`)
+          }
           return NextResponse.json(
-            { error: `I can't delete ${name} yet — ${parts.join(' and ')}. Update those first.` },
+            { error: `I can't delete ${name} yet — ${parts.join(', and ')}. Update those first.` },
             { status: 400 },
           )
         }
