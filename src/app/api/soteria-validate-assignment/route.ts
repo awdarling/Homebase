@@ -157,6 +157,26 @@ If there are no issues, return valid: true, empty arrays for issues/suggestions,
     }
   }
 
+  // Hard verdict is DETERMINISTIC — the LLM is not trusted to decide validity (it can
+  // hallucinate, e.g. invent a time-off conflict). Recompute the hard rules from the
+  // facts loaded above and OVERRIDE valid + issues; keep the LLM's text only as soft advice.
+  const hardIssues: string[] = []
+  if (hasApprovedTimeOff) hardIssues.push(`${employee_name} has approved time off on ${date}.`)
+  if (!isQualified) hardIssues.push(`${employee_name} is not qualified for ${role_override}.`)
+  if (!hasAvailability) hardIssues.push(`${employee_name} has no availability on file for ${dayNames[dayOfWeek]}.`)
+  if (currentHours + shiftHours > maxHours) hardIssues.push(`This puts ${employee_name} at ${(currentHours + shiftHours).toFixed(1)}h this week, over their ${maxHours}h limit.`)
+  const llmSuggestions = Array.isArray(result.suggestions)
+    ? result.suggestions.filter((s): s is string => typeof s === 'string')
+    : []
+  result = {
+    valid: hardIssues.length === 0,
+    issues: hardIssues,
+    suggestions: llmSuggestions,
+    summary: hardIssues.length === 0
+      ? `Looks good — ${employee_name} can take ${shift_name} on ${date}.`
+      : `${hardIssues.length} issue${hardIssues.length === 1 ? '' : 's'} with placing ${employee_name} on ${shift_name} (${date}).`,
+  }
+
   return NextResponse.json(result)
   } catch (error) {
     console.error('[soteria] error:', error)
