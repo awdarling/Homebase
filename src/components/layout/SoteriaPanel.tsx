@@ -306,9 +306,19 @@ export default function SoteriaPanel() {
         m.id === messageId ? { ...m, actionSubmitting: false, actionStatus: 'confirmed', actionError: undefined } : m
       ))
 
-      const followUpContent = action.type === 'trigger_schedule_build'
-        ? "Got it — I've triggered the schedule build. You'll receive a text when it's ready."
-        : `Done — ${action.description} has been saved to Homebase.`
+      // D6 — the copy has to match who actually did the work. Soteria ASKS AEGIS
+      // to run the schedule pipeline; she doesn't run it herself. Anything that
+      // says "I've built it" trains the manager to treat her as the whole product
+      // and stop using Aegis, which is the opposite of the point.
+      //
+      // Also: the old string promised "you'll receive a text" — SMS is disabled
+      // until A2P clears (Aegis EMAIL_ONLY), so that was a promise we don't keep.
+      const followUpContent =
+        action.type === 'trigger_schedule_build'
+          ? "Got it — I've asked Aegis to build the schedule. He'll email you when it's ready."
+          : action.type === 'distribute_schedule'
+            ? "Done — I've asked Aegis to send the schedule out to the team. He'll email everyone directly."
+            : `Done — ${action.description} has been saved to Homebase.`
 
       const confirmMessage: Message = {
         id: Date.now().toString(),
@@ -672,8 +682,10 @@ export default function SoteriaPanel() {
                 {msg.action && msg.actionStatus === 'confirmed' && (
                   <div style={{ fontSize: 11, color: 'var(--status-ready-text)', marginTop: 4, paddingLeft: 28 }}>
                     {msg.action.type === 'trigger_schedule_build'
-                      ? "✓ Schedule build triggered — you'll receive a text when it's ready"
-                      : '✓ Confirmed and saved'}
+                      ? '✓ Asked Aegis to build the schedule — he\'ll email you when it\'s ready'
+                      : msg.action.type === 'distribute_schedule'
+                        ? '✓ Asked Aegis to send the schedule to the team'
+                        : '✓ Confirmed and saved'}
                   </div>
                 )}
                 {msg.action && msg.actionStatus === 'rejected' && (
