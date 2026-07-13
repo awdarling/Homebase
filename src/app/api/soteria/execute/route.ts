@@ -414,20 +414,19 @@ export async function POST(request: NextRequest) {
         }
         const stRow = st as { id: string; name: string; start_time: string; end_time: string; days_active: number[] }
 
-        // days_active is dormant on shift_requirements — Aegis ignores it
-        // (see Aegis/src/lib/engine/canvas.ts). Written here to keep the
-        // column self-consistent at write time. Do not allow Soteria to
-        // mutate it independently.
+        // RULE 0 — a requirement stores ONLY what it owns: which shift it belongs
+        // to (`shift_type_id`), which role, and how many. It no longer stamps a
+        // COPY of the shift's name/hours/days onto itself. Those copies were
+        // invisible to the manager, were never refreshed when the shift changed,
+        // and drifted in production (D4). Everything now reads shift_types — the
+        // one row the manager actually edits. The copied columns are removed by
+        // Drop_Shift_Requirement_Mirrors.sql.
         const { data, error } = await supabase.from('shift_requirements').insert({
           company_id: companyId,
           shift_type_id: d.shift_type_id,
           role: cleanedRoles[0],
           accepted_roles: cleanedRoles,
           required_count: requiredCount,
-          shift_name: stRow.name,
-          start_time: stRow.start_time,
-          end_time: stRow.end_time,
-          days_active: stRow.days_active,
         }).select().single()
         if (error) throw error
 
@@ -522,55 +521,30 @@ export async function POST(request: NextRequest) {
           .single()
         if (error) throw error
 
-        // ── D4: cascade to the denormalized copies on shift_requirements ──────
+        // RULE 0 — NO CASCADE NEEDED, AND NONE WANTED.
         //
-        // shift_requirements carries a COPY of the shift's name/start/end/days.
-        // They were written once at insert and never updated again, so editing a
-        // shift type left every requirement row holding stale hours. This is not
-        // theoretical — Watermark had 8 of 12 rows drifted (e.g. "Day/Greeter"
-        // said 12:00–18:00 while the real shift type was 11:00–19:30).
+        // An earlier fix (D4) cascaded this edit into COPIES of the shift's
+        // name/hours/days stored on shift_requirements. That was the right patch
+        // for a schema that shouldn't have existed: keeping a hidden duplicate
+        // honest is still keeping a hidden duplicate.
         //
-        // Who reads the stale copy, and what it costs:
-        //   - Aegis time-off coverage simulator (lib/schedule-simulator.ts) uses
-        //     req.start_time/end_time to decide whether approving time off opens
-        //     a coverage gap → WRONG verdicts on a live workflow.
-        //   - Homebase GapResolverPanel builds the employee-facing "you've been
-        //     added to the X shift (11:30–15:30)" message from it → tells an
-        //     employee the wrong hours.
+        // Those four columns are now gone (Drop_Shift_Requirement_Mirrors.sql).
+        // `shift_types` — the row the manager edits in the shift box — is the one
+        // and only place a shift's name, hours and days live. Every reader (the
+        // Aegis engine and coverage simulator, the schedule builder, the gap
+        // resolver, the time-off picker) joins to it. So editing the shift here
+        // is, by construction, the whole edit. There is nothing left to sync.
         //
-        // shift_types remains the CANONICAL source (the schedule engine reads it
-        // via canvas.ts and is unaffected). These columns are a display/legacy
-        // mirror we cannot drop yet — they're NOT NULL and several UI components
-        // read them — so we keep them honest. Tracked as D4; the end state is to
-        // drop the mirror columns entirely.
-        const stAfter = data as { name: string; start_time: string; end_time: string; days_active: number[] }
-        const mirror: Record<string, unknown> = {}
-        if (updates.name !== undefined) mirror.shift_name = stAfter.name
-        if (updates.start_time !== undefined) mirror.start_time = stAfter.start_time
-        if (updates.end_time !== undefined) mirror.end_time = stAfter.end_time
-        if (updates.days_active !== undefined) mirror.days_active = stAfter.days_active
-
-        let mirroredCount = 0
-        if (Object.keys(mirror).length > 0) {
-          const { data: mirrored, error: mirrorErr } = await supabase
-            .from('shift_requirements')
-            .update(mirror)
-            .eq('company_id', companyId)
-            .eq('shift_type_id', d.id)
-            .select('id')
-          if (mirrorErr) throw mirrorErr
-          mirroredCount = mirrored?.length ?? 0
-        }
-
+        // If you ever find yourself re-adding a cascade under this line, stop:
+        // it means someone re-introduced a copy. Delete the copy instead.
         await supabase.from('activity_log').insert({
           company_id: companyId,
           actor: 'soteria',
           action: 'update_shift_type',
           entity_type: 'shift_type',
           entity_id: d.id,
-          summary: `Soteria updated shift type: ${(data as { name: string }).name}`
-            + (mirroredCount > 0 ? ` (synced ${mirroredCount} role requirement${mirroredCount === 1 ? '' : 's'})` : ''),
-          metadata: { before, after: data, changed_fields: Object.keys(updates), requirements_synced: mirroredCount },
+          summary: `Soteria updated shift type: ${(data as { name: string }).name}`,
+          metadata: { before, after: data, changed_fields: Object.keys(updates) },
         })
         return NextResponse.json({ success: true, data })
       }
@@ -2198,16 +2172,15 @@ export async function POST(request: NextRequest) {
             shiftTypeByName.set(created.name.trim().toLowerCase(), created)
             applied.shift_types++
             for (const req of step.requirements) {
+              // RULE 0 — the requirement stores only what it owns (which shift,
+              // which role, how many). The shift's name/hours/days live once, on
+              // shift_types. No copies. See Drop_Shift_Requirement_Mirrors.sql.
               const { error: reqErr } = await supabase.from('shift_requirements').insert({
                 company_id: companyId,
                 shift_type_id: created.id,
                 role: req.accepted_roles[0],
                 accepted_roles: req.accepted_roles,
                 required_count: req.required_count,
-                shift_name: created.name,
-                start_time: created.start_time,
-                end_time: created.end_time,
-                days_active: created.days_active,
               })
               throwOnWriteError(reqErr, `add a role slot to ${created.name}`)
               applied.role_requirements++
@@ -2326,16 +2299,15 @@ export async function POST(request: NextRequest) {
             const created = stRow as { id: string; name: string; start_time: string; end_time: string; days_active: number[] }
             applied.shift_types++
             for (const req of step.requirements) {
+              // RULE 0 — the requirement stores only what it owns (which shift,
+              // which role, how many). The shift's name/hours/days live once, on
+              // shift_types. No copies. See Drop_Shift_Requirement_Mirrors.sql.
               const { error: reqErr } = await supabase.from('shift_requirements').insert({
                 company_id: companyId,
                 shift_type_id: created.id,
                 role: req.accepted_roles[0],
                 accepted_roles: req.accepted_roles,
                 required_count: req.required_count,
-                shift_name: created.name,
-                start_time: created.start_time,
-                end_time: created.end_time,
-                days_active: created.days_active,
               })
               throwOnWriteError(reqErr, `add a role slot to ${created.name}`)
               applied.role_requirements++

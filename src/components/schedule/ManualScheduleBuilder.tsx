@@ -165,9 +165,17 @@ export default function ManualScheduleBuilder({
           .eq('company_id', companyId)
           .eq('active', true)
           .order('name'),
+        // RULE 0 — a requirement owns only "this shift needs N of role X".
+        // Its name/hours/days come from the shift the MANAGER defined
+        // (`shift_types`), joined here. The copies stamped onto
+        // shift_requirements drifted in production (D4: 8 of 12 Watermark rows,
+        // one by 2.5h) — and THIS component writes assignments into the schedule
+        // from them, so a manager hand-building a week would have baked the wrong
+        // hours (and a stale shift_name that no longer matches the engine's slots)
+        // straight into what employees receive.
         supabase
           .from('shift_requirements')
-          .select('id, company_id, shift_type_id, shift_name, role, required_count, start_time, end_time, days_active')
+          .select('id, company_id, shift_type_id, role, required_count, shift_types!inner(name, start_time, end_time, days_active)')
           .eq('company_id', companyId),
         supabase
           .from('wage_rates')
@@ -195,7 +203,29 @@ export default function ManualScheduleBuilder({
 
       const emps = (empRes.data ?? []) as Employee[]
       setEmployees(emps)
-      setShiftReqs((reqRes.data ?? []) as ShiftRequirement[])
+      // Flatten the joined shift onto the same field names the rest of this
+      // component already uses, so the shift's real hours/name/days flow through
+      // unchanged — but now they come from the single place the manager edits.
+      type JoinedReq = {
+        id: string
+        company_id: string
+        shift_type_id: string
+        role: string
+        required_count: number
+        shift_types: { name: string; start_time: string; end_time: string; days_active: number[] }
+      }
+      const joinedReqs = ((reqRes.data ?? []) as unknown as JoinedReq[]).map((r) => ({
+        id: r.id,
+        company_id: r.company_id,
+        shift_type_id: r.shift_type_id,
+        role: r.role,
+        required_count: r.required_count,
+        shift_name: r.shift_types.name,
+        start_time: r.shift_types.start_time,
+        end_time: r.shift_types.end_time,
+        days_active: r.shift_types.days_active,
+      }))
+      setShiftReqs(joinedReqs as unknown as ShiftRequirement[])
       setWageRates((wageRes.data ?? []) as WageRate[])
       setExistingSchedule((existRes.data as Schedule | null) ?? null)
 
