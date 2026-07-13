@@ -230,7 +230,7 @@ export async function POST(req: NextRequest) {
     return `  - ${key.replace('||', ' on ')}: ${names.length === 0 ? '(empty)' : names.join(', ')}`
   }).join('\n') || '  (none)'
 
-  const systemPrompt = `You are Soteria, the scheduling compliance reviewer for ${company?.name ?? 'this company'}. A manager has manually edited the schedule. Review the proposed changes against availability, qualifications, conflicts, time-off, and policies. Flag every real issue, but do not invent issues that the data does not support. Return ONLY valid JSON.`
+  const systemPrompt = `You are Soteria, the scheduling reviewer for ${company?.name ?? 'this company'}. A manager manually edited the schedule. The system has ALREADY validated every HARD rule deterministically — qualification, availability (including custom availability), approved time off, max weekly hours, "never together" pairs, and double-booking. DO NOT re-check or report any of those, and NEVER assert a time-off, qualification, hours, availability, or pairing conflict — those are handled and authoritative elsewhere. Your ONLY job is to surface SOFT, judgment-based observations a manager may want to weigh: coverage thinning, fairness/rotation imbalance, fatigue or back-to-back shifts, and "avoid" (soft) pairings. If nothing soft stands out, return an empty list. Return ONLY valid JSON.`
 
   const userMessage = `Schedule week: ${schedule?.week_start ?? '?'} – ${schedule?.week_end ?? '?'}
 
@@ -249,31 +249,26 @@ ${cellStaffing}
 COMPANY POLICIES:
 ${(policies ?? []).map(p => `  - ${p.policy_key}: ${p.policy_value}${p.description ? ` (${p.description})` : ''}`).join('\n') || '  (none)'}
 
-For every issue, classify severity:
-  - "error": qualification mismatch, approved time-off conflict, "never together" pair both staffed, employee has no availability for that day, exceeds max_weekly_hours
-  - "warning": coverage drop concerns, fairness issues, fatigue/back-to-back concerns, "avoid" pair both staffed, going over hours preference
+Report ONLY soft observations, all at severity "warning" (never "error" — hard rules are the system's job, not yours): coverage thinning, fairness/rotation imbalance, fatigue/back-to-back, or "avoid" (soft) pairings. Do not restate hard-rule conflicts.
 
 Return JSON with this exact shape:
 {
   "issues": [
     {
-      "severity": "error" | "warning",
+      "severity": "warning",
       "employee_name": "Name",
-      "description": "What's wrong, in one sentence.",
-      "suggestion": "Concrete fix suggestion, or null if none."
+      "description": "The soft concern, in one sentence.",
+      "suggestion": "Optional concrete suggestion, or null."
     }
-  ],
-  "summary": "One-sentence overall verdict.",
-  "approved": true if there are no errors (warnings are OK), false if there is at least one error
+  ]
 }
 
-If there are no issues at all, return issues: [], approved: true, and a positive one-sentence summary.`
+If nothing soft stands out, return issues: [].`
 
   // Soft warnings only from the LLM (fairness, fatigue, coverage drops). It is
   // NEVER the source of truth for errors — those are the deterministic checks
   // above. If the model is unavailable, we still return the deterministic verdict.
   let llmWarnings: SoteraIssue[] = []
-  let llmSummary = ''
   try {
     const message = await withAnthropicRetry(() =>
       anthropic.messages.create({
@@ -291,7 +286,6 @@ If there are no issues at all, return issues: [], approved: true, and a positive
         .filter(i => i && i.severity === 'warning')
         .map(i => ({ severity: 'warning' as const, employee_name: i.employee_name, description: i.description, suggestion: i.suggestion ?? null }))
     }
-    if (typeof parsed.summary === 'string') llmSummary = parsed.summary
   } catch (llmErr) {
     console.warn('[soteria] soft-warning pass unavailable:', llmErr)
   }
@@ -306,9 +300,14 @@ If there are no issues at all, return issues: [], approved: true, and a positive
   const result: SoteriaResponse = {
     issues: [...mappedHard, ...llmWarnings],
     approved: !hasHardError,
+    // Verdict + summary come ENTIRELY from the deterministic checks — never from the
+    // LLM's free-form sentence, which can hallucinate a hard conflict (e.g. claim an
+    // employee is on time off when they are not) and contradict a correct "all clear".
     summary: hasHardError
       ? `${errorCount} blocking issue${errorCount === 1 ? '' : 's'} must be fixed before publishing.`
-      : (llmSummary || (llmWarnings.length > 0 ? 'No blocking issues — a few things worth a look.' : 'Looks good — no issues found.')),
+      : (llmWarnings.length > 0
+          ? 'No blocking rule conflicts — a few soft items worth a look.'
+          : 'All clear — no rule conflicts found.'),
   }
 
   return NextResponse.json(result)
