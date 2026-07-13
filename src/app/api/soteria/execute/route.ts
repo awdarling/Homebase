@@ -183,6 +183,40 @@ export async function POST(request: NextRequest) {
           if (d.updates[k] !== undefined) updates[k] = d.updates[k]
         }
 
+        // ── D16 — primary_role MUST be inside qualified_roles ─────────────────
+        //
+        // The schedule engine matches candidates on `qualified_roles` (Rule 0b,
+        // lib/qualification.ts). `primary_role` only breaks ranking ties. So an
+        // employee whose primary_role is NOT in their qualified_roles is, to the
+        // engine, **not qualified for their own job** — they will never be
+        // scheduled for it, and the gap reason will say "not qualified" about the
+        // very role written on their record. Silent, and baffling to a manager.
+        //
+        // Rather than reject the edit (a manager saying "make Jordan a Headguard"
+        // plainly means they can work as one), we heal it: add the role.
+        if (updates.primary_role !== undefined) {
+          const newPrimary = String(updates.primary_role)
+
+          // The qualified list after this edit: the one being set, or the one on file.
+          let qualified: string[] = Array.isArray(updates.qualified_roles)
+            ? (updates.qualified_roles as string[])
+            : []
+
+          if (!Array.isArray(updates.qualified_roles)) {
+            const { data: current } = await supabase
+              .from('employees')
+              .select('qualified_roles')
+              .eq('id', d.employee_id)
+              .eq('company_id', companyId)
+              .maybeSingle()
+            qualified = (current as { qualified_roles: string[] } | null)?.qualified_roles ?? []
+          }
+
+          if (!qualified.includes(newPrimary)) {
+            updates.qualified_roles = [newPrimary, ...qualified]
+          }
+        }
+
         const { data, error } = await supabase
           .from('employees')
           .update(updates)
@@ -205,12 +239,51 @@ export async function POST(request: NextRequest) {
 
       case 'delete_employee': {
         const d = action.data as { id: string; name: string }
+
+        // ── D15 — delete every row that points at this employee, not just one ──
+        //
+        // This used to cascade to `availability` ONLY. Everything else that
+        // referenced the employee was left behind, pointing at a person who no
+        // longer exists:
+        //   time_off_requests   — orphaned approved leave. lib/to-window.ts still
+        //                         loads it, so a ghost employee could still block
+        //                         coverage calculations.
+        //   employee_conflicts  — a banned pair with a dead half. The engine reads
+        //                         BOTH id columns, so it kept enforcing a rule
+        //                         about someone who'd been deleted.
+        //   custom_availability — a temporary override with no owner.
+        //
+        // Deleted in dependency order, employee LAST, so a failure part-way
+        // through never leaves the employee gone but their rules still live.
         const { error: availErr } = await supabase
           .from('availability')
           .delete()
           .eq('employee_id', d.id)
           .eq('company_id', companyId)
         throwOnWriteError(availErr, `remove ${d.name}'s availability`)
+
+        const { error: custAvailErr } = await supabase
+          .from('custom_availability')
+          .delete()
+          .eq('employee_id', d.id)
+          .eq('company_id', companyId)
+        throwOnWriteError(custAvailErr, `remove ${d.name}'s temporary availability`)
+
+        const { error: toErr } = await supabase
+          .from('time_off_requests')
+          .delete()
+          .eq('employee_id', d.id)
+          .eq('company_id', companyId)
+        throwOnWriteError(toErr, `remove ${d.name}'s time-off requests`)
+
+        // employee_conflicts references the employee in EITHER id column.
+        const { error: conflictErr } = await supabase
+          .from('employee_conflicts')
+          .delete()
+          .eq('company_id', companyId)
+          .or(`employee_id_1.eq.${d.id},employee_id_2.eq.${d.id}`)
+        throwOnWriteError(conflictErr, `remove ${d.name}'s scheduling conflicts`)
+
         const { error: empErr } = await supabase
           .from('employees')
           .delete()
