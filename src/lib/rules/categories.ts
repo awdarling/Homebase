@@ -45,13 +45,17 @@ export const CATEGORY_LIST: CategoryMeta[] = [
     engineEffect: `Turned all the way up, Aegis always gives the next shift to the person with the fewest hours so far. Turned off, it ignores hours entirely. Most clubs keep it high so the work is shared fairly.`,
     singleton: true,
   },
-  {
-    key: 'partial_shifts',
-    label: 'Allow Partial Shifts',
-    description: `Whether someone can cover just part of a shift when they're only free for part of it.`,
-    engineEffect: `When on, Aegis can put someone on, say, the 9am–12pm part of a 9am–3pm shift, then find a second person for the rest. When off (the default), a person has to be free for the whole shift to be placed on it.`,
-    singleton: true,
-  },
+  // ── REMOVED FROM THE UI 2026-07-13 (partial_shifts, conflict_resolution) ──
+  // Both were settable but read by NOTHING in the engine (drift D11) — a manager
+  // could set them, Soteria and Aegis would confirm, and the schedule came out
+  // identical. Rather than ship a rule that silently does nothing, they're pulled
+  // from every surface a user touches. The SCAFFOLDING is deliberately kept —
+  // categorizeByKey(), the formatPolicySummary cases, the modal components, and
+  // the constraint parser still recognise the keys — so these can be switched
+  // back on as a focused feature (partial shifts is real engine work: slot
+  // splitting, partial assignments, wage/coverage) without rebuilding the plumbing.
+  // To re-enable: restore the two CATEGORY_LIST entries below and wire the engine
+  // reader. See DEV_ROADMAP.md.
   {
     key: 'doubles_policy',
     label: 'Two Shifts in One Day',
