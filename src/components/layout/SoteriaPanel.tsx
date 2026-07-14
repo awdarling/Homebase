@@ -122,6 +122,8 @@ export default function SoteriaPanel() {
   const [listening, setListening] = useState(false)
   const [pendingAttachment, setPendingAttachment] = useState<FileAttachment | null>(null)
   const [showTooltip, setShowTooltip] = useState(false)
+  const [memories, setMemories] = useState<{ id: string; memory_type: string; content: string }[]>([])
+  const [memoryOpen, setMemoryOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const recognitionRef = useRef<any>(null)
@@ -129,6 +131,40 @@ export default function SoteriaPanel() {
   useEffect(() => {
     if (open && messages.length === 0) initSoteria()
   }, [open])
+
+  useEffect(() => {
+    if (open && COMPANY_ID) fetchMemories()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, COMPANY_ID])
+
+  // Memory is SOFT conversational context (D22) — no engine reads it. This lets a
+  // manager SEE and prune what Soteria has remembered.
+  async function fetchMemories() {
+    if (!COMPANY_ID) return
+    try {
+      const res = await fetch(`/api/soteria/memory?companyId=${encodeURIComponent(COMPANY_ID)}`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setMemories(data.memories ?? [])
+    } catch {
+      // leave the current list as-is on a transient failure
+    }
+  }
+
+  async function deleteMemory(id: string) {
+    if (!confirm('Forget this? Soteria will no longer use it in conversation.')) return
+    try {
+      const res = await fetch('/api/soteria/memory', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, companyId: COMPANY_ID }),
+      })
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d?.error) }
+      setMemories((prev) => prev.filter((m) => m.id !== id))
+    } catch {
+      // no-op; the row stays visible if the delete failed
+    }
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -326,6 +362,7 @@ export default function SoteriaPanel() {
         content: followUpContent,
       }
       setMessages((prev) => [...prev, confirmMessage])
+      if (action?.type === 'save_memory') fetchMemories()
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : 'Network error'
       console.error('Execute error:', e)
@@ -438,6 +475,53 @@ export default function SoteriaPanel() {
               </div>
             </div>
           </div>
+
+          {/* What I remember — soft conversational context (D22 follow-on), NOT scheduling rules */}
+          {memories.length > 0 && (
+            <div style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-surface-1)' }}>
+              <button
+                onClick={() => setMemoryOpen((v) => !v)}
+                style={{
+                  width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '8px 16px', background: 'transparent', border: 'none', cursor: 'pointer',
+                  color: 'var(--text-muted)', fontSize: 11, fontFamily: 'var(--font-display)',
+                  letterSpacing: '0.06em', textTransform: 'uppercase',
+                }}
+              >
+                <span>What I remember · {memories.length}</span>
+                <span style={{ display: 'inline-block', transform: memoryOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>›</span>
+              </button>
+              {memoryOpen && (
+                <div style={{ maxHeight: 150, overflowY: 'auto', padding: '0 12px 10px' }}>
+                  {memories.map((m) => (
+                    <div key={m.id} style={{
+                      display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8,
+                      padding: '6px 8px', marginBottom: 4, background: 'var(--bg-surface-2)',
+                      border: '1px solid var(--border-subtle)', borderRadius: 6,
+                    }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 2 }}>
+                          {m.memory_type}
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.35 }}>
+                          {m.content}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => deleteMemory(m.id)}
+                        title="Forget this"
+                        aria-label="Forget this"
+                        style={{
+                          flexShrink: 0, background: 'transparent', border: 'none', cursor: 'pointer',
+                          color: 'var(--text-muted)', fontSize: 13, lineHeight: 1, padding: 2, opacity: 0.6,
+                        }}
+                      >🗑</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Messages */}
           <div style={{
