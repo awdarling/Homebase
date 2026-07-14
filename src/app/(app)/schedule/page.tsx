@@ -803,6 +803,8 @@ interface UpcomingCardProps {
   onAddShift: () => void
   onToggleRemove: () => void
   onReview: () => void
+  onUndo: () => void
+  canUndo: boolean
   onAssignmentChange: (next: ScheduleAssignment[]) => void
   onResolveGap: (gap: ScheduleGap) => void
   onDelete: () => void
@@ -833,6 +835,8 @@ function UpcomingCard({
   onAddShift,
   onToggleRemove,
   onReview,
+  onUndo,
+  canUndo,
   onAssignmentChange,
   onResolveGap,
   onDelete,
@@ -967,6 +971,14 @@ function UpcomingCard({
                 >
                   {removeMode ? 'Done Removing' : 'Remove'}
                 </button>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  disabled={!canUndo}
+                  onClick={onUndo}
+                  title={canUndo ? 'Undo the last change' : 'Nothing to undo'}
+                >
+                  Undo
+                </button>
                 <button className="btn btn-secondary btn-sm" onClick={onCancelEdit}>
                   Cancel
                 </button>
@@ -1066,6 +1078,9 @@ export default function SchedulePage() {
   const [editSnapshot, setEditSnapshot] = useState<ScheduleAssignment[]>([])
   const [pendingAssignments, setPendingAssignments] = useState<ScheduleAssignment[]>([])
   const [removeMode, setRemoveMode] = useState(false)
+  // Undo stack — each entry is the pendingAssignments state BEFORE an edit, so
+  // Undo pops the last one and restores it (revert the last change, stay in edit mode).
+  const [editHistory, setEditHistory] = useState<ScheduleAssignment[][]>([])
 
   // Expansion state
   const [expandedUpcomingId, setExpandedUpcomingId] = useState<string | null>(null)
@@ -1226,6 +1241,7 @@ export default function SchedulePage() {
   const isEditingCurrent = !!currentSchedule && editingScheduleId === currentSchedule.id
   const changes = editMode ? computeChanges(editSnapshot, pendingAssignments) : []
   const changesCount = changes.length
+  const canUndo = editMode && editHistory.length > 0
 
   const resolvingSchedule = resolveTarget
     ? allSchedules.find(s => s.id === resolveTarget.scheduleId) ?? null
@@ -1235,6 +1251,7 @@ export default function SchedulePage() {
     const assignments = schedule.data?.assignments ?? []
     setEditSnapshot([...assignments])
     setPendingAssignments([...assignments])
+    setEditHistory([])
     setRemoveMode(false)
     setEditingScheduleId(schedule.id)
   }
@@ -1242,10 +1259,25 @@ export default function SchedulePage() {
   function cancelEditMode() {
     setEditSnapshot([])
     setPendingAssignments([])
+    setEditHistory([])
     setRemoveMode(false)
     setAddShiftOpen(false)
     setReviewPanelOpen(false)
     setEditingScheduleId(null)
+  }
+
+  // Record the pre-edit state, then apply the new assignments. Every in-editor
+  // mutation (move, add, remove, Soteria fix) routes through this so Undo can
+  // step back one change at a time without discarding everything.
+  function commitEdit(next: ScheduleAssignment[]) {
+    setEditHistory(prev => [...prev, pendingAssignments])
+    setPendingAssignments(next)
+  }
+
+  function undoLastEdit() {
+    if (editHistory.length === 0) return
+    setPendingAssignments(editHistory[editHistory.length - 1])
+    setEditHistory(prev => prev.slice(0, -1))
   }
 
   function requestDeleteSchedule(schedule: Schedule) {
@@ -1402,7 +1434,7 @@ export default function SchedulePage() {
   }
 
   function handleAddPending(newAssignment: ScheduleAssignment) {
-    setPendingAssignments(prev => [...prev, newAssignment])
+    commitEdit([...pendingAssignments, newAssignment])
   }
 
   async function logScheduleActivity(action: string, summary: string, scheduleId: string) {
@@ -1679,6 +1711,14 @@ export default function SchedulePage() {
                 >
                   {removeMode ? 'Done Removing' : 'Remove'}
                 </button>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  disabled={!canUndo}
+                  onClick={undoLastEdit}
+                  title={canUndo ? 'Undo the last change' : 'Nothing to undo'}
+                >
+                  Undo
+                </button>
                 <button className="btn btn-secondary btn-sm" onClick={cancelEditMode}>
                   Cancel
                 </button>
@@ -1746,7 +1786,7 @@ export default function SchedulePage() {
                 mode={isEditingCurrent ? 'edit' : 'view'}
                 removeMode={isEditingCurrent ? removeMode : undefined}
                 pendingAssignments={isEditingCurrent ? pendingAssignments : undefined}
-                onAssignmentChange={isEditingCurrent ? setPendingAssignments : undefined}
+                onAssignmentChange={isEditingCurrent ? commitEdit : undefined}
                 closedDates={currentSchedule.data?.closed_dates ?? []}
                 onCloseDay={(date) => requestCloseDay(currentSchedule.id, date)}
                 onReopenDay={(date) => handleReopenDay(currentSchedule.id, date)}
@@ -1794,7 +1834,9 @@ export default function SchedulePage() {
                 onAddShift={() => setAddShiftOpen(true)}
                 onToggleRemove={() => setRemoveMode(v => !v)}
                 onReview={() => setReviewPanelOpen(true)}
-                onAssignmentChange={setPendingAssignments}
+                onUndo={undoLastEdit}
+                canUndo={editingScheduleId === s.id && canUndo}
+                onAssignmentChange={commitEdit}
                 onResolveGap={gap => setResolveTarget({ gap, scheduleId: s.id })}
                 onDelete={() => requestDeleteSchedule(s)}
                 onCloseDay={(date) => requestCloseDay(s.id, date)}
@@ -1881,7 +1923,9 @@ export default function SchedulePage() {
                 onAddShift={() => setAddShiftOpen(true)}
                 onToggleRemove={() => setRemoveMode(v => !v)}
                 onReview={() => setReviewPanelOpen(true)}
-                onAssignmentChange={setPendingAssignments}
+                onUndo={undoLastEdit}
+                canUndo={editingScheduleId === s.id && canUndo}
+                onAssignmentChange={commitEdit}
                 onResolveGap={gap => setResolveTarget({ gap, scheduleId: s.id })}
                 onDelete={() => requestDeleteSchedule(s)}
                 onCloseDay={(date) => requestCloseDay(s.id, date)}
@@ -2014,7 +2058,7 @@ export default function SchedulePage() {
           pendingAssignments={pendingAssignments}
           onClose={() => setReviewPanelOpen(false)}
           onSaved={handleScheduleSaved}
-          onApplyFix={(assignments) => setPendingAssignments(assignments)}
+          onApplyFix={(assignments) => commitEdit(assignments)}
         />
       )}
 
