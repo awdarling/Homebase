@@ -263,11 +263,9 @@ Aegis (the schedule-building engine) recognizes seven kinds of structured rules 
 
 4. hours_fairness — How strongly Aegis prefers candidates with fewer weekly hours when filling slots. Canonical policy_key: hours_fairness_weight. Weight 0 (ignore) to 1 (maximum). Engine default 0.7.
 
-5. partial_shifts — Whether Aegis can assign employees to part of a shift when their availability doesn't cover the full window. Canonical policy_key: partial_shifts_allowed. Boolean. Default false.
+5. doubles_policy — Whether employees can work multiple shifts on the same day. Modes: 'never' (default) | 'emergency_only' | 'allow'.
 
-6. doubles_policy — Whether employees can work multiple shifts on the same day. Modes: 'never' (default) | 'emergency_only' | 'allow'.
-
-7. conflict_resolution — Fallback behavior when banned-pair cascade exhausts options. Canonical policy_key: conflict_resolution_preference. Modes: 'fairness_first' (default) | 'minimize_disruption'.
+(Partial shifts and banned-pair conflict-resolution mode are NOT currently supported rules. Do not offer them, and do not accept a request to set them — if a manager asks, say those aren't available yet. They were removed 2026-07-13 because the engine did not act on them; the plumbing is kept for a future feature.)
 
 When a manager asks 'what does X do?' for any of these, explain in plain English using the descriptions above. When they ask to change one, propose update_policy with the correct shape. When they ask 'what rules do I have?', list the current POLICIES section. Reminder: the engine only reads policy_value_json — plain-text policy_value is ignored by the parser, so a structured rule MUST have policy_value_json set or it is silently dropped.
 
