@@ -144,7 +144,7 @@ CRITICAL BEHAVIOR RULES:
 - You proactively flag problems — staffing gaps, impossible scheduling constraints, rule conflicts — before they cause issues.
 - You have full read access to the company's current data. Use it. Reference specific employees, shifts, and rules by name.
 - Keep responses concise and actionable. No fluff.
-- When you learn something important about the manager's preferences or decisions, store it silently by emitting a <memory> tag in your response (see the PROPOSING ACTIONS section below). Memory writes do not require manager confirmation. There is no save_memory action.
+- When you learn something important about the manager's preferences or decisions, offer to remember it by proposing a save_memory action (see the PROPOSING ACTIONS section below). Like every other change, it is shown as a confirmation card and is only stored after the manager confirms. Do NOT emit a <memory> tag — that silent path is retired.
 
 RESPONSE LENGTH RULES:
 - Opening message (when the manager opens the panel for the first time, or after a long pause): 1-2 sentences, warm and brief. Acknowledge that you can help across employees, shifts, schedules, time off, policies, conflicts, wages, and operational events. Do not list capabilities exhaustively — invite the manager to describe what they need.
@@ -298,14 +298,18 @@ For database changes:
 }
 </action>
 
-For saving memory (no confirmation needed — do this silently when you learn something important):
-<memory>
+For saving memory (shown as a confirmation card — the manager confirms before it is stored):
+<action>
 {
-  "memory_type": "preference",
-  "content": "Manager prefers to avoid scheduling overtime even if it means gaps",
-  "source": "conversation"
+  "type": "save_memory",
+  "description": "Remember that you prefer to avoid overtime even if it means gaps",
+  "data": {
+    "memory_type": "preference",
+    "content": "Manager prefers to avoid scheduling overtime even if it means gaps",
+    "source": "conversation"
+  }
 }
-</memory>
+</action>
 
 Action types:
 - add_employee — data: { name, primary_role, qualified_roles, max_weekly_hours, contact_phone?, contact_email? }
@@ -344,6 +348,8 @@ Action types:
 - batch_create_time_off — data: { requests: [{ employee_id, employee_name, start_date, end_date, time_off_type: "full_day" | "partial", reason?, partial_days?: [{ date, type: "shift_off" | "custom_hours", shift_id?, shift_name?, start_time?, end_time? }] }] } — use this whenever logging time-off for one or more employees; group all TO from a notes block into a single batch.
 - update_availability — data: { employee_id, employee_name, slots: [{ day_of_week, start_time, end_time }], replace_all: boolean } — permanent recurring availability change. replace_all=true wipes existing and inserts new; replace_all=false merges (adds slots for days not already covered).
 - set_custom_availability — data: { employee_id, employee_name, type: "date_limited" | "rotating", end_date, patterns?: [{ day_of_week, start_time, end_time }], cycle_weeks?, cycle_start_date?, weekly_patterns?: [{ week, days: [{ day_of_week, start_time, end_time }] }] } — temporary override of normal availability until end_date. Use patterns for date_limited; use cycle_weeks + cycle_start_date + weekly_patterns for rotating.
+
+- save_memory — data: { memory_type: 'preference' | 'decision' | 'context' | 'feedback', content, source? } — Remember something important the manager told you about their preferences or decisions, so you can personalize future responses. Shown as a confirmation card like any other change; only stored after the manager confirms. content is a short one-sentence note (max 500 characters). Propose this ONLY for genuinely useful, durable facts the manager actually stated — not routine chatter, and never a guess or inference the manager did not confirm.
 
 Memory types: preference, decision, context, feedback
 
@@ -567,21 +573,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const memoryMatch = cleanContent.match(/<memory>([\s\S]*?)<\/memory>/)
-    if (memoryMatch) {
-      cleanContent = cleanContent.replace(/<memory>[\s\S]*?<\/memory>/g, '').trim()
-      try {
-        const memoryData = JSON.parse(stripJsonFence(memoryMatch[1]))
-        await supabase.from('soteria_memory').insert({
-          company_id: companyId,
-          memory_type: memoryData.memory_type,
-          content: memoryData.content,
-          source: memoryData.source ?? 'conversation',
-        })
-      } catch (e) {
-        console.error('Failed to save memory:', e)
-      }
-    }
+    // D22 — the silent, ungated <memory> write is retired. Memory is now a
+    // confirmed `save_memory` action, gated by a confirmation card like every
+    // other write. Defensively strip any stray <memory> tag the model still
+    // emits so it never reaches the UI; it is NOT persisted here.
+    cleanContent = cleanContent.replace(/<memory>[\s\S]*?<\/memory>/g, '').trim()
 
     return NextResponse.json({
       message: cleanContent,

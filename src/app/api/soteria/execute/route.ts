@@ -933,6 +933,71 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true, data })
       }
 
+      case 'save_memory': {
+        // D22 — memory is now a CONFIRMED write (was a silent, ungated <memory>
+        // tag). Guardrails: validated type, non-empty capped content, dedupe,
+        // error-checked insert. soteria_memory only feeds Soteria's own prompt
+        // context — no engine reads it — but it is still the manager's data.
+        const d = action.data as {
+          memory_type?: string
+          content?: string
+          source?: string
+        }
+        const ALLOWED_MEMORY_TYPES = ['preference', 'decision', 'context', 'feedback'] as const
+        const memoryType = (d.memory_type ?? '').trim().toLowerCase()
+        if (!ALLOWED_MEMORY_TYPES.includes(memoryType as typeof ALLOWED_MEMORY_TYPES[number])) {
+          return NextResponse.json(
+            { error: `Memory type must be one of: preference, decision, context, feedback.` },
+            { status: 400 },
+          )
+        }
+        const content = typeof d.content === 'string' ? d.content.trim() : ''
+        if (!content) {
+          return NextResponse.json(
+            { error: `Nothing to remember — the memory content was empty.` },
+            { status: 400 },
+          )
+        }
+        if (content.length > 500) {
+          return NextResponse.json(
+            { error: `That note is too long to save as a memory (max 500 characters).` },
+            { status: 400 },
+          )
+        }
+        const source = typeof d.source === 'string' && d.source.trim() ? d.source.trim() : 'conversation'
+
+        // Idempotent — don't store an identical note twice.
+        const { data: existing } = await supabase
+          .from('soteria_memory')
+          .select('id')
+          .eq('company_id', companyId)
+          .eq('memory_type', memoryType)
+          .eq('content', content)
+          .limit(1)
+        if (existing && existing.length > 0) {
+          return NextResponse.json({ success: true, data: existing[0], note: 'already remembered' })
+        }
+
+        const { data, error } = await supabase.from('soteria_memory').insert({
+          company_id: companyId,
+          memory_type: memoryType,
+          content,
+          source,
+        }).select().single()
+        if (error) throw error
+
+        await supabase.from('activity_log').insert({
+          company_id: companyId,
+          actor: 'soteria',
+          action: 'save_memory',
+          entity_type: 'soteria_memory',
+          entity_id: data.id,
+          summary: `Soteria saved a ${memoryType} memory`,
+          metadata: { memory_type: memoryType, content, source },
+        })
+        return NextResponse.json({ success: true, data })
+      }
+
       case 'delete_policy': {
         const d = action.data as { id: string; policy_key: string }
         const { error: delErr } = await supabase.from('policies').delete().eq('id', d.id).eq('company_id', companyId)
