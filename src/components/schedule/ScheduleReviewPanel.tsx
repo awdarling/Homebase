@@ -519,11 +519,14 @@ export default function ScheduleReviewPanel({
             className="btn btn-secondary btn-sm"
             onClick={phase === 'reviewed' && errors.length > 0 && onApplyFix ? fixIssues : onClose}
             disabled={phase === 'saving' || phase === 'fixing'}
+            title={phase === 'reviewed' && errors.length > 0 && onApplyFix
+              ? 'Let Soteria automatically rearrange the schedule to try to clear the flagged problems. This does NOT save your schedule — you’ll review the result and save it yourself.'
+              : undefined}
           >
             {phase === 'fixing'
               ? 'Fixing…'
               : phase === 'reviewed' && errors.length > 0 && onApplyFix
-                ? 'Fix Issues'
+                ? 'Auto-Fix Issues'
                 : 'Close'}
           </button>
           {phase === 'reviewed' && errors.length > 0 && (

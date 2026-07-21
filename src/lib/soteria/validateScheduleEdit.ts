@@ -166,6 +166,19 @@ function daysBetween(fromDate: string, toDate: string): number {
   const to = new Date(`${toDate}T12:00:00Z`).getTime()
   return Math.floor((to - from) / (24 * 60 * 60 * 1000))
 }
+// CUSTOM-AVAIL-ALIGN — mirror of Aegis custom-availability.ts. Anchor a rotating
+// cycle to the schedule's week-start weekday so the rotation lines up with build
+// weeks instead of flipping mid-week (a cycle_start_date on any other weekday
+// otherwise mis-reads part of every week for this employee).
+function alignToWeekday(date: string, weekAligned: string): string {
+  const target = dayOfWeek(weekAligned)
+  const dow = dayOfWeek(date)
+  const back = (((dow - target) % 7) + 7) % 7
+  if (back === 0) return date
+  const d = new Date(`${date}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() - back)
+  return d.toISOString().slice(0, 10)
+}
 
 // ── custom-availability resolution (mirrors Aegis resolveAvailabilityForWeek) ──
 function isPattern(v: unknown): v is CustomAvailabilityPattern {
@@ -206,7 +219,7 @@ export function resolveEffectiveAvailability(
     if (!custom.cycle_start_date || !custom.cycle_weeks) return fallback
     const weeks = (custom.patterns as unknown[]).every(isWeek) ? (custom.patterns as CustomAvailabilityWeek[]) : null
     if (!weeks) return fallback
-    const diff = daysBetween(custom.cycle_start_date, weekStart)
+    const diff = daysBetween(alignToWeekday(custom.cycle_start_date, weekStart), weekStart)
     if (diff < 0) return fallback
     const weekNumber = (Math.floor(diff / 7) % custom.cycle_weeks) + 1
     const matched = weeks.find(w => w.week === weekNumber)
