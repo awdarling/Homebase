@@ -986,8 +986,9 @@ function UpcomingCard({
                   className="btn btn-primary btn-sm"
                   disabled={changesCount === 0}
                   onClick={onReview}
+                  title="Check your moves against the rules, then save them to the schedule."
                 >
-                  Review Changes ({changesCount})
+                  Review &amp; Save ({changesCount})
                 </button>
               </>
             )}
@@ -1726,8 +1727,9 @@ export default function SchedulePage() {
                   className="btn btn-primary btn-sm"
                   disabled={changesCount === 0}
                   onClick={() => setReviewPanelOpen(true)}
+                  title="Check your moves against the rules, then save them to the schedule."
                 >
-                  Review Changes ({changesCount})
+                  Review &amp; Save ({changesCount})
                 </button>
               </>
             )}
