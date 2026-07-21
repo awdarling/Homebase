@@ -29,8 +29,8 @@ function expect(cond: boolean, msg: string): void {
 const WEEK_START = '2026-06-22' // Monday
 const WED = '2026-06-24' // Wednesday (dow 3)
 
-const emp = (id: string, roles: string[], maxHrs = 40): ValidatorEmployee => ({
-  id, name: id, qualified_roles: roles, max_weekly_hours: maxHrs,
+const emp = (id: string, roles: string[], maxHrs = 40, extra: Partial<ValidatorEmployee> = {}): ValidatorEmployee => ({
+  id, name: id, qualified_roles: roles, max_weekly_hours: maxHrs, ...extra,
 })
 const allWeekAvail = (): ValidatorAvailability[] =>
   [0, 1, 2, 3, 4, 5, 6].map(d => ({ day_of_week: d, start_time: '00:00', end_time: '23:59' }))
@@ -56,13 +56,18 @@ function run(
     customByEmp: opts.customByEmp ?? new Map(),
     timeOff: opts.timeOff ?? [],
     conflicts: opts.conflicts ?? [],
+    maxConsecutiveDays: opts.maxConsecutiveDays,
+    touchedCells: opts.touchedCells,
+    shiftTypes: opts.shiftTypes,
+    shiftRequirements: opts.shiftRequirements,
+    experienceRules: opts.experienceRules,
+    sexCoverage: opts.sexCoverage,
   })
 }
 
 // ── THE BUG: custom availability must block an otherwise-allowed swap ──────────
 {
   const a = emp('A', ['Lifeguard'])
-  // Custom availability: only Mondays 09:00–12:00 this week. A PM Wed shift is impossible.
   const custom: CustomAvailability = {
     id: 'ca-A', employee_id: 'A', company_id: 'c', type: 'date_limited',
     end_date: null, cycle_weeks: null, cycle_start_date: null,
@@ -136,7 +141,7 @@ function run(
     employee_id: 'A', employee_name: 'A', date: WED, shift_name: 'AM', role: 'Headguard',
     start_time: '11:00:00', end_time: '15:30:00', hours: 4.5,
   }
-  const issues = run([am, pmShift('A')], ['A'], [a]) // AM 11–15:30 overlaps PM 13–21
+  const issues = run([am, pmShift('A')], ['A'], [a])
   expect(issues.some(i => i.code === 'double_booking'), 'overlapping same-day shifts are flagged as double-booking')
 }
 {
@@ -146,6 +151,103 @@ function run(
     conflicts: [{ employee_id_1: 'A', employee_id_2: 'B', severity: 'never' }],
   })
   expect(issues.some(i => i.code === 'banned_pair'), 'a never-together pair co-staffed in one cell is flagged')
+}
+
+// ── SOTERIA-SCOPE-1: new deterministic checks ──────────────────────────────────
+
+// consecutive days: 4 in a row, guideline 3 → non-blocking reminder
+{
+  const a = emp('A', ['Lifeguard'])
+  const days = ['2026-06-22', '2026-06-23', '2026-06-24', '2026-06-25'].map(d => pmShift('A', d))
+  const issues = run(days, ['A'], [a], { maxConsecutiveDays: 3 })
+  const c = issues.find(i => i.code === 'consecutive_days')
+  expect(!!c && c.severity === 'warning', 'working more days in a row than the guideline is a (non-blocking) reminder')
+}
+// consecutive days: exactly at the guideline → no reminder
+{
+  const a = emp('A', ['Lifeguard'])
+  const days = ['2026-06-22', '2026-06-23', '2026-06-24'].map(d => pmShift('A', d))
+  const issues = run(days, ['A'], [a], { maxConsecutiveDays: 3 })
+  expect(!issues.some(i => i.code === 'consecutive_days'), 'working exactly the guideline number of days is fine')
+}
+
+// sex coverage: two males on duty, rule needs 1 male + 1 female → warn missing female
+{
+  const m1 = emp('M1', ['Lifeguard'], 40, { sex: 'male' })
+  const m2 = emp('M2', ['Lifeguard'], 40, { sex: 'male' })
+  const issues = run([pmShift('M1'), pmShift('M2')], ['M1', 'M2'], [m1, m2], {
+    touchedCells: new Set(['PM||' + WED]),
+    sexCoverage: { attribute: 'sex', minimums: { male: 1, female: 1 }, population_roles: ['Lifeguard', 'Headguard'] },
+  })
+  const c = issues.find(i => i.code === 'sex_coverage')
+  expect(!!c && c.severity === 'warning', 'an all-male on-duty window trips the 1-male-1-female coverage rule (warning)')
+}
+// sex coverage: one male + one female → satisfied, no warning
+{
+  const m1 = emp('M1', ['Lifeguard'], 40, { sex: 'male' })
+  const f1 = emp('F1', ['Lifeguard'], 40, { sex: 'female' })
+  const issues = run([pmShift('M1'), pmShift('F1')], ['M1', 'F1'], [m1, f1], {
+    touchedCells: new Set(['PM||' + WED]),
+    sexCoverage: { attribute: 'sex', minimums: { male: 1, female: 1 }, population_roles: ['Lifeguard', 'Headguard'] },
+  })
+  expect(!issues.some(i => i.code === 'sex_coverage'), 'a mixed-sex on-duty window satisfies the coverage rule')
+}
+
+// veteran rule: all_veterans shift with a non-veteran → warning
+{
+  const nonVet = emp('N', ['Lifeguard'], 40, { is_veteran: false })
+  const issues = run([pmShift('N')], ['N'], [nonVet], {
+    touchedCells: new Set(['PM||' + WED]),
+    shiftTypes: [{ id: 'st-pm', name: 'PM', start_time: '13:00:00', end_time: '21:00:00', days_active: [0, 1, 2, 3, 4, 5, 6] }],
+    experienceRules: [{ shift_type_id: 'st-pm', days_of_week: null, role: null, mode: 'all_veterans', min_count: null, season_start: null, season_end: null, active: true }],
+  })
+  const c = issues.find(i => i.code === 'veteran_rule')
+  expect(!!c && c.severity === 'warning', 'a non-veteran on a veterans-only shift is flagged (warning)')
+}
+// veteran rule: veteran on the same shift → satisfied
+{
+  const vet = emp('V', ['Lifeguard'], 40, { is_veteran: true })
+  const issues = run([pmShift('V')], ['V'], [vet], {
+    touchedCells: new Set(['PM||' + WED]),
+    shiftTypes: [{ id: 'st-pm', name: 'PM', start_time: '13:00:00', end_time: '21:00:00', days_active: [0, 1, 2, 3, 4, 5, 6] }],
+    experienceRules: [{ shift_type_id: 'st-pm', days_of_week: null, role: null, mode: 'all_veterans', min_count: null, season_start: null, season_end: null, active: true }],
+  })
+  expect(!issues.some(i => i.code === 'veteran_rule'), 'a veteran satisfies a veterans-only shift')
+}
+
+// understaffing: shift needs 2 Lifeguards, only 1 filled → warning
+{
+  const a = emp('A', ['Lifeguard'])
+  const issues = run([pmShift('A')], ['A'], [a], {
+    touchedCells: new Set(['PM||' + WED]),
+    shiftTypes: [{ id: 'st-pm', name: 'PM', start_time: '13:00:00', end_time: '21:00:00', days_active: [0, 1, 2, 3, 4, 5, 6] }],
+    shiftRequirements: [{ shift_type_id: 'st-pm', role: 'Lifeguard', required_count: 2, accepted_roles: ['Lifeguard'] }],
+  })
+  const c = issues.find(i => i.code === 'understaffed')
+  expect(!!c && c.severity === 'warning', 'a shift left short of its required count is flagged (warning)')
+}
+// understaffing: required count met → no warning
+{
+  const a = emp('A', ['Lifeguard'])
+  const b = emp('B', ['Lifeguard'])
+  const issues = run([pmShift('A'), pmShift('B')], ['A'], [a, b], {
+    touchedCells: new Set(['PM||' + WED]),
+    shiftTypes: [{ id: 'st-pm', name: 'PM', start_time: '13:00:00', end_time: '21:00:00', days_active: [0, 1, 2, 3, 4, 5, 6] }],
+    shiftRequirements: [{ shift_type_id: 'st-pm', role: 'Lifeguard', required_count: 2, accepted_roles: ['Lifeguard'] }],
+  })
+  expect(!issues.some(i => i.code === 'understaffed'), 'a shift with its required count filled is not flagged')
+}
+
+// A pre-existing gap the edit did NOT touch is NOT re-surfaced (no noise).
+{
+  const a = emp('A', ['Lifeguard'])
+  const issues = run([pmShift('A', WED)], ['A'], [a], {
+    touchedCells: new Set(['PM||' + WED]),
+    shiftTypes: [{ id: 'st-pm', name: 'PM', start_time: '13:00:00', end_time: '21:00:00', days_active: [0, 1, 2, 3, 4, 5, 6] }],
+    shiftRequirements: [{ shift_type_id: 'st-pm', role: 'Lifeguard', required_count: 1, accepted_roles: ['Lifeguard'] }],
+  })
+  // A different day's cell (Thu) is understaffed in reality but wasn't touched → not checked.
+  expect(!issues.some(i => i.code === 'understaffed'), 'untouched cells are not re-flagged (scoped to the edit)')
 }
 
 if (failures > 0) {
