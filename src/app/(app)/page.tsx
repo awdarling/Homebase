@@ -24,6 +24,7 @@ interface TORequest {
   employee_id?: string
   start_date: string
   end_date: string
+  reason?: string | null
 }
 
 interface Employee {
@@ -33,6 +34,17 @@ interface Employee {
   contact_email: string | null
   contact_phone: string | null
   individual_wage: number | null
+}
+
+interface OutRow {
+  id: string
+  name: string
+  role: string
+  days: number
+  span: string
+  scope: 'full' | 'most' | 'partial' | 'one'
+  scopeLabel: string
+  reason: string
 }
 
 function timeAgo(dateString: string) {
@@ -55,15 +67,37 @@ function isoToday(): string {
   return new Date().toLocaleDateString('en-CA')
 }
 
-function enumerateDates(weekStart: string, weekEnd: string): { iso: string; weekday: string }[] {
-  const out: { iso: string; weekday: string }[] = []
-  const [sy, sm, sd] = weekStart.split('-').map(Number)
-  const [ey, em, ed] = weekEnd.split('-').map(Number)
+function toYMD(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function addDays(d: Date, n: number): Date {
+  const c = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  c.setDate(c.getDate() + n)
+  return c
+}
+
+// Monday=1 / Sunday=0 week window containing `anchor`, honoring the company's
+// week_start_day policy. Out-of-office is a pure date-range question, so this is
+// computed independently of whether a schedule exists for the week.
+function getWeekRange(anchor: Date, weekStartDay: number): { start: string; end: string } {
+  const d = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate())
+  const diff = (d.getDay() - weekStartDay + 7) % 7
+  const start = new Date(d)
+  start.setDate(d.getDate() - diff)
+  const end = new Date(start)
+  end.setDate(start.getDate() + 6)
+  return { start: toYMD(start), end: toYMD(end) }
+}
+
+function enumerateISO(startISO: string, endISO: string): string[] {
+  const out: string[] = []
+  const [sy, sm, sd] = startISO.split('-').map(Number)
+  const [ey, em, ed] = endISO.split('-').map(Number)
   const cur = new Date(sy, sm - 1, sd)
   const last = new Date(ey, em - 1, ed)
   while (cur <= last) {
-    const iso = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`
-    out.push({ iso, weekday: cur.toLocaleDateString('en-US', { weekday: 'short' }) })
+    out.push(toYMD(cur))
     cur.setDate(cur.getDate() + 1)
   }
   return out
@@ -76,7 +110,46 @@ function daysBetween(startISO: string, endISO: string): number {
 }
 
 function formatCurrency(n: number) {
-  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+}
+
+function round1(n: number) {
+  return Math.round(n * 10) / 10
+}
+
+function median(nums: number[]): number {
+  if (nums.length === 0) return 0
+  const s = [...nums].sort((a, b) => a - b)
+  const m = Math.floor(s.length / 2)
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
+}
+
+// Collapse all approved time-off rows overlapping [rs, re] into one row per
+// employee: distinct days off within the window drive the extent label.
+function buildOutRows(reqs: TORequest[], rs: string, re: string): OutRow[] {
+  const byEmp = new Map<string, { id: string; name: string; role: string; days: Set<string>; reason: string; reasonLen: number }>()
+  for (const r of reqs) {
+    if (!(r.start_date <= re && r.end_date >= rs)) continue
+    const key = r.employee?.id ?? r.employee_id ?? r.employee?.name ?? r.id
+    let e = byEmp.get(key)
+    if (!e) {
+      e = { id: key, name: r.employee?.name ?? 'Unknown employee', role: r.employee?.primary_role ?? '—', days: new Set<string>(), reason: r.reason ?? '', reasonLen: 0 }
+      byEmp.set(key, e)
+    }
+    const s = r.start_date < rs ? rs : r.start_date
+    const en = r.end_date > re ? re : r.end_date
+    for (const iso of enumerateISO(s, en)) e.days.add(iso)
+    const len = daysBetween(r.start_date, r.end_date)
+    if (len > e.reasonLen && r.reason) { e.reasonLen = len; e.reason = r.reason }
+  }
+  return Array.from(byEmp.values()).map((e) => {
+    const dayList = Array.from(e.days).sort()
+    const n = dayList.length
+    const span = n > 0 ? `${formatDate(dayList[0])}${n > 1 ? ` – ${formatDate(dayList[n - 1])}` : ''}` : ''
+    const scope: OutRow['scope'] = n >= 7 ? 'full' : n >= 4 ? 'most' : n === 1 ? 'one' : 'partial'
+    const scopeLabel = n >= 7 ? 'Full week' : n >= 4 ? 'Most of week' : n === 1 ? '1 day' : `${n} days`
+    return { id: e.id, name: e.name, role: e.role, days: n, span, scope, scopeLabel, reason: e.reason || '—' }
+  }).sort((a, b) => b.days - a.days || a.name.localeCompare(b.name))
 }
 
 interface ActorStyle {
@@ -95,6 +168,24 @@ const ACTOR_STYLES: Record<string, ActorStyle> = {
   quria_admin: { color: 'var(--accent)',     bg: 'rgba(232, 89, 12, 0.15)',   border: 'var(--accent-border)',      label: 'Quria',   initial: 'Q' },
 }
 
+function roleColor(role: string): React.CSSProperties {
+  if (role === 'Headguard') return { color: '#fbbf24', borderColor: 'rgba(251,191,36,0.3)', background: 'rgba(251,191,36,0.08)' }
+  if (role === 'Manager' || role === 'Assistant Manager') return { color: '#818cf8', borderColor: 'rgba(129,140,248,0.3)', background: 'rgba(129,140,248,0.08)' }
+  return { color: 'var(--text-secondary)', borderColor: 'var(--border-default)', background: 'var(--bg-surface-3)' }
+}
+
+function scopeStyle(scope: OutRow['scope']): React.CSSProperties {
+  if (scope === 'full') return { color: 'var(--status-blocked-text)', borderColor: 'var(--status-blocked-border)', background: 'var(--status-blocked-bg)' }
+  if (scope === 'most') return { color: 'var(--accent)', borderColor: 'var(--accent-border)', background: 'rgba(249,115,22,0.10)' }
+  return { color: 'var(--text-secondary)', borderColor: 'var(--border-default)', background: 'var(--bg-surface-3)' }
+}
+
+function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/)
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+  return (parts[0]?.[0] ?? '?').toUpperCase()
+}
+
 // Simple bar chart component
 function BarChart({ data, maxValue, color = 'var(--accent)', height = 80 }: {
   data: { label: string; value: number }[]
@@ -108,25 +199,16 @@ function BarChart({ data, maxValue, color = 'var(--accent)', height = 80 }: {
     </div>
   )
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height, paddingTop: 8 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {data.map((d, i) => {
         const pct = maxValue > 0 ? (d.value / maxValue) * 100 : 0
         return (
-          <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, height: '100%', justifyContent: 'flex-end' }}>
-            <div style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 600 }}>
-              {d.value > 0 ? d.value : ''}
+          <div key={i} style={{ display: 'grid', gridTemplateColumns: '80px 1fr 48px', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{d.label}</span>
+            <div style={{ height: 10, background: 'var(--bg-surface-3)', borderRadius: 'var(--radius-pill)', overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${Math.max(pct, 2)}%`, background: color, borderRadius: 'var(--radius-pill)' }} />
             </div>
-            <div style={{
-              width: '100%',
-              height: `${Math.max(pct, 2)}%`,
-              background: color,
-              borderRadius: '3px 3px 0 0',
-              opacity: 0.85,
-              minHeight: 3,
-            }} />
-            <div style={{ fontSize: 9, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.2, maxWidth: 40, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {d.label}
-            </div>
+            <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'right', fontFamily: 'var(--font-display)' }}>{d.value}</span>
           </div>
         )
       })}
@@ -169,140 +251,11 @@ function DonutChart({ value, max, color = 'var(--accent)', label }: {
   )
 }
 
-function OutThisWeekCard({
-  outRequests,
-  weekRange,
-  totalActive,
-}: {
-  outRequests: TORequest[]
-  weekRange: { start: string; end: string }
-  totalActive: number
-}) {
-  const distinctOutNames = new Set(outRequests.map((r) => r.employee?.name).filter(Boolean) as string[])
-  const outCount = distinctOutNames.size
-  const outPercent = totalActive > 0 ? (outCount / totalActive) * 100 : 0
-  const overThreshold = outPercent > 25
-
-  return (
-    <div style={{ marginBottom: 20 }}>
-      <div className="section-label">
-        Out This Week — {formatDate(weekRange.start)} – {formatDate(weekRange.end)}
-      </div>
-      <div style={{
-        background: 'var(--bg-surface-1)',
-        border: `1px solid ${overThreshold ? 'rgba(239,68,68,0.35)' : 'var(--border-default)'}`,
-        borderRadius: 'var(--radius-lg)',
-        overflow: 'hidden',
-      }}>
-        {overThreshold && (
-          <div style={{
-            padding: '8px 16px',
-            background: 'rgba(239,68,68,0.06)',
-            borderBottom: '1px solid rgba(239,68,68,0.2)',
-            fontSize: 11,
-            fontWeight: 600,
-            color: '#ef4444',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#ef4444' }} />
-            {outCount} of {totalActive} staff out ({Math.round(outPercent)}%) — coverage at risk
-          </div>
-        )}
-        {outRequests.length === 0 ? (
-          <div style={{ padding: '20px 16px', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
-            No approved time off this week
-          </div>
-        ) : (
-          outRequests.map((r, i) => {
-            const days = daysBetween(r.start_date, r.end_date)
-            return (
-              <div key={r.id} style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                padding: '10px 16px',
-                borderBottom: i < outRequests.length - 1 ? '1px solid var(--border-subtle)' : 'none',
-              }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 }}>
-                    {r.employee?.name ?? 'Unknown employee'}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                    {r.employee?.primary_role ?? '—'}
-                  </div>
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                  {formatDate(r.start_date)}
-                  {r.start_date !== r.end_date ? ` – ${formatDate(r.end_date)}` : ''}
-                </div>
-                <div style={{
-                  fontSize: 10,
-                  fontWeight: 600,
-                  color: 'var(--text-muted)',
-                  padding: '2px 8px',
-                  borderRadius: 'var(--radius-pill)',
-                  background: 'var(--bg-surface-3)',
-                  border: '1px solid var(--border-subtle)',
-                  whiteSpace: 'nowrap',
-                }}>
-                  {days} {days === 1 ? 'day' : 'days'}
-                </div>
-              </div>
-            )
-          })
-        )}
-      </div>
-    </div>
-  )
-}
-
-function ContributorsCard({
-  title,
-  rows,
-  color,
-  empty,
-}: {
-  title: string
-  rows: { name: string; hours: number }[]
-  color: string
-  empty: string
-}) {
-  const maxHrs = rows.reduce((m, r) => Math.max(m, r.hours), 0)
-  return (
-    <div>
-      <div className="section-label">{title}</div>
-      <div style={{
-        background: 'var(--bg-surface-1)',
-        border: '1px solid var(--border-default)',
-        borderRadius: 'var(--radius-lg)',
-        overflow: 'hidden',
-      }}>
-        {rows.length === 0 ? (
-          <div style={{ padding: '20px 16px', textAlign: 'center' }}>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{empty}</div>
-          </div>
-        ) : rows.map((c, i) => {
-          const pct = maxHrs > 0 ? (c.hours / maxHrs) * 100 : 0
-          return (
-            <div key={i} style={{
-              padding: '10px 16px',
-              borderBottom: i < rows.length - 1 ? '1px solid var(--border-subtle)' : 'none',
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <span style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 }}>{c.name}</span>
-                <span style={{ fontSize: 12, color, fontWeight: 600 }}>{c.hours}h</span>
-              </div>
-              <div style={{ height: 3, background: 'var(--bg-surface-3)', borderRadius: 2 }}>
-                <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 2 }} />
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
+const CARD: React.CSSProperties = {
+  background: 'var(--bg-surface-1)',
+  border: '1px solid var(--border-default)',
+  borderRadius: 'var(--radius-lg)',
+  overflow: 'hidden',
 }
 
 export default function HomePage() {
@@ -314,9 +267,11 @@ export default function HomePage() {
   const [activity, setActivity] = useState<ActivityEntry[]>([])
   const [userAvatarByName, setUserAvatarByName] = useState<Record<string, string>>({})
   const [pendingTO, setPendingTO] = useState<TORequest[]>([])
-  const [outThisWeek, setOutThisWeek] = useState<TORequest[]>([])
+  const [approvedTO, setApprovedTO] = useState<TORequest[]>([])
   const [currentSchedule, setCurrentSchedule] = useState<Schedule | null>(null)
   const [employees, setEmployees] = useState<Employee[]>([])
+  const [weekStartDay, setWeekStartDay] = useState<number>(1)
+  const [outWeek, setOutWeek] = useState<'this' | 'next'>('this')
   const [loading, setLoading] = useState(true)
   const [missingEmail, setMissingEmail] = useState(0)
   const [missingPhone, setMissingPhone] = useState(0)
@@ -330,8 +285,23 @@ export default function HomePage() {
 
     const today = isoToday()
 
-    // Phase 1: schedule (by date range) + everything that doesn't depend on it.
-    const [schedRes, actRes, toRes, empRes, swapRes] = await Promise.all([
+    // week_start_day drives the this-week / next-week windows for the Out toggle.
+    const polRes = await supabase
+      .from('policies')
+      .select('policy_value, policy_value_json')
+      .eq('company_id', COMPANY_ID)
+      .in('policy_key', ['week_start_day', 'first_day_of_week'])
+      .limit(1)
+      .maybeSingle()
+    const rawWSD = JSON.stringify(polRes.data?.policy_value_json ?? polRes.data?.policy_value ?? '').toLowerCase()
+    const wsd = rawWSD.includes('sun') ? 0 : 1
+    setWeekStartDay(wsd)
+
+    const now = new Date()
+    const thisRange = getWeekRange(now, wsd)
+    const nextRange = getWeekRange(addDays(now, 7), wsd)
+
+    const [schedRes, actRes, toRes, empRes, swapRes, apprRes] = await Promise.all([
       supabase.from('schedules').select('*').eq('company_id', COMPANY_ID).is('deleted_at', null)
         .lte('week_start', today).gte('week_end', today)
         .order('generated_at', { ascending: false }).limit(1).maybeSingle(),
@@ -339,10 +309,11 @@ export default function HomePage() {
       supabase.from('time_off_requests').select('*, employee:employees(name, primary_role)').eq('company_id', COMPANY_ID).eq('status', 'pending').order('requested_at', { ascending: false }),
       supabase.from('employees').select('id, name, primary_role, contact_email, contact_phone, individual_wage').eq('company_id', COMPANY_ID).eq('active', true),
       supabase.from('swap_requests').select('id', { count: 'exact' }).eq('company_id', COMPANY_ID).eq('status', 'pending_manager'),
+      supabase.from('time_off_requests').select('*, employee:employees(id, name, primary_role)').eq('company_id', COMPANY_ID).eq('status', 'approved')
+        .lte('start_date', nextRange.end).gte('end_date', thisRange.start),
     ])
 
-    const schedule = (schedRes.data as Schedule | null) ?? null
-    setCurrentSchedule(schedule)
+    setCurrentSchedule((schedRes.data as Schedule | null) ?? null)
 
     if (actRes.data) {
       const cleaned = (actRes.data as ActivityEntry[]).filter(e =>
@@ -375,6 +346,7 @@ export default function HomePage() {
       }
     }
     if (toRes.data) setPendingTO(toRes.data as TORequest[])
+    if (apprRes.data) setApprovedTO(apprRes.data as TORequest[])
     if (empRes.data) {
       setEmployees(empRes.data)
       setMissingEmail(empRes.data.filter((e) => !e.contact_email).length)
@@ -382,29 +354,27 @@ export default function HomePage() {
     }
     if (swapRes.count !== null) setPendingSwaps(swapRes.count)
 
-    // Phase 2: out-this-week uses the schedule's actual week range, not an
-    // independently computed one. Skip if there's no current schedule.
-    if (schedule) {
-      const outRes = await supabase
-        .from('time_off_requests')
-        .select('*, employee:employees(id, name, primary_role)')
-        .eq('company_id', COMPANY_ID)
-        .eq('status', 'approved')
-        .lte('start_date', schedule.week_end)
-        .gte('end_date', schedule.week_start)
-      setOutThisWeek((outRes.data ?? []) as TORequest[])
-    } else {
-      setOutThisWeek([])
-    }
-
     setLoading(false)
   }
 
-  // ── Schedule-derived values ─────────────────────────────────────────────
-  // Everything below pulls from the current schedule record. If there is no
-  // current schedule, fall back to neutral/empty values — never compute
-  // "this week" independently of what the database says.
+  // ── Week windows for the Out toggle (schedule-independent) ────────────────
+  const now = new Date()
+  const thisRange = getWeekRange(now, weekStartDay)
+  const nextRange = getWeekRange(addDays(now, 7), weekStartDay)
+  const selRange = outWeek === 'this' ? thisRange : nextRange
+  const outRows = buildOutRows(approvedTO, selRange.start, selRange.end)
+  const outNextCount = buildOutRows(approvedTO, nextRange.start, nextRange.end).length
+  const employeeCount = employees.length
+  const outPercent = employeeCount > 0 ? (outRows.length / employeeCount) * 100 : 0
+  const roleTally = outRows.reduce<Record<string, number>>((acc, r) => { acc[r.role] = (acc[r.role] ?? 0) + 1; return acc }, {})
+  const roleBreak = Object.entries(roleTally).sort(([, a], [, b]) => b - a).map(([role, n]) => `${n} ${role}${n === 1 ? '' : 's'}`)
 
+  // employee ids out THIS week — used to separate "on leave" from "unscheduled & free"
+  const outThisIds = new Set(
+    approvedTO.filter(r => r.employee?.id && r.start_date <= thisRange.end && r.end_date >= thisRange.start).map(r => r.employee!.id as string),
+  )
+
+  // ── Schedule-derived values (this week) ───────────────────────────────────
   const assignments = currentSchedule?.data?.assignments ?? []
   const gapList = currentSchedule?.data?.gaps ?? []
   const unfilledGaps = gapList.filter(g => g.filled_count < g.required_count)
@@ -412,13 +382,7 @@ export default function HomePage() {
   const unfilledSlotsTotal = unfilledGaps.reduce((sum, g) => sum + (g.required_count - g.filled_count), 0)
   const filledSlotsTotal = assignments.length
 
-  // Compute wages live from current assignments + employees + wage_rates,
-  // rather than reading the snapshot in staffing_report. The snapshot goes
-  // stale on any mid-week edit; the hook is authoritative.
-  const { totals: wageTotals, loading: wagesLoading } = useWageBreakdown({
-    assignments,
-    companyId: COMPANY_ID,
-  })
+  const { totals: wageTotals, loading: wagesLoading } = useWageBreakdown({ assignments, companyId: COMPANY_ID })
   const estimatedWages = currentSchedule && !wagesLoading ? wageTotals.estimated_pay : null
   const coverageRate = currentSchedule?.staffing_report?.coverage_rate
     ?? (currentSchedule
@@ -427,79 +391,76 @@ export default function HomePage() {
         : 100)
       : 0)
 
-  // Hours by role from assignments (uses canonical `hours` field).
+  // Hours by role.
   const hoursByRole: Record<string, number> = {}
   for (const a of assignments) hoursByRole[a.role] = (hoursByRole[a.role] ?? 0) + (a.hours ?? 0)
-
   const roleChartData = Object.entries(hoursByRole)
     .sort(([, a], [, b]) => b - a)
     .slice(0, 6)
     .map(([label, value]) => ({ label, value: Math.round(value) }))
   const maxRoleHours = Math.max(...roleChartData.map((d) => d.value), 1)
 
-  // Gap chart — labels come from the schedule's actual week dates, not from
-  // an independently computed Sun-Sat range.
-  const weekDays = currentSchedule
-    ? enumerateDates(currentSchedule.week_start, currentSchedule.week_end)
-    : []
-  const unfilledByDate: Record<string, number> = {}
-  for (const g of unfilledGaps) {
-    unfilledByDate[g.date] = (unfilledByDate[g.date] ?? 0) + (g.required_count - g.filled_count)
-  }
-  const gapChartData = weekDays.map(d => ({ label: d.weekday, value: unfilledByDate[d.iso] ?? 0 }))
+  // ── Hours Fairness (this week) ────────────────────────────────────────────
+  const hoursById: Record<string, number> = {}
+  for (const a of assignments) hoursById[a.employee_id] = (hoursById[a.employee_id] ?? 0) + (a.hours ?? 0)
+  const scheduledVals = employees.map(e => hoursById[e.id] ?? 0).filter(h => h > 0)
+  const maxHrs = scheduledVals.length ? Math.max(...scheduledVals) : 0
+  const minHrs = scheduledVals.length ? Math.min(...scheduledVals) : 0
+  const spread = round1(maxHrs - minHrs)
+  const med = median(scheduledVals)
+  const topVsMedian = med > 0 ? Math.round((maxHrs / med) * 10) / 10 : 0
 
-  // Top / bottom contributors come straight from staffing_report. If absent,
-  // compute from assignments.
+  const overtimeRisk = currentSchedule?.staffing_report?.overtime_risk ?? []
+  const otByName = new Map(overtimeRisk.map(o => [o.name, o]))
+
   const reportTop = currentSchedule?.staffing_report?.top_contributors
-  const reportBottom = currentSchedule?.staffing_report?.bottom_contributors
-  const outNames = new Set(outThisWeek.map((r) => r.employee?.name).filter(Boolean) as string[])
-
-  function computedContributorsFromAssignments() {
-    const hoursByEmployee: Record<string, number> = {}
-    for (const a of assignments) {
-      hoursByEmployee[a.employee_name] = (hoursByEmployee[a.employee_name] ?? 0) + (a.hours ?? 0)
-    }
-    return employees
-      .filter((e) => !outNames.has(e.name))
-      .map((e) => ({ name: e.name, hours: Math.round((hoursByEmployee[e.name] ?? 0) * 10) / 10 }))
-  }
-
+  const computedTop = employees
+    .map(e => ({ name: e.name, hours: round1(hoursById[e.id] ?? 0) }))
+    .filter(x => !outThisIds.has(employees.find(e => e.name === x.name)?.id ?? ''))
+    .sort((a, b) => b.hours - a.hours)
   const topContributors: { name: string; hours: number }[] = !currentSchedule
     ? []
-    : reportTop
-      ? reportTop.slice(0, 3).map(c => ({ name: c.name, hours: Math.round(c.hours * 10) / 10 }))
-      : [...computedContributorsFromAssignments()].sort((a, b) => b.hours - a.hours).slice(0, 3)
+    : reportTop && reportTop.length
+      ? reportTop.slice(0, 3).map(c => ({ name: c.name, hours: round1(c.hours) }))
+      : computedTop.slice(0, 3)
 
-  const bottomContributors: { name: string; hours: number }[] = !currentSchedule
-    ? []
-    : reportBottom
-      ? reportBottom.slice(0, 3).map(c => ({ name: c.name, hours: Math.round(c.hours * 10) / 10 }))
-      : [...computedContributorsFromAssignments()].sort((a, b) => a.hours - b.hours).slice(0, 3)
+  const isTest = (n: string) => /test/i.test(n)
+  const unscheduledAvail = currentSchedule
+    ? employees.filter(e => (hoursById[e.id] ?? 0) === 0 && !outThisIds.has(e.id) && !isTest(e.name))
+    : []
+  const onLeaveZero = currentSchedule
+    ? employees.filter(e => (hoursById[e.id] ?? 0) === 0 && outThisIds.has(e.id) && !isTest(e.name))
+    : []
 
   const pendingCount = pendingTO.length
-  const employeeCount = employees.length
 
-  // Warnings
+  // ── Warnings ──────────────────────────────────────────────────────────────
   const warnings: { label: string; desc: string; action: string; path: string; severity: 'high' | 'medium' | 'low' }[] = []
   if (pendingCount > 0) warnings.push({ label: `${pendingCount} pending time-off request${pendingCount > 1 ? 's' : ''}`, desc: 'Awaiting your decision', action: 'Review', path: '/data', severity: 'high' })
   if (pendingSwaps > 0) warnings.push({ label: `${pendingSwaps} swap${pendingSwaps > 1 ? 's' : ''} awaiting approval`, desc: 'Employees are waiting', action: 'Review', path: '/data', severity: 'high' })
+  if (unscheduledAvail.length > 0) warnings.push({
+    label: unscheduledAvail.length === 1
+      ? `${unscheduledAvail[0].name} available but scheduled 0 hours`
+      : `${unscheduledAvail.length} available staff scheduled 0 hours`,
+    desc: unscheduledAvail.length === 1 ? `${unscheduledAvail[0].primary_role}, no time off — possible eligibility miss` : 'Not on leave — possible eligibility miss',
+    action: 'Review', path: '/schedule', severity: 'high',
+  })
+  const topOT = overtimeRisk.filter(o => o.max_hours > 0 && o.hours / o.max_hours >= 0.8).sort((a, b) => (b.hours / b.max_hours) - (a.hours / a.max_hours))[0]
+  if (topOT) warnings.push({ label: `${topOT.name} at ${round1(topOT.hours)}h — ${Math.round((topOT.hours / topOT.max_hours) * 100)}% of cap`, desc: 'Overtime risk this week', action: 'View', path: '/schedule', severity: 'medium' })
   if (unfilledGapsCount > 0) warnings.push({ label: `${unfilledGapsCount} schedule gap${unfilledGapsCount > 1 ? 's' : ''}`, desc: 'Unfilled shifts this week', action: 'View Schedule', path: '/schedule', severity: 'medium' })
+  if (outNextCount >= 8) warnings.push({ label: `${outNextCount} staff out next week`, desc: 'Plan coverage ahead — check the Next Week view', action: 'Next Week', path: '/schedule', severity: 'medium' })
   if (missingEmail > 0) warnings.push({ label: `${missingEmail} employee${missingEmail > 1 ? 's' : ''} missing email`, desc: 'Aegis cannot distribute schedules to them', action: 'Fix in Data', path: '/data', severity: 'medium' })
   if (missingPhone > 0) warnings.push({ label: `${missingPhone} employee${missingPhone > 1 ? 's' : ''} missing phone`, desc: 'Aegis cannot send SMS notifications', action: 'Fix in Data', path: '/data', severity: 'low' })
   if (!currentSchedule) warnings.push({ label: 'No schedule yet', desc: 'Email or text Aegis to build this week\'s schedule', action: 'View Schedule', path: '/schedule', severity: 'low' })
 
-  // System status — reflects the current schedule's state, not the warning mix.
+  // System status.
   let statusLabel: string
   let statusClass: string
   let statusStyle: React.CSSProperties | undefined
   if (!currentSchedule) {
     statusLabel = 'No Schedule'
     statusClass = 'badge'
-    statusStyle = {
-      background: 'var(--bg-surface-3)',
-      color: 'var(--text-muted)',
-      border: '1px solid var(--border-default)',
-    }
+    statusStyle = { background: 'var(--bg-surface-3)', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }
   } else if ((currentSchedule.status === 'published' || currentSchedule.status === 'approved') && unfilledGapsCount > 0) {
     statusLabel = 'Coverage Gap'
     statusClass = 'badge badge-blocked'
@@ -507,7 +468,6 @@ export default function HomePage() {
     statusLabel = 'Ready'
     statusClass = 'badge badge-ready'
   } else {
-    // status === 'draft'
     statusLabel = 'Awaiting Review'
     statusClass = 'badge badge-review'
   }
@@ -518,29 +478,37 @@ export default function HomePage() {
     </div>
   )
 
+  const labelStyle: React.CSSProperties = { fontSize: 10, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 9 }
+
   return (
     <div className="page-content">
       <div className="page-header">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
           <div>
             <div className="page-title">Operations Home</div>
-            <div className="page-subtitle">Current system state and this week's schedule intelligence</div>
+            <div className="page-subtitle">{company?.name ? `${company.name} — ` : ''}live system state &amp; scheduling intelligence</div>
           </div>
-          <span className={statusClass} style={statusStyle}>
-            <span className="badge-dot" />
-            {statusLabel}
-          </span>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+            <span className={statusClass} style={statusStyle}>
+              <span className="badge-dot" />
+              {statusLabel}
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+              <img src="/aegis-icon.jpg" alt="Aegis" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover' }} />
+              {currentSchedule ? `Aegis is managing this week · updated ${timeAgo(currentSchedule.generated_at)}` : 'Aegis is standing by'}
+            </div>
+          </div>
         </div>
       </div>
 
       {/* ── Stat cards ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, marginBottom: 20 }}>
         {[
-          { label: 'Active Employees', value: String(employeeCount), sub: 'on record', accent: false },
-          { label: 'Est. Labor This Week', value: estimatedWages !== null ? formatCurrency(estimatedWages) : '—', sub: currentSchedule ? 'from current schedule' : 'no schedule yet', accent: false },
-          { label: 'Pending Time-Off', value: String(pendingCount), sub: pendingCount > 0 ? 'awaiting decision' : 'all clear', accent: pendingCount > 0 },
-          { label: 'Schedule Gaps', value: currentSchedule ? String(unfilledGapsCount) : '—', sub: !currentSchedule ? 'no schedule' : unfilledGapsCount > 0 ? 'unfilled shifts' : 'fully covered', accent: unfilledGapsCount > 0 },
-          { label: 'Pending Swaps', value: String(pendingSwaps), sub: pendingSwaps > 0 ? 'need approval' : 'none pending', accent: pendingSwaps > 0 },
+          { label: 'Active Employees', value: String(employeeCount), sub: 'on record', accent: false, small: false },
+          { label: 'Est. Labor · This Week', value: estimatedWages !== null ? formatCurrency(estimatedWages) : '—', sub: currentSchedule ? 'pretax · planned' : 'no schedule yet', accent: false, small: true },
+          { label: 'Pending Time-Off', value: String(pendingCount), sub: pendingCount > 0 ? 'awaiting decision' : 'all clear', accent: pendingCount > 0, small: false },
+          { label: 'Schedule Gaps', value: currentSchedule ? String(unfilledGapsCount) : '—', sub: !currentSchedule ? 'no schedule' : unfilledGapsCount > 0 ? 'unfilled shifts' : 'fully covered', accent: unfilledGapsCount > 0, small: false },
+          { label: 'Pending Swaps', value: String(pendingSwaps), sub: pendingSwaps > 0 ? 'need approval' : 'none pending', accent: pendingSwaps > 0, small: false },
         ].map((stat) => (
           <div key={stat.label} style={{
             background: 'var(--bg-surface-1)',
@@ -551,7 +519,7 @@ export default function HomePage() {
             <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>
               {stat.label}
             </div>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: stat.label === 'Est. Labor This Week' ? 20 : 26, fontWeight: 800, color: stat.accent ? 'var(--accent)' : 'var(--text-primary)', lineHeight: 1, marginBottom: 5 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: stat.small ? 20 : 26, fontWeight: 800, color: stat.accent ? 'var(--accent)' : 'var(--text-primary)', lineHeight: 1, marginBottom: 5 }}>
               {stat.value}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{stat.sub}</div>
@@ -559,250 +527,247 @@ export default function HomePage() {
         ))}
       </div>
 
-      {/* ── Warnings + Coverage row ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+      {/* ── Who's Out (toggle) + Coverage/Activity ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14, marginBottom: 20, alignItems: 'start' }}>
+
+        {/* Who's Out */}
+        <div style={CARD}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border-subtle)' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15 }}>Who&apos;s Out</span>
+              <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{formatDate(selRange.start)} – {formatDate(selRange.end)}</span>
+            </div>
+            <div style={{ display: 'inline-flex', background: 'var(--bg-surface-3)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-pill)', padding: 3 }}>
+              {(['this', 'next'] as const).map((w) => (
+                <button
+                  key={w}
+                  onClick={() => setOutWeek(w)}
+                  style={{
+                    fontFamily: 'var(--font-body)', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                    border: 'none', padding: '6px 15px', borderRadius: 'var(--radius-pill)',
+                    background: outWeek === w ? 'var(--accent)' : 'transparent',
+                    color: outWeek === w ? '#0d0d0d' : 'var(--text-secondary)',
+                  }}
+                >
+                  {w === 'this' ? 'This Week' : 'Next Week'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '12px 16px', background: 'var(--bg-surface-2)', borderBottom: '1px solid var(--border-subtle)', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
+              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22 }}>{outRows.length}</span>
+              <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>of {employeeCount} staff out</span>
+            </div>
+            <span style={{
+              fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 'var(--radius-pill)',
+              color: outPercent > 25 ? 'var(--status-blocked-text)' : 'var(--accent)',
+              background: outPercent > 25 ? 'var(--status-blocked-bg)' : 'var(--accent-dim)',
+              border: `1px solid ${outPercent > 25 ? 'var(--status-blocked-border)' : 'var(--accent-border)'}`,
+            }}>
+              {Math.round(outPercent)}% out
+            </span>
+            <div style={{ display: 'flex', gap: 8, marginLeft: 'auto', flexWrap: 'wrap' }}>
+              {roleBreak.map((rb, i) => (
+                <span key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', background: 'var(--bg-surface-3)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-pill)', padding: '3px 10px' }}>{rb} out</span>
+              ))}
+            </div>
+          </div>
+
+          {outRows.length === 0 ? (
+            <div style={{ padding: '28px 16px', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+              No approved time off {outWeek === 'this' ? 'this week' : 'next week'}
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Employee', 'Role', 'Dates off', 'Extent', 'Reason'].map((h) => (
+                    <th key={h} style={{ textAlign: 'left', fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600, padding: '9px 16px', borderBottom: '1px solid var(--border-subtle)' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {outRows.map((r, i) => (
+                  <tr key={r.id}>
+                    <td style={{ padding: '10px 16px', borderBottom: i < outRows.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--bg-surface-3)', border: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11, color: 'var(--text-secondary)', flexShrink: 0 }}>{initialsOf(r.name)}</span>
+                        <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{r.name}</span>
+                      </div>
+                    </td>
+                    <td style={{ padding: '10px 16px', borderBottom: i < outRows.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
+                      <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 'var(--radius-pill)', border: '1px solid', whiteSpace: 'nowrap', ...roleColor(r.role) }}>{r.role}</span>
+                    </td>
+                    <td style={{ padding: '10px 16px', borderBottom: i < outRows.length - 1 ? '1px solid var(--border-subtle)' : 'none', fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{r.span}</td>
+                    <td style={{ padding: '10px 16px', borderBottom: i < outRows.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
+                      <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 'var(--radius-pill)', border: '1px solid', whiteSpace: 'nowrap', ...scopeStyle(r.scope) }}>{r.scopeLabel}</span>
+                    </td>
+                    <td style={{ padding: '10px 16px', borderBottom: i < outRows.length - 1 ? '1px solid var(--border-subtle)' : 'none', fontSize: 12, color: 'var(--text-muted)' }}>{r.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Side: coverage + activity */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ ...CARD, padding: '18px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+            <div style={{ ...labelStyle, alignSelf: 'flex-start', marginBottom: 0 }}>Coverage · This Week</div>
+            <DonutChart
+              value={coverageRate}
+              max={100}
+              color={coverageRate >= 90 ? 'var(--status-ready-text)' : coverageRate >= 70 ? 'var(--accent)' : 'var(--status-blocked-text)'}
+              label="covered"
+            />
+            <div style={{ width: '100%' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)', padding: '5px 0', borderTop: '1px solid var(--border-subtle)' }}>
+                <span>Filled slots</span><span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{filledSlotsTotal}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)', padding: '5px 0', borderTop: '1px solid var(--border-subtle)' }}>
+                <span>Open gaps</span><span style={{ color: unfilledSlotsTotal > 0 ? 'var(--status-blocked-text)' : 'var(--text-muted)', fontWeight: 500 }}>{unfilledSlotsTotal}</span>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div style={labelStyle}>Recent Activity</div>
+            <div style={CARD}>
+              {activity.length === 0 ? (
+                <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>No activity yet</div>
+              ) : activity.map((item, i) => {
+                const style = ACTOR_STYLES[item.actor] ?? ACTOR_STYLES.system
+                const iconUrl = item.actor === 'aegis'
+                  ? '/aegis-icon.jpg'
+                  : item.actor === 'soteria' || item.actor === 'system'
+                    ? '/soteria-icon.png'
+                    : (item.actor === 'manager' || item.actor === 'quria_admin')
+                      ? (item.actor_avatar_url || userAvatarByName[item.actor_name || ''] || null)
+                      : null
+                const displayLabel = item.actor_name && (item.actor === 'manager' || item.actor === 'quria_admin') ? item.actor_name : style.label
+                const initial = (item.actor === 'aegis' || item.actor === 'soteria' || item.actor === 'system')
+                  ? style.initial
+                  : (item.actor_name ? initialsOf(item.actor_name) : style.initial)
+                return (
+                  <div key={item.id} style={{ display: 'flex', gap: 11, padding: '11px 16px', borderBottom: i < activity.length - 1 ? '1px solid var(--border-subtle)' : 'none', alignItems: 'flex-start' }}>
+                    <div style={{ width: 24, height: 24, borderRadius: '50%', background: iconUrl ? 'transparent' : style.bg, border: `1px solid ${style.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, fontFamily: 'var(--font-display)', color: style.color, flexShrink: 0, overflow: 'hidden' }}>
+                      {iconUrl ? <img src={iconUrl} alt={style.label} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : initial}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{item.summary}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3, display: 'flex', gap: 6 }}>
+                        <span style={{ color: style.color, textTransform: 'uppercase', letterSpacing: '0.1em' }}>{displayLabel}</span>
+                        <span>·</span>
+                        <span>{timeAgo(item.created_at)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Bottom: Warnings · Hours Fairness · Hours by Role ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, alignItems: 'start' }}>
 
         {/* Warnings */}
-        <div style={{ gridColumn: '1 / 3' }}>
-          <div className="section-label">Warnings & Actions</div>
-          <div style={{
-            background: 'var(--bg-surface-1)',
-            border: '1px solid var(--border-default)',
-            borderRadius: 'var(--radius-lg)',
-            overflow: 'hidden',
-          }}>
+        <div>
+          <div style={labelStyle}>Warnings &amp; Actions</div>
+          <div style={CARD}>
             {warnings.length === 0 ? (
               <div style={{ padding: '20px 16px', textAlign: 'center' }}>
                 <div style={{ fontSize: 13, color: 'var(--status-ready-text)', fontWeight: 500 }}>✓ Nothing requires attention</div>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>All systems clear</div>
               </div>
             ) : warnings.map((w, i) => {
-              const dotColor = w.severity === 'high'
-                ? 'var(--status-blocked-text)'
-                : w.severity === 'medium'
-                  ? 'var(--accent)'
-                  : 'var(--text-muted)'
+              const dotColor = w.severity === 'high' ? 'var(--status-blocked-text)' : w.severity === 'medium' ? 'var(--accent)' : 'var(--text-muted)'
               return (
-                <div key={i} style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '12px 16px',
-                  borderBottom: i < warnings.length - 1 ? '1px solid var(--border-subtle)' : 'none',
-                }}>
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: i < warnings.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
                   <div style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 }}>{w.label}</div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{w.desc}</div>
                   </div>
-                  <button
-                    onClick={() => router.push(w.path)}
-                    className="btn btn-secondary btn-sm"
-                    style={{ fontSize: 11, padding: '4px 10px', flexShrink: 0 }}
-                  >
-                    {w.action}
-                  </button>
+                  <button onClick={() => router.push(w.path)} className="btn btn-secondary btn-sm" style={{ fontSize: 11, padding: '4px 10px', flexShrink: 0 }}>{w.action}</button>
                 </div>
               )
             })}
           </div>
         </div>
 
-        {/* Coverage donut */}
+        {/* Hours Fairness */}
         <div>
-          <div className="section-label">Coverage Rate</div>
-          <div style={{
-            background: 'var(--bg-surface-1)',
-            border: '1px solid var(--border-default)',
-            borderRadius: 'var(--radius-lg)',
-            padding: '20px 16px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 16,
-          }}>
-            <DonutChart
-              value={coverageRate}
-              max={100}
-              color={coverageRate >= 90 ? 'var(--status-ready-text)' : coverageRate >= 70 ? 'var(--accent)' : 'var(--status-blocked-text)'}
-              label="this week"
-            />
-            <div style={{ width: '100%' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
-                <span>Filled slots</span>
-                <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{filledSlotsTotal}</span>
+          <div style={labelStyle}>Hours Fairness</div>
+          <div style={CARD}>
+            <div style={{ padding: '14px 16px 12px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', gap: 16 }}>
+              <div>
+                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 20, color: 'var(--accent)' }}>{spread}h</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 2 }}>spread</div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)' }}>
-                <span>Open gaps</span>
-                <span style={{ color: unfilledSlotsTotal > 0 ? 'var(--status-blocked-text)' : 'var(--text-muted)', fontWeight: 500 }}>{unfilledSlotsTotal}</span>
+              <div>
+                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 20 }}>{topVsMedian ? `${topVsMedian}×` : '—'}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 2 }}>top vs median</div>
+              </div>
+              <div>
+                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 20, color: unscheduledAvail.length > 0 ? 'var(--status-blocked-text)' : 'var(--text-primary)' }}>{unscheduledAvail.length}</div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 2 }}>free &amp; unscheduled</div>
               </div>
             </div>
+            <div style={{ padding: '6px 0' }}>
+              {!currentSchedule ? (
+                <div style={{ padding: '20px 16px', textAlign: 'center', fontSize: 11, color: 'var(--text-muted)' }}>Ask Aegis to build this week&apos;s schedule</div>
+              ) : (
+                <>
+                  {topContributors.map((c, i) => {
+                    const ot = otByName.get(c.name)
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px' }}>
+                        <span style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--bg-surface-3)', border: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11, color: 'var(--text-secondary)', flexShrink: 0 }}>{initialsOf(c.name)}</span>
+                        <span style={{ flex: 1, fontSize: 13, color: 'var(--text-primary)' }}>
+                          {c.name}
+                          {ot && ot.max_hours > 0 && (
+                            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--accent)', border: '1px solid var(--accent-border)', borderRadius: 'var(--radius-pill)', padding: '1px 6px', marginLeft: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>OT {Math.round((ot.hours / ot.max_hours) * 100)}%</span>
+                          )}
+                        </span>
+                        <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: i === 0 ? 'var(--accent)' : 'var(--text-primary)' }}>{c.hours}h</span>
+                      </div>
+                    )
+                  })}
+                  {unscheduledAvail.slice(0, 2).map((e) => (
+                    <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 16px', background: 'var(--status-blocked-bg)', borderTop: '1px solid var(--status-blocked-border)', borderBottom: '1px solid var(--status-blocked-border)' }}>
+                      <span style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--bg-surface-3)', border: '1px solid var(--status-blocked-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11, color: 'var(--status-blocked-text)', flexShrink: 0 }}>{initialsOf(e.name)}</span>
+                      <span style={{ flex: 1, fontSize: 13, color: 'var(--status-blocked-text)', fontWeight: 600 }}>
+                        {e.name}
+                        <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--status-blocked-text)', border: '1px solid var(--status-blocked-border)', borderRadius: 'var(--radius-pill)', padding: '1px 6px', marginLeft: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>free · 0h</span>
+                      </span>
+                      <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: 'var(--status-blocked-text)' }}>0.0h</span>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+            {currentSchedule && onLeaveZero.length > 0 && (
+              <div style={{ padding: '10px 16px', fontSize: 11, color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-surface-2)' }}>
+                {onLeaveZero.slice(0, 2).map(e => e.name).join(' & ')}{onLeaveZero.length > 2 ? ` +${onLeaveZero.length - 2}` : ''} also at 0h — on approved leave, excluded from the flag.
+              </div>
+            )}
           </div>
         </div>
-      </div>
 
-      {/* ── Charts row ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
-
-        {/* Hours by role */}
+        {/* Hours by Role */}
         <div>
-          <div className="section-label">Hours by Role This Week</div>
-          <div style={{
-            background: 'var(--bg-surface-1)',
-            border: '1px solid var(--border-default)',
-            borderRadius: 'var(--radius-lg)',
-            padding: '16px',
-          }}>
-            <BarChart
-              data={roleChartData}
-              maxValue={maxRoleHours}
-              color="var(--accent)"
-              height={100}
-            />
+          <div style={labelStyle}>Hours by Role <span style={{ color: 'var(--text-disabled)', letterSpacing: '0.04em', fontWeight: 500, textTransform: 'none' }}>· this week</span></div>
+          <div style={{ ...CARD, padding: 16 }}>
+            <BarChart data={roleChartData} maxValue={maxRoleHours} color="var(--accent)" />
             {roleChartData.length === 0 && (
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', paddingBottom: 8 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', paddingTop: 8 }}>
                 {currentSchedule ? 'No schedule this week' : "Ask Aegis to build this week's schedule"}
               </div>
             )}
-          </div>
-        </div>
-
-        {/* Gaps by day */}
-        <div>
-          <div className="section-label">Schedule Gaps by Day</div>
-          <div style={{
-            background: 'var(--bg-surface-1)',
-            border: '1px solid var(--border-default)',
-            borderRadius: 'var(--radius-lg)',
-            padding: '16px',
-          }}>
-            <BarChart
-              data={gapChartData}
-              maxValue={Math.max(...gapChartData.map((d) => d.value), 1)}
-              color="var(--status-blocked-text)"
-              height={100}
-            />
-            {unfilledGapsCount === 0 && (
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', paddingBottom: 8 }}>
-                {currentSchedule ? 'No gaps this week' : "Ask Aegis to build this week's schedule"}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Out This Week ── */}
-      {currentSchedule && (
-        <OutThisWeekCard
-          outRequests={outThisWeek}
-          weekRange={{ start: currentSchedule.week_start, end: currentSchedule.week_end }}
-          totalActive={employees.length}
-        />
-      )}
-
-      {/* ── Contributors + Activity ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: 12 }}>
-
-        <ContributorsCard
-          title="Top Contributors This Week"
-          rows={topContributors}
-          color="var(--accent)"
-          empty={currentSchedule ? 'No contributor data this week' : "Ask Aegis to build this week's schedule"}
-        />
-
-        <ContributorsCard
-          title="Bottom Contributors This Week"
-          rows={bottomContributors}
-          color="#f97316"
-          empty={currentSchedule ? 'No contributor data this week' : "Ask Aegis to build this week's schedule"}
-        />
-
-        {/* Activity */}
-        <div>
-          <div className="section-label">Recent Activity</div>
-          <div style={{
-            background: 'var(--bg-surface-1)',
-            border: '1px solid var(--border-default)',
-            borderRadius: 'var(--radius-lg)',
-            overflow: 'hidden',
-          }}>
-            {activity.length === 0 ? (
-              <div style={{ padding: '24px 16px', textAlign: 'center' }}>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No activity yet</div>
-              </div>
-            ) : activity.map((item, i) => {
-              const style = ACTOR_STYLES[item.actor] ?? ACTOR_STYLES.system
-              const iconUrl = item.actor === 'aegis'
-                ? '/aegis-icon.jpg'
-                : item.actor === 'soteria' || item.actor === 'system'
-                  ? '/soteria-icon.png'
-                : (item.actor === 'manager' || item.actor === 'quria_admin')
-                  ? (item.actor_avatar_url || userAvatarByName[item.actor_name || ''] || null)
-                  : null
-              const displayLabel = item.actor_name && (item.actor === 'manager' || item.actor === 'quria_admin')
-                ? item.actor_name
-                : style.label
-              const initial = (() => {
-                if (item.actor === 'aegis' || item.actor === 'soteria' || item.actor === 'system') {
-                  return style.initial
-                }
-                const name = item.actor_name || ''
-                if (!name) return style.initial
-                const parts = name.trim().split(/\s+/)
-                if (parts.length >= 2) {
-                  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-                }
-                return parts[0][0].toUpperCase()
-              })()
-              return (
-                <div key={item.id} style={{
-                  display: 'flex',
-                  gap: 12,
-                  padding: '12px 16px',
-                  borderBottom: i < activity.length - 1 ? '1px solid var(--border-subtle)' : 'none',
-                  alignItems: 'flex-start',
-                }}>
-                  <div style={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: '50%',
-                    background: iconUrl ? 'transparent' : style.bg,
-                    border: `1px solid ${style.border}`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 10,
-                    fontWeight: 700,
-                    fontFamily: 'var(--font-display)',
-                    color: style.color,
-                    flexShrink: 0,
-                    overflow: 'hidden',
-                  }}>
-                    {iconUrl ? (
-                      <img
-                        src={iconUrl}
-                        alt={style.label}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
-                      />
-                    ) : (
-                      initial
-                    )}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                      {item.summary}
-                    </div>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3, display: 'flex', gap: 6 }}>
-                      <span style={{ color: style.color, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                        {displayLabel}
-                      </span>
-                      <span>·</span>
-                      <span>{timeAgo(item.created_at)}</span>
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
           </div>
         </div>
       </div>
