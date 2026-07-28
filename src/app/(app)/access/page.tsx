@@ -176,6 +176,13 @@ export default function AccessPage() {
         quriaStaff={quriaStaff}
         onChange={fetchData}
       />
+
+      {currentUser?.role === 'quria' && (
+        <>
+          <div style={{ height: 40 }} />
+          <MonitoringSection companyId={COMPANY_ID} />
+        </>
+      )}
     </div>
   )
 }
@@ -811,6 +818,202 @@ function AegisSection({
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// ─── Monitoring Inbox Section (QURIA ONLY) ────────────────────────────────────
+// Per-client "watch" inbox: BCCs a copy of every email Aegis sends for this
+// company to an audit address. Quria-only — owners/managers never see this.
+
+interface MonitoringInbox {
+  id: string
+  email: string
+  active: boolean
+}
+
+function MonitoringSection({ companyId }: { companyId: string }) {
+  const [inboxes, setInboxes] = useState<MonitoringInbox[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showForm, setShowForm] = useState(false)
+  const [email, setEmail] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+
+  async function load() {
+    if (!companyId) return
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/monitoring-inbox?company_id=${encodeURIComponent(companyId)}`)
+      const data = (await res.json()) as { inboxes?: MonitoringInbox[]; error?: string }
+      if (res.ok) setInboxes(data.inboxes ?? [])
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { load() }, [companyId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleAdd() {
+    if (!email.trim()) { setError('Enter an email address.'); return }
+    setSaving(true); setError('')
+    try {
+      const res = await fetch('/api/monitoring-inbox', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: companyId, email: email.trim() }),
+      })
+      const data = (await res.json()) as { success?: boolean; error?: string }
+      if (!res.ok || !data.success) { setError(data.error ?? `Failed to add (HTTP ${res.status}).`); setSaving(false); return }
+    } catch {
+      setError('Failed to reach the server.'); setSaving(false); return
+    }
+    setSaving(false); setShowForm(false); setEmail(''); load()
+  }
+
+  async function handleToggle(id: string, active: boolean) {
+    setBusyId(id)
+    try {
+      await fetch('/api/monitoring-inbox', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, active }),
+      })
+    } finally { setBusyId(null) }
+    load()
+  }
+
+  async function handleDelete(id: string) {
+    setBusyId(id)
+    try {
+      await fetch('/api/monitoring-inbox', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+    } finally { setBusyId(null) }
+    setConfirmDeleteId(null); load()
+  }
+
+  return (
+    <section>
+      <SectionHeader
+        title="Monitoring Inbox (Quria only)"
+        subtitle="BCC a private copy of every email Aegis sends for this client to an audit inbox"
+      />
+
+      <div style={{
+        background: 'var(--accent-dim)',
+        border: '1px solid var(--accent-border)',
+        borderRadius: 'var(--radius-lg)',
+        padding: '12px 16px',
+        fontSize: 12,
+        color: 'var(--text-secondary)',
+        marginBottom: 16,
+        lineHeight: 1.6,
+      }}>
+        <span style={{ color: 'var(--accent)', fontWeight: 600 }}>Quria-only control.</span>
+        {' '}When on, a copy of every outbound Aegis email for this client is quietly sent to the address below — a clean audit trail with no effect on employees. Turn off to pause it.
+      </div>
+
+      {loading ? (
+        <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '8px 0' }}>Loading…</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+          {inboxes.length === 0 && (
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '8px 0' }}>
+              No monitoring inbox for this client yet.
+            </div>
+          )}
+          {inboxes.map((ib) => (
+            <div key={ib.id} style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              background: 'var(--bg-surface-1)',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '12px 16px',
+            }}>
+              <span style={{
+                display: 'inline-block', padding: '2px 10px', borderRadius: 'var(--radius-pill)',
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
+                background: ib.active ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+                color: ib.active ? '#22c55e' : '#ef4444',
+                border: `1px solid ${ib.active ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
+              }}>
+                {ib.active ? 'On' : 'Off'}
+              </span>
+              <span style={{ flex: 1, fontSize: 13, color: 'var(--text-primary)' }}>{ib.email}</span>
+
+              <button
+                onClick={() => handleToggle(ib.id, !ib.active)}
+                disabled={busyId === ib.id}
+                style={{
+                  padding: '5px 12px', borderRadius: 'var(--radius-md)', fontSize: 12, fontWeight: 600,
+                  cursor: busyId === ib.id ? 'default' : 'pointer',
+                  background: 'transparent', color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-default)',
+                }}
+              >
+                {ib.active ? 'Turn off' : 'Turn on'}
+              </button>
+
+              {confirmDeleteId === ib.id ? (
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button onClick={() => handleDelete(ib.id)} disabled={busyId === ib.id}
+                    style={{ padding: '5px 10px', borderRadius: 'var(--radius-md)', fontSize: 12, fontWeight: 600, cursor: 'pointer', background: 'rgba(239,68,68,0.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}>
+                    Remove
+                  </button>
+                  <button onClick={() => setConfirmDeleteId(null)}
+                    style={{ padding: '5px 10px', borderRadius: 'var(--radius-md)', fontSize: 12, cursor: 'pointer', background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}>
+                    Cancel
+                  </button>
+                </span>
+              ) : (
+                <button onClick={() => setConfirmDeleteId(ib.id)} title="Remove"
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 6, borderRadius: 'var(--radius-md)', cursor: 'pointer', background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}>
+                  <TrashIcon />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showForm ? (
+        <div style={{
+          background: 'var(--bg-surface-1)', border: '1px solid var(--border-default)',
+          borderRadius: 'var(--radius-lg)', padding: 16, display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
+          <input
+            type="email" value={email} placeholder="audit-inbox@quriasolutions.com"
+            onChange={(e) => setEmail(e.target.value)}
+            style={{
+              padding: '9px 12px', borderRadius: 'var(--radius-md)', fontSize: 13,
+              background: 'var(--bg-surface-2)', color: 'var(--text-primary)',
+              border: '1px solid var(--border-default)',
+            }}
+          />
+          {error && <div style={{ fontSize: 12, color: '#ef4444' }}>{error}</div>}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => { setShowForm(false); setError(''); setEmail('') }}
+              style={{ padding: '7px 14px', borderRadius: 'var(--radius-md)', fontSize: 12, cursor: 'pointer', background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}>
+              Cancel
+            </button>
+            <button onClick={handleAdd} disabled={saving}
+              style={{ padding: '7px 14px', borderRadius: 'var(--radius-md)', fontSize: 12, fontWeight: 600, cursor: saving ? 'default' : 'pointer', background: 'var(--accent)', color: '#fff', border: 'none' }}>
+              {saving ? 'Adding…' : 'Add inbox'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button onClick={() => setShowForm(true)}
+            style={{ padding: '7px 14px', borderRadius: 'var(--radius-md)', fontSize: 12, fontWeight: 600, cursor: 'pointer', background: 'transparent', color: 'var(--accent)', border: '1px solid var(--accent-border)' }}>
+            + Add monitoring inbox
+          </button>
+        </div>
+      )}
+    </section>
+  )
+}
 
 function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
