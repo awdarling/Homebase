@@ -32,7 +32,7 @@ Risk: **HIGH** = privilege escalation or cross-tenant write/credential exposure 
 | 4 | `soteria-validate-schedule` | POST | **None** (was) → **standard guard added** | Service-role read of `employees`, `availability`, `time_off`, `conflicts`, `policies`, `schedules` for body `company_id` | **MED** | **FIXED** this branch |
 | 5 | `payroll/test-payroll-provider` | POST | **None** (was) → **standard guard added** | Service-role read of `payroll_integrations` (probes whether another company has credentials configured; does not return the key value) | **MED** | **FIXED** this branch |
 | 6 | `payroll/test-timeclock` | POST | **None** (was) → **standard guard added** | Service-role read of `time_clock_integrations` (same probe pattern) | **MED** | **FIXED** this branch |
-| 7 | `notify-assignment` | POST | **Yes** — getUser + `company_id` match (401/403) | Sends a Twilio SMS to an employee in the caller's company | LOW (auth) | No change — see note |
+| 7 | `notify-assignment` | POST | **Yes** — getUser + `company_id` match (401/403) | Sends a Telnyx SMS to an employee in the caller's company | LOW (auth) | No change — see note |
 | 8 | `notify-day-closure` | POST | **Yes** — getUser + `company_id` match | Reads/writes day-closure state scoped to caller's company | LOW | No change |
 | 9 | `soteria/route` | POST | **Yes** — getUser + `companyId` match (`:364-374`) | Soteria NL admin context load for caller's company | LOW | No change |
 | 10 | `soteria/execute` | POST | **Yes** — getUser + `companyId` match (`:27-37`) | Soteria NL **writes** (employees/policies/etc.), all scoped to caller's company | LOW (auth) | No change |
