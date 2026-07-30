@@ -73,6 +73,28 @@ export async function POST(req: NextRequest) {
 
   const message = `Hi ${employee.name}, you've been added to the ${shift_name} shift (${role}, ${start_time}–${end_time}) on ${dateStr} by your manager. See you then!`
 
+  // Consent/safety gate — mirrors Aegis EMAIL_ONLY. No automated SMS reaches a
+  // real employee until go-live (counsel clears the consent chain). Unset
+  // defaults to email-only (SMS disabled); set EMAIL_ONLY=false in Vercel to
+  // enable sends. This keeps the route dormant even when TELNYX_API_KEY is set.
+  const emailOnly = (process.env.EMAIL_ONLY ?? 'true').toLowerCase() !== 'false'
+  if (emailOnly) {
+    await supabase.from('activity_log').insert({
+      company_id,
+      actor: 'manager',
+      action: 'assignment_notification_skipped',
+      entity_type: 'employee',
+      entity_id: employee_id,
+      summary: `SMS notification skipped for ${employee.name} — SMS disabled (email-only mode)`,
+      metadata: {
+        shift_name, role, date,
+        approved_by: approvedById,
+        approved_by_email: approvedByEmail,
+      },
+    })
+    return NextResponse.json({ success: false, message: 'SMS disabled (email-only mode)' })
+  }
+
   // Not configured (no Telnyx API key, or the tenant has no SMS number): skip
   // gracefully and log it, exactly as before.
   if (!process.env.TELNYX_API_KEY || !fromNumber) {
