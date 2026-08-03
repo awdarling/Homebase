@@ -1,10 +1,11 @@
 'use client'
 import { useCompany } from '@/lib/hooks/useCompany'
 import { useWageBreakdown } from '@/lib/hooks/useWageBreakdown'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import type { Schedule } from '@/lib/types'
+import type { Schedule, PartialDayDetail } from '@/lib/types'
+import { buildOutRows, type OutRow } from '@/lib/time-off/out-summary'
 
 interface ActivityEntry {
   id: string
@@ -25,6 +26,8 @@ interface TORequest {
   start_date: string
   end_date: string
   reason?: string | null
+  time_off_type?: 'full_day' | 'partial' | null
+  partial_days?: PartialDayDetail[] | null
 }
 
 interface Employee {
@@ -36,16 +39,6 @@ interface Employee {
   individual_wage: number | null
 }
 
-interface OutRow {
-  id: string
-  name: string
-  role: string
-  days: number
-  span: string
-  scope: 'full' | 'most' | 'partial' | 'one'
-  scopeLabel: string
-  reason: string
-}
 
 function timeAgo(dateString: string) {
   const diff = Date.now() - new Date(dateString).getTime()
@@ -90,25 +83,6 @@ function getWeekRange(anchor: Date, weekStartDay: number): { start: string; end:
   return { start: toYMD(start), end: toYMD(end) }
 }
 
-function enumerateISO(startISO: string, endISO: string): string[] {
-  const out: string[] = []
-  const [sy, sm, sd] = startISO.split('-').map(Number)
-  const [ey, em, ed] = endISO.split('-').map(Number)
-  const cur = new Date(sy, sm - 1, sd)
-  const last = new Date(ey, em - 1, ed)
-  while (cur <= last) {
-    out.push(toYMD(cur))
-    cur.setDate(cur.getDate() + 1)
-  }
-  return out
-}
-
-function daysBetween(startISO: string, endISO: string): number {
-  const s = new Date(startISO)
-  const e = new Date(endISO)
-  return Math.max(1, Math.round((e.getTime() - s.getTime()) / 86400000) + 1)
-}
-
 function formatCurrency(n: number) {
   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
@@ -124,33 +98,6 @@ function median(nums: number[]): number {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
 }
 
-// Collapse all approved time-off rows overlapping [rs, re] into one row per
-// employee: distinct days off within the window drive the extent label.
-function buildOutRows(reqs: TORequest[], rs: string, re: string): OutRow[] {
-  const byEmp = new Map<string, { id: string; name: string; role: string; days: Set<string>; reason: string; reasonLen: number }>()
-  for (const r of reqs) {
-    if (!(r.start_date <= re && r.end_date >= rs)) continue
-    const key = r.employee?.id ?? r.employee_id ?? r.employee?.name ?? r.id
-    let e = byEmp.get(key)
-    if (!e) {
-      e = { id: key, name: r.employee?.name ?? 'Unknown employee', role: r.employee?.primary_role ?? '—', days: new Set<string>(), reason: r.reason ?? '', reasonLen: 0 }
-      byEmp.set(key, e)
-    }
-    const s = r.start_date < rs ? rs : r.start_date
-    const en = r.end_date > re ? re : r.end_date
-    for (const iso of enumerateISO(s, en)) e.days.add(iso)
-    const len = daysBetween(r.start_date, r.end_date)
-    if (len > e.reasonLen && r.reason) { e.reasonLen = len; e.reason = r.reason }
-  }
-  return Array.from(byEmp.values()).map((e) => {
-    const dayList = Array.from(e.days).sort()
-    const n = dayList.length
-    const span = n > 0 ? `${formatDate(dayList[0])}${n > 1 ? ` – ${formatDate(dayList[n - 1])}` : ''}` : ''
-    const scope: OutRow['scope'] = n >= 7 ? 'full' : n >= 4 ? 'most' : n === 1 ? 'one' : 'partial'
-    const scopeLabel = n >= 7 ? 'Full week' : n >= 4 ? 'Most of week' : n === 1 ? '1 day' : `${n} days`
-    return { id: e.id, name: e.name, role: e.role, days: n, span, scope, scopeLabel, reason: e.reason || '—' }
-  }).sort((a, b) => b.days - a.days || a.name.localeCompare(b.name))
-}
 
 interface ActorStyle {
   color: string
@@ -272,6 +219,16 @@ export default function HomePage() {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [weekStartDay, setWeekStartDay] = useState<number>(1)
   const [outWeek, setOutWeek] = useState<'this' | 'next'>('this')
+  const [expandedOut, setExpandedOut] = useState<Set<string>>(new Set())
+
+  function toggleOutRow(id: string) {
+    setExpandedOut((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
   const [loading, setLoading] = useState(true)
   const [missingEmail, setMissingEmail] = useState(0)
   const [missingPhone, setMissingPhone] = useState(0)
@@ -589,24 +546,69 @@ export default function HomePage() {
                 </tr>
               </thead>
               <tbody>
-                {outRows.map((r, i) => (
-                  <tr key={r.id}>
-                    <td style={{ padding: '10px 16px', borderBottom: i < outRows.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--bg-surface-3)', border: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11, color: 'var(--text-secondary)', flexShrink: 0 }}>{initialsOf(r.name)}</span>
-                        <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{r.name}</span>
-                      </div>
-                    </td>
-                    <td style={{ padding: '10px 16px', borderBottom: i < outRows.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
-                      <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 'var(--radius-pill)', border: '1px solid', whiteSpace: 'nowrap', ...roleColor(r.role) }}>{r.role}</span>
-                    </td>
-                    <td style={{ padding: '10px 16px', borderBottom: i < outRows.length - 1 ? '1px solid var(--border-subtle)' : 'none', fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{r.span}</td>
-                    <td style={{ padding: '10px 16px', borderBottom: i < outRows.length - 1 ? '1px solid var(--border-subtle)' : 'none' }}>
-                      <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 'var(--radius-pill)', border: '1px solid', whiteSpace: 'nowrap', ...scopeStyle(r.scope) }}>{r.scopeLabel}</span>
-                    </td>
-                    <td style={{ padding: '10px 16px', borderBottom: i < outRows.length - 1 ? '1px solid var(--border-subtle)' : 'none', fontSize: 12, color: 'var(--text-muted)' }}>{r.reason}</td>
-                  </tr>
-                ))}
+                {outRows.map((r, i) => {
+                  const multi = r.segments.length > 1
+                  const isOpen = expandedOut.has(r.id)
+                  const isLast = i === outRows.length - 1
+                  // Main-row cells drop their border when the detail row is open (it
+                  // carries the separator) or when this is the last row and closed.
+                  const cellBorder = (multi && isOpen) ? 'none' : (isLast ? 'none' : '1px solid var(--border-subtle)')
+                  const single = r.segments[0]
+                  return (
+                    <Fragment key={r.id}>
+                      <tr
+                        onClick={multi ? () => toggleOutRow(r.id) : undefined}
+                        style={multi ? { cursor: 'pointer' } : undefined}
+                        title={multi ? (isOpen ? 'Hide breakdown' : 'Show each request') : undefined}
+                      >
+                        <td style={{ padding: '10px 16px', borderBottom: cellBorder }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--bg-surface-3)', border: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11, color: 'var(--text-secondary)', flexShrink: 0 }}>{initialsOf(r.name)}</span>
+                            <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{r.name}</span>
+                          </div>
+                        </td>
+                        <td style={{ padding: '10px 16px', borderBottom: cellBorder }}>
+                          <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 'var(--radius-pill)', border: '1px solid', whiteSpace: 'nowrap', ...roleColor(r.role) }}>{r.role}</span>
+                        </td>
+                        <td style={{ padding: '10px 16px', borderBottom: cellBorder, fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{r.span}</td>
+                        <td style={{ padding: '10px 16px', borderBottom: cellBorder }}>
+                          <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 'var(--radius-pill)', border: '1px solid', whiteSpace: 'nowrap', ...scopeStyle(r.scope) }}>{r.scopeLabel}</span>
+                        </td>
+                        <td style={{ padding: '10px 16px', borderBottom: cellBorder, fontSize: 12, color: 'var(--text-muted)' }}>
+                          {multi ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                              <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{r.summary}</span>
+                              <span style={{ fontSize: 9, color: 'var(--text-muted)', display: 'inline-block', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>▸</span>
+                            </div>
+                          ) : single?.isPartial && single.timeLabel ? (
+                            <span><span style={{ color: 'var(--accent)', fontWeight: 500 }}>{single.timeLabel}</span> · {r.reason}</span>
+                          ) : (
+                            r.reason
+                          )}
+                        </td>
+                      </tr>
+                      {multi && isOpen && (
+                        <tr>
+                          <td colSpan={5} style={{ padding: '4px 16px 12px 54px', borderBottom: isLast ? 'none' : '1px solid var(--border-subtle)', background: 'var(--bg-surface-2)' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                              {r.segments.map((seg, si) => (
+                                <div key={si} style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 12, flexWrap: 'wrap' }}>
+                                  <span style={{ color: 'var(--text-secondary)', fontWeight: 600, minWidth: 96 }}>{seg.dateLabel}</span>
+                                  {seg.isPartial && seg.timeLabel ? (
+                                    <span style={{ color: 'var(--accent)', fontWeight: 500, whiteSpace: 'nowrap' }}>{seg.timeLabel}</span>
+                                  ) : (
+                                    <span style={{ color: 'var(--text-muted)' }}>All day</span>
+                                  )}
+                                  <span style={{ color: 'var(--text-muted)' }}>— {seg.reason}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           )}
