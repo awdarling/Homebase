@@ -328,6 +328,7 @@ async function handleAvailabilityDecision(
     await postToAegisInternal('/internal/apply-availability-decision', {
       decision,
       decided_by: row.issued_to_email,
+      decided_by_user_id: row.issued_to_user_id,
       ...row.payload,
     })
   } catch (err) {
@@ -396,6 +397,7 @@ async function handleCustomAvailabilityDecision(
     await postToAegisInternal('/internal/apply-custom-availability-decision', {
       decision,
       decided_by: row.issued_to_email,
+      decided_by_user_id: row.issued_to_user_id,
       ...row.payload,
     })
   } catch (err) {
