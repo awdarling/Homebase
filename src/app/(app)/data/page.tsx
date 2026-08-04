@@ -9,6 +9,7 @@ import ConflictsTab from './tabs/ConflictsTab'
 import WageRatesTab from './tabs/WageRatesTab'
 import SpecialNotesTab from './tabs/SpecialNotesTab'
 import SwapsTab from './tabs/SwapsTab'
+import AvailabilityTab from './tabs/AvailabilityTab'
 import OnboardingTab from './tabs/OnboardingTab'
 
 const TABS = [
@@ -17,6 +18,7 @@ const TABS = [
   { id: 'shifts',     label: 'Shifts' },
   { id: 'timeoff',    label: 'Time Off' },
   { id: 'swaps',      label: 'Swaps' },
+  { id: 'availability', label: 'Availability' },
   { id: 'conflicts',  label: 'Conflicts' },
   { id: 'wages',      label: 'Wage Rates' },
   { id: 'notes',      label: 'Special Notes' },
@@ -73,6 +75,7 @@ export default function DataPage() {
       {activeTab === 'shifts'    && <ShiftRequirementsTab />}
       {activeTab === 'timeoff'   && <TimeOffTab />}
       {activeTab === 'swaps'     && <SwapsTab />}
+      {activeTab === 'availability' && <AvailabilityTab />}
       {activeTab === 'conflicts' && <ConflictsTab />}
       {activeTab === 'wages'     && <WageRatesTab />}
       {activeTab === 'notes'      && <SpecialNotesTab />}
