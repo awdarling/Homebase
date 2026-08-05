@@ -12,6 +12,9 @@ export type DispatchResult = { ok: boolean; message: string }
 type DistributeScheduleResponse = {
   sent?: number
   errors?: string[]
+  total_employees?: number
+  already_distributed?: boolean
+  distributed_at?: string | null
 }
 
 // ── Date helpers ─────────────────────────────────────────────────────────────
@@ -209,41 +212,33 @@ async function handleConfirmDistribution(
     return { ok: false, message: 'This link is missing the schedule id. Distribute from Homebase instead.' }
   }
 
-  // Guarded update: only distribute a draft or published schedule. A schedule
-  // already 'distributed' or 'approved'-then-distributed should not get sent
-  // again silently.
-  const { data: updated, error: updateErr } = await supabase
+  // Read-only precondition. Aegis owns distribution state: distributeScheduleCore
+  // sets distributed_at (+ status='published') AFTER it actually sends, and its
+  // re-distribution guard keys on distributed_at. We must NOT pre-mark
+  // distributed_at here — doing so tripped that guard so Aegis saw the schedule
+  // as already-sent and delivered ZERO messages (Bug 2, 2nd root cause). Mirrors
+  // the publish-button and Soteria paths, which both let Aegis own the timestamp.
+  const { data: existing, error: readErr } = await supabase
     .from('schedules')
-    .update({
-      status: 'distributed',
-      distributed_at: new Date().toISOString(),
-    })
+    .select('status')
     .eq('id', schedule_id)
     .is('deleted_at', null)
-    .in('status', ['draft', 'published'])
-    .select('id, status')
     .maybeSingle()
 
-  if (updateErr) {
-    return { ok: false, message: `Could not record distribution: ${updateErr.message}` }
+  if (readErr) {
+    return { ok: false, message: `Could not load the schedule: ${readErr.message}` }
   }
-
-  if (!updated) {
-    const { data: existing } = await supabase
-      .from('schedules')
-      .select('status')
-      .eq('id', schedule_id)
-      .is('deleted_at', null)
-      .maybeSingle()
-    if (!existing) {
-      return { ok: false, message: 'Schedule not found. It may have been deleted.' }
-    }
-    const status = (existing as { status: string }).status
+  if (!existing) {
+    return { ok: false, message: 'Schedule not found. It may have been deleted.' }
+  }
+  const preStatus = (existing as { status: string }).status
+  // Block only clearly non-distributable states (e.g. 'archived'). An already
+  // 'distributed'/'published' row is allowed through so Aegis can answer
+  // honestly with already_distributed rather than us guessing.
+  if (!['draft', 'published', 'distributed'].includes(preStatus)) {
     return {
       ok: false,
-      message: status === 'distributed'
-        ? 'This schedule has already been distributed — no change made.'
-        : `This schedule is in status "${status}" and cannot be distributed via email. Open Homebase to take action.`,
+      message: `This schedule is in status "${preStatus}" and cannot be distributed via email. Open Homebase to take action.`,
     }
   }
 
@@ -268,6 +263,15 @@ async function handleConfirmDistribution(
       '/internal/distribute-schedule',
       { schedule_id },
     )
+    if (resp.already_distributed) {
+      const when = resp.distributed_at ? formatDate(resp.distributed_at.slice(0, 10)) : null
+      return {
+        ok: true,
+        message: when
+          ? `This schedule was already sent on ${when} — nothing was re-sent. To deliberately re-send, use Distribute in Homebase.`
+          : 'This schedule was already sent — nothing was re-sent. To deliberately re-send, use Distribute in Homebase.',
+      }
+    }
     const sent = numOrNull(resp.sent)
     const errorCount = Array.isArray(resp.errors) ? resp.errors.length : 0
     const recipientLabel = sent === null
