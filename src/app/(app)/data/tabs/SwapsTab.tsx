@@ -3,8 +3,6 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useCompany } from '@/lib/hooks/useCompany'
-import { useQuria } from '@/lib/hooks/useQuria'
-import { logActivity as logActivityFn } from '@/lib/activity'
 
 interface SwapRequest {
   id: string
@@ -79,8 +77,7 @@ function timeAgo(d: string) {
 }
 
 export default function SwapsTab() {
-  const { company, user } = useCompany()
-  const { isQuria } = useQuria()
+  const { company } = useCompany()
   const COMPANY_ID = company?.id ?? ''
   const supabase = createClient()
 
@@ -88,6 +85,7 @@ export default function SwapsTab() {
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
   const [acting, setActing] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => { if (COMPANY_ID) fetchData() }, [COMPANY_ID])
 
@@ -106,51 +104,34 @@ export default function SwapsTab() {
     setLoading(false)
   }
 
-  async function logActivity(action: string, summary: string, entityId: string) {
-    await logActivityFn({
-      supabase,
-      company_id: COMPANY_ID,
-      action,
-      entity_type: 'swap_request',
-      entity_id: entityId,
-      summary,
-      isQuria,
-      actorName: user?.name,
-      actorAvatarUrl: user?.avatar_url,
-    })
+  // Aegis is authoritative for the swap_requests.status write + notifications:
+  // it applies the schedule change first, then marks the row and notifies both
+  // people. The tab no longer writes status client-side — it POSTs the manager's
+  // decision to /api/swap-decision (which auths + calls Aegis) and reflects the
+  // real outcome, surfacing anything that didn't land.
+  async function decide(swap: SwapRequest, decision: 'approved' | 'denied') {
+    setActing(swap.id)
+    setActionError(null)
+    try {
+      const res = await fetch('/api/swap-decision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ swapRequestId: swap.id, decision }),
+      })
+      const result = (await res.json().catch(() => null)) as { ok?: boolean; message?: string } | null
+      if (!res.ok || !result?.ok) {
+        setActionError(result?.message ?? 'That swap could not be processed. Nothing changed — please try again.')
+      }
+    } catch {
+      setActionError('Could not reach the server to process that swap. Nothing changed — please try again.')
+    } finally {
+      setActing(null)
+      fetchData()
+    }
   }
 
-  async function handleApprove(swap: SwapRequest) {
-    setActing(swap.id)
-    await supabase.from('swap_requests').update({
-      status: 'approved',
-      decided_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }).eq('id', swap.id)
-    await logActivity(
-      'swap_approved',
-      `Approved shift swap: ${swap.requesting_employee?.name ?? 'Employee'} ↔ ${swap.receiving_employee?.name ?? 'TBD'} on ${formatDate(swap.shift_date)}`,
-      swap.id
-    )
-    setActing(null)
-    fetchData()
-  }
-
-  async function handleDeny(swap: SwapRequest) {
-    setActing(swap.id)
-    await supabase.from('swap_requests').update({
-      status: 'denied',
-      decided_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }).eq('id', swap.id)
-    await logActivity(
-      'swap_denied',
-      `Denied shift swap: ${swap.requesting_employee?.name ?? 'Employee'} ↔ ${swap.receiving_employee?.name ?? 'TBD'} on ${formatDate(swap.shift_date)}`,
-      swap.id
-    )
-    setActing(null)
-    fetchData()
-  }
+  const handleApprove = (swap: SwapRequest) => decide(swap, 'approved')
+  const handleDeny = (swap: SwapRequest) => decide(swap, 'denied')
 
   const filtered = statusFilter === 'all'
     ? swaps
@@ -168,6 +149,11 @@ export default function SwapsTab() {
 
   return (
     <div>
+      {actionError && (
+        <div style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 8, fontSize: 13, color: 'var(--status-blocked-text)', background: 'var(--status-blocked-bg)', border: '1px solid var(--status-blocked-border)' }}>
+          {actionError}
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16, gap: 10 }}>
         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
           Shift swap requests initiated by employees or Aegis.
