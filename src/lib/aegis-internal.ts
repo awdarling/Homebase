@@ -24,6 +24,7 @@ export type AegisInternalEndpoint =
   | '/internal/apply-availability-decision'
   | '/internal/apply-custom-availability-decision'
   | '/internal/decide-availability-change'
+  | '/internal/notify-day-closure'
   | '/internal/recompute-to-recommendation'
   | '/internal/recheck-to-reply'
   | '/internal/notify-access-removed'
