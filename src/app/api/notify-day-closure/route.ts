@@ -1,26 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
-import type { ScheduleAssignment, ScheduleData } from '@/lib/types'
+import { postToAegisInternal, AegisInternalError, AegisInternalConfigError } from '@/lib/aegis-internal'
 
-const supabase = createClient(
+// Service-role client — only used for the tenancy/auth checks below. The
+// notification fan-out itself is delegated to Aegis (which owns the roster).
+const adminSupabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 )
 
-function formatDayDate(d: string): string {
-  const [y, m, day] = d.split('-').map(Number)
-  return new Date(y, m - 1, day).toLocaleDateString('en-US', {
-    weekday: 'long', month: 'long', day: 'numeric',
-  })
-}
-
+/**
+ * Notify the staff scheduled on a day the manager just closed (Batch-1 F8).
+ *
+ * The fan-out is delegated to Aegis's `/internal/notify-day-closure`, which loads
+ * the day's roster and notifies every scheduled employee SMS-first + email
+ * fallback. This replaces the previous approach, which POSTed a "Send this message
+ * to <name>" body to Aegis's PUBLIC /webhooks/sms|email impersonating the manager
+ * and relied on the intent classifier to deliver it — fragile, and rejected in
+ * production by webhook signature verification, so "Close day" notified nobody.
+ *
+ * Body: { scheduleId: string, date: string (YYYY-MM-DD), companyId: string }
+ */
 export async function POST(req: NextRequest) {
-  const aegisUrl = process.env.AEGIS_URL
-  if (!aegisUrl) {
-    return NextResponse.json({ error: 'Aegis not configured' }, { status: 500 })
-  }
-
   const body = await req.json() as {
     scheduleId?: string
     date?: string
@@ -39,156 +41,55 @@ export async function POST(req: NextRequest) {
   }
   const { data: userRow } = await ssr
     .from('users')
-    .select('company_id')
+    .select('company_id, role')
     .eq('id', user.id)
     .single()
-  if (!userRow || (userRow as { company_id: string }).company_id !== companyId) {
+  const caller = userRow as { company_id: string; role: string } | null
+  // Quria admins may act cross-company; everyone else is bound to their tenant.
+  if (!caller || (caller.role !== 'quria' && caller.company_id !== companyId)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  // ── Load schedule + assignments for the closed date ──────────────────────
-  const { data: scheduleRow, error: scheduleErr } = await supabase
-    .from('schedules')
-    .select('id, company_id, data')
-    .eq('id', scheduleId)
-    .eq('company_id', companyId)
-    .is('deleted_at', null)
-    .single()
-
-  if (scheduleErr || !scheduleRow) {
-    return NextResponse.json({ error: 'Schedule not found' }, { status: 404 })
-  }
-
-  const scheduleData = (scheduleRow as { data: ScheduleData | null }).data
-  const dayAssignments: ScheduleAssignment[] = (scheduleData?.assignments ?? [])
-    .filter(a => a.date === date)
-
-  if (dayAssignments.length === 0) {
-    return NextResponse.json({ success: true, notified: 0 })
-  }
-
-  const employeeIds = Array.from(new Set(dayAssignments.map(a => a.employee_id)))
-
-  // ── Employee contact info ────────────────────────────────────────────────
-  const { data: employeeRows } = await supabase
-    .from('employees')
-    .select('id, name, contact_phone, contact_email')
-    .in('id', employeeIds)
-
-  const employees = (employeeRows ?? []) as Array<{
-    id: string
-    name: string
-    contact_phone: string | null
-    contact_email: string | null
-  }>
-
-  // ── Company name ─────────────────────────────────────────────────────────
-  const { data: companyRow } = await supabase
-    .from('companies')
-    .select('name')
-    .eq('id', companyId)
-    .single()
-  const companyName = (companyRow as { name?: string } | null)?.name ?? 'your workplace'
-
-  // ── Manager phone (for SMS From) ─────────────────────────────────────────
-  const { data: managerRow } = await supabase
-    .from('employees')
-    .select('contact_phone')
-    .eq('company_id', companyId)
-    .eq('primary_role', 'Manager')
-    .not('contact_phone', 'is', null)
-    .limit(1)
-    .maybeSingle()
-  const managerPhone = (managerRow as { contact_phone?: string } | null)?.contact_phone ?? null
-
-  // ── Manager email (for email From) ───────────────────────────────────────
-  const { data: managerUser } = await supabase
-    .from('users')
-    .select('email')
-    .eq('company_id', companyId)
-    .in('role', ['owner', 'manager'])
-    .limit(1)
-    .maybeSingle()
-  const managerEmail = (managerUser as { email?: string } | null)?.email ?? null
-
-  const dateLabel = formatDayDate(date)
-
-  // ── Group assignments by employee so we can mention shifts in the body ──
-  const shiftsByEmployee = new Map<string, string[]>()
-  for (const a of dayAssignments) {
-    const list = shiftsByEmployee.get(a.employee_id) ?? []
-    if (!list.includes(a.shift_name)) list.push(a.shift_name)
-    shiftsByEmployee.set(a.employee_id, list)
-  }
-
-  let dispatched = 0
-  const failures: string[] = []
-
-  for (const emp of employees) {
-    const shifts = shiftsByEmployee.get(emp.id) ?? []
-    const shiftLabel = shifts.length === 0
-      ? 'scheduled'
-      : shifts.length === 1 ? shifts[0] : shifts.join(' and ')
-
-    if (emp.contact_phone) {
-      if (!managerPhone) {
-        failures.push(`${emp.name} (no manager phone configured)`)
-        continue
-      }
-      const sms = `Send this message to ${emp.name} at ${emp.contact_phone}: ${companyName} will be closed on ${dateLabel}. Your ${shiftLabel} shift has been cancelled. We'll see you for your next scheduled shift. — Aegis`
-      const res = await fetch(`${aegisUrl}/webhooks/sms`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ From: managerPhone, Body: sms }).toString(),
-      })
-      if (res.ok) {
-        dispatched += 1
-      } else {
-        failures.push(`${emp.name} (sms ${res.status})`)
-      }
-      continue
-    }
-
-    if (emp.contact_email) {
-      if (!managerEmail) {
-        failures.push(`${emp.name} (no manager email configured)`)
-        continue
-      }
-      const text = `Send this message to ${emp.name} at ${emp.contact_email}: ${companyName} will be closed on ${dateLabel}. Your ${shiftLabel} shift has been cancelled. We'll see you for your next scheduled shift. — Aegis`
-      const res = await fetch(`${aegisUrl}/webhooks/email`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ from: managerEmail, text }).toString(),
-      })
-      if (res.ok) {
-        dispatched += 1
-      } else {
-        failures.push(`${emp.name} (email ${res.status})`)
-      }
-      continue
-    }
-
-    failures.push(`${emp.name} (no phone or email on file)`)
-  }
-
-  await supabase.from('activity_log').insert({
-    company_id: companyId,
-    actor: 'system',
-    action: 'closure_notifications_sent',
-    entity_type: 'schedule',
-    entity_id: scheduleId,
-    summary: `Closure notifications sent to ${dispatched} employee${dispatched === 1 ? '' : 's'} for ${dateLabel}`,
-    metadata: {
+  // ── Delegate the fan-out to Aegis (owns roster + SMS-first notify) ─────────
+  try {
+    const result = await postToAegisInternal<{
+      ok: boolean
+      notified?: number
+      total_scheduled?: number
+      texted?: number
+      emailed?: number
+      failures?: string[]
+    }>('/internal/notify-day-closure', {
+      company_id: companyId,
+      schedule_id: scheduleId,
       date,
-      dispatched,
-      failures: failures.length > 0 ? failures : null,
-      total_scheduled: employees.length,
-    },
-  })
+    })
 
-  return NextResponse.json({
-    success: true,
-    notified: dispatched,
-    failures: failures.length > 0 ? failures : undefined,
-  })
+    await adminSupabase.from('activity_log').insert({
+      company_id: companyId,
+      actor: caller.role === 'quria' ? 'quria_admin' : 'manager',
+      action: 'closure_notifications_triggered',
+      entity_type: 'schedule',
+      entity_id: scheduleId,
+      summary: `Closure notifications requested for ${date} — Aegis notified ${result.notified ?? 0} of ${result.total_scheduled ?? 0} scheduled employee(s)`,
+      metadata: { date, notified: result.notified ?? 0, total_scheduled: result.total_scheduled ?? 0, failures: result.failures ?? null },
+    })
+
+    return NextResponse.json({
+      success: true,
+      notified: result.notified ?? 0,
+      total_scheduled: result.total_scheduled ?? 0,
+      failures: result.failures && result.failures.length > 0 ? result.failures : undefined,
+    })
+  } catch (err) {
+    const detail = err instanceof AegisInternalConfigError || err instanceof AegisInternalError
+      ? err.message
+      : err instanceof Error ? err.message : 'unknown error'
+    // Surface the failure loudly (never silently notify nobody) but don't 500 —
+    // the day is already closed; the manager can retry the notification.
+    return NextResponse.json({
+      success: false,
+      error: `The day was closed, but closure notifications could not be sent: ${detail}. Please retry, or notify affected staff directly.`,
+    }, { status: 502 })
+  }
 }
