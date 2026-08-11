@@ -187,8 +187,10 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
 
   const weekDates = eachDate(schedule.week_start, schedule.week_end)
 
-  // Build columns in template.column_config order.
-  const visibleCols = [...template.column_config]
+  // Build columns in template.column_config order. Null-guard against a drifted
+  // template row (missing column_config) so the download degrades to an empty
+  // grid instead of throwing a 500 (Finding 2 latent crash).
+  const visibleCols = [...(template.column_config ?? [])]
     .filter(c => c.visible)
     .sort((a, b) => a.order - b.order)
 
@@ -209,7 +211,7 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
     })
     .filter((c): c is GridColumn => c !== null)
 
-  const visibleRows = [...template.row_config]
+  const visibleRows = [...(template.row_config ?? [])]
     .filter(r => r.visible)
     .sort((a, b) => a.order - b.order)
 
@@ -232,7 +234,14 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
   // Role visibility mirrors the on-screen render, which gates the role line on
   // display_options.show_role. A tenant with show_role=false gets no roles in
   // the download either (true parity).
-  const showRole = template.display_options.show_role
+  // Default true (matches buildDefaultTemplate) when a drifted template omits
+  // display_options — avoids a null-deref 500 on the download path (Finding 2).
+  const showRole = template.display_options?.show_role ?? true
+
+  // Same drifted-template guard for color_config: resolveTemplateColor reads
+  // colorConfig.by, so a missing color_config would 500 the download. Default to
+  // day-based coloring (returns the column color), matching buildDefaultTemplate.
+  const colorConfig = template.color_config ?? { by: 'day' as const, map: {} }
 
   // ── Alternate layouts (employees×days / roles×days) ────────────────────────
   // Re-pivot the SAME assignments via the shared pure model so the download
@@ -266,7 +275,7 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
           gapRole: null,
           unfilledCount: 0,
           appearance: resolveCellAppearance({
-            colorConfig: template.color_config,
+            colorConfig,
             columnColor: col.color,
             rowId: row.id,
             kind,
@@ -300,7 +309,7 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
           gapRole: null,
           unfilledCount: 0,
           appearance: resolveCellAppearance({
-            colorConfig: template.color_config,
+            colorConfig,
             columnColor: col.color,
             rowId: shiftId,
             kind: 'closed',
@@ -333,7 +342,7 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
         gapRole: gap?.role ?? null,
         unfilledCount: unfilled,
         appearance: resolveCellAppearance({
-          colorConfig: template.color_config,
+          colorConfig,
           columnColor: col.color,
           rowId: shiftId,
           kind,
