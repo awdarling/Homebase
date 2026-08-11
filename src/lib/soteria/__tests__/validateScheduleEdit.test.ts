@@ -250,6 +250,83 @@ function run(
   expect(!issues.some(i => i.code === 'understaffed'), 'untouched cells are not re-flagged (scoped to the edit)')
 }
 
+// ── Finding 1: partial-day time off must NOT block a non-overlapping shift ──────
+// pmShift is WED 13:00–21:00.
+
+// The reported live false-positive: a 09:00–13:00 partial off no longer blocks a
+// PM shift that starts at 13:00 (touching, not overlapping).
+{
+  const a = emp('A', ['Lifeguard'])
+  const issues = run([pmShift('A')], ['A'], [a], {
+    timeOff: [{
+      employee_id: 'A', start_date: WED, end_date: WED, time_off_type: 'partial',
+      partial_days: [{ date: WED, type: 'custom_hours', start_time: '09:00', end_time: '13:00' }],
+    }],
+  })
+  expect(!issues.some(i => i.code === 'time_off'), 'partial morning-off does NOT block a non-overlapping PM shift (the reported false positive)')
+}
+
+// A partial off-window that DOES overlap the shift still blocks.
+{
+  const a = emp('A', ['Lifeguard'])
+  const issues = run([pmShift('A')], ['A'], [a], {
+    timeOff: [{
+      employee_id: 'A', start_date: WED, end_date: WED, time_off_type: 'partial',
+      partial_days: [{ date: WED, type: 'custom_hours', start_time: '12:00', end_time: '23:59' }],
+    }],
+  })
+  expect(issues.some(i => i.code === 'time_off'), 'partial off-window overlapping the shift still blocks (true positive)')
+}
+
+// A full-day time off still blocks (regression guard for the common case).
+{
+  const a = emp('A', ['Lifeguard'])
+  const issues = run([pmShift('A')], ['A'], [a], {
+    timeOff: [{ employee_id: 'A', start_date: WED, end_date: WED, time_off_type: 'full_day' }],
+  })
+  expect(issues.some(i => i.code === 'time_off'), 'full_day time off still blocks the whole day')
+}
+
+// A partial off on a DIFFERENT day than the shift does not block.
+{
+  const a = emp('A', ['Lifeguard'])
+  const issues = run([pmShift('A', WED)], ['A'], [a], {
+    timeOff: [{
+      employee_id: 'A', start_date: '2026-06-22', end_date: '2026-06-26', time_off_type: 'partial',
+      partial_days: [{ date: '2026-06-25', type: 'custom_hours', start_time: '00:00', end_time: '23:59' }],
+    }],
+  })
+  expect(!issues.some(i => i.code === 'time_off'), 'a partial off on another day does not block this shift')
+}
+
+// shift_off partial: blocks only the named shift.
+{
+  const a = emp('A', ['Lifeguard'])
+  const matchIssues = run([pmShift('A')], ['A'], [a], {
+    timeOff: [{
+      employee_id: 'A', start_date: WED, end_date: WED, time_off_type: 'partial',
+      partial_days: [{ date: WED, type: 'shift_off', shift_name: 'PM', start_time: null, end_time: null }],
+    }],
+  })
+  expect(matchIssues.some(i => i.code === 'time_off'), 'shift_off partial blocks the matching named shift')
+  const noMatchIssues = run([pmShift('A')], ['A'], [a], {
+    timeOff: [{
+      employee_id: 'A', start_date: WED, end_date: WED, time_off_type: 'partial',
+      partial_days: [{ date: WED, type: 'shift_off', shift_name: 'AM', start_time: null, end_time: null }],
+    }],
+  })
+  expect(!noMatchIssues.some(i => i.code === 'time_off'), 'shift_off partial for a different shift does not block')
+}
+
+// Back-compat: a legacy time-off row with no time_off_type still blocks whole-day.
+{
+  const a = emp('A', ['Lifeguard'])
+  const issues = run([pmShift('A')], ['A'], [a], {
+    timeOff: [{ employee_id: 'A', start_date: '2026-06-23', end_date: '2026-06-25' }],
+  })
+  expect(issues.some(i => i.code === 'time_off'), 'legacy time-off row (no type) still blocks whole-day')
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`)
   process.exit(1)

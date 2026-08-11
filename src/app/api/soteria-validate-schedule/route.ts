@@ -12,6 +12,7 @@ import {
   type ValidatorShiftRequirement,
   type ValidatorExperienceRule,
   type ValidatorSexCoverage,
+  type ValidatorPartialDayOff,
 } from '@/lib/soteria/validateScheduleEdit'
 
 // SOTERIA-SCOPE-1 (2026-07-21): the LLM "soft warning" pass was REMOVED. It was
@@ -118,7 +119,7 @@ export async function POST(req: NextRequest) {
         .eq('active', true)
         .in('employee_id', touchedEmployeeIds.length > 0 ? touchedEmployeeIds : noTouch),
       supabase.from('time_off_requests')
-        .select('employee_id, start_date, end_date, status')
+        .select('employee_id, start_date, end_date, status, time_off_type, partial_days')
         .eq('company_id', company_id)
         .eq('status', 'approved'),
       supabase.from('employee_conflicts')
@@ -241,7 +242,13 @@ export async function POST(req: NextRequest) {
       employeesById,
       availByEmp,
       customByEmp,
-      timeOff: (timeOff ?? []).map(t => ({ employee_id: t.employee_id, start_date: t.start_date, end_date: t.end_date })),
+      timeOff: (timeOff ?? []).map(t => ({
+        employee_id: t.employee_id,
+        start_date: t.start_date,
+        end_date: t.end_date,
+        time_off_type: (t as { time_off_type?: string | null }).time_off_type ?? null,
+        partial_days: (t as { partial_days?: ValidatorPartialDayOff[] | null }).partial_days ?? null,
+      })),
       conflicts: (conflicts ?? []).map(c => ({ employee_id_1: c.employee_id_1, employee_id_2: c.employee_id_2, severity: c.severity })),
       maxConsecutiveDays,
       touchedCells,
