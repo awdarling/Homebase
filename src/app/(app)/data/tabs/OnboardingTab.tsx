@@ -6,19 +6,27 @@ import { useCompany } from '@/lib/hooks/useCompany'
 import type { Employee } from '@/lib/types'
 
 type OnboardingStatus = 'not_started' | 'in_progress' | 'complete' | 'timed_out' | 'skipped'
-type FilterType = 'all' | 'not_started' | 'in_progress' | 'complete' | 'flagged'
+type FilterType = 'all' | 'not_started' | 'in_progress' | 'complete' | 'flagged' | 'opted_out'
+// Communication (SMS consent) status, derived from the opt-in / opt-out events —
+// tracks who has consented and who has since opted out, regardless of when it
+// happened, so a manager can always see why someone is (or isn't) getting texts.
+type CommsStatus = 'opted_in' | 'resubscribed' | 'declined' | 'opted_out' | 'unknown'
 
 interface OnboardingMeta {
   employee_id?: string
   employee_name?: string
   email?: string
+  email_collected?: boolean
   role?: string
+  role_collected?: boolean
   availability_raw?: string
   availability_parsed?: unknown
   weekly_hours?: number
+  total_weekly_hours?: number
   flagged_low_availability?: boolean
   time_off?: string | boolean
   has_time_off?: boolean
+  time_off_submitted?: boolean
 }
 
 interface MemoryContent {
@@ -58,9 +66,30 @@ interface EmployeeOnboardingRow {
   roleCollected: boolean
   timeOffSubmitted: boolean
   completedAt: string | null
+  commsStatus: CommsStatus
+  commsAt: string | null
 }
 
 const ONBOARDING_ACTIONS = ['onboarding_complete', 'onboarding_timeout', 'onboarding_skipped_no_phone']
+// SMS consent lifecycle events (Aegis writes these). The tab surfaces the LATEST
+// one per employee as their Communication status.
+const CONSENT_ACTIONS = ['employee_opt_in_confirmed', 'employee_opt_in_declined', 'employee_opted_out', 'employee_resubscribed']
+
+const COMMS_CONFIG: Record<CommsStatus, { label: string; color: string; bg: string; border: string }> = {
+  opted_in:     { label: 'Opted in',      color: 'var(--status-ready-text)',   bg: 'var(--status-ready-bg)',   border: 'var(--status-ready-border)' },
+  resubscribed: { label: 'Re-subscribed', color: 'var(--status-ready-text)',   bg: 'var(--status-ready-bg)',   border: 'var(--status-ready-border)' },
+  declined:     { label: 'Declined',      color: 'var(--text-muted)',          bg: 'var(--bg-surface-3)',      border: 'var(--border-default)' },
+  opted_out:    { label: 'Opted out',     color: 'var(--status-blocked-text)', bg: 'var(--status-blocked-bg)', border: 'var(--status-blocked-border)' },
+  unknown:      { label: '—',             color: 'var(--text-disabled)',       bg: 'transparent',              border: 'transparent' },
+}
+
+function commsStatusFromAction(action: string | undefined): CommsStatus {
+  return action === 'employee_opt_in_confirmed' ? 'opted_in'
+    : action === 'employee_resubscribed'        ? 'resubscribed'
+    : action === 'employee_opt_in_declined'     ? 'declined'
+    : action === 'employee_opted_out'           ? 'opted_out'
+    : 'unknown'
+}
 
 const STATUS_CONFIG: Record<OnboardingStatus, { label: string; color: string; bg: string; border: string }> = {
   not_started: { label: 'Not Started', color: 'var(--text-muted)',          bg: 'var(--bg-surface-3)',      border: 'var(--border-default)' },
@@ -155,6 +184,31 @@ function StatusBadge({ status }: { status: OnboardingStatus }) {
   )
 }
 
+function CommsBadge({ status, at }: { status: CommsStatus; at: string | null }) {
+  const c = COMMS_CONFIG[status]
+  if (status === 'unknown') {
+    return <span style={{ color: 'var(--text-disabled)', fontSize: 12 }}>—</span>
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start' }}>
+      <span style={{
+        display: 'inline-block',
+        padding: '2px 8px',
+        borderRadius: 'var(--radius-pill)',
+        fontSize: 11, fontWeight: 500,
+        background: c.bg, color: c.color,
+        border: `1px solid ${c.border}`,
+        whiteSpace: 'nowrap',
+      }}>
+        {c.label}
+      </span>
+      {at && (
+        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{formatDateTime(at)}</span>
+      )}
+    </div>
+  )
+}
+
 function LowAvailBadge() {
   return (
     <span style={{
@@ -220,7 +274,7 @@ export default function OnboardingTab() {
 
     const [empRes, logsRes] = await Promise.all([
       supabase.from('employees').select('*').eq('company_id', COMPANY_ID).eq('active', true).order('name'),
-      supabase.from('activity_log').select('*').eq('company_id', COMPANY_ID).in('action', ONBOARDING_ACTIONS).order('created_at', { ascending: false }),
+      supabase.from('activity_log').select('*').eq('company_id', COMPANY_ID).in('action', [...ONBOARDING_ACTIONS, ...CONSENT_ACTIONS]).order('created_at', { ascending: false }),
     ])
 
     let memoryRows: AegisMemoryRow[] = []
@@ -238,12 +292,27 @@ export default function OnboardingTab() {
 
     setActivityEntries(logList)
 
+    // Onboarding-status logs drive the Status column; consent-lifecycle logs drive
+    // the Communication column. Split them so a recent opt-out never gets read as
+    // an onboarding status (and vice-versa). logList is newest-first, so the first
+    // match per employee is the most recent.
+    const onboardingLogs = logList.filter((l) => ONBOARDING_ACTIONS.includes(l.action))
+    const consentLogs = logList.filter((l) => CONSENT_ACTIONS.includes(l.action))
+
     // Index logs by employee_id (from metadata or entity_id), keep most recent per employee
     const logByEmpId = new Map<string, ActivityEntry>()
-    for (const log of logList) {
+    for (const log of onboardingLogs) {
       const meta = log.metadata as OnboardingMeta | null
       const empId = meta?.employee_id ?? log.entity_id
       if (empId && !logByEmpId.has(empId)) logByEmpId.set(empId, log)
+    }
+
+    // Most-recent consent event per employee → their Communication status.
+    const commsByEmpId = new Map<string, ActivityEntry>()
+    for (const log of consentLogs) {
+      const meta = log.metadata as OnboardingMeta | null
+      const empId = meta?.employee_id ?? log.entity_id
+      if (empId && !commsByEmpId.has(empId)) commsByEmpId.set(empId, log)
     }
 
     // Index aegis_memory by employee_id (from content JSON) and by phone (from source)
@@ -266,6 +335,10 @@ export default function OnboardingTab() {
       const log = logByEmpId.get(emp.id)
       const memRow = memByEmpId.get(emp.id) ?? (emp.contact_phone ? memByPhone.get(emp.contact_phone) : undefined)
 
+      const comms = commsByEmpId.get(emp.id)
+      const commsStatus = commsStatusFromAction(comms?.action)
+      const commsAt = comms?.created_at ?? null
+
       if (log) {
         const meta = log.metadata as OnboardingMeta | null
         const status: OnboardingStatus =
@@ -283,12 +356,17 @@ export default function OnboardingTab() {
           currentStep: null,
           availabilityFormatted: formatted,
           availabilityRaw: raw,
-          weeklyHours: meta?.weekly_hours ?? null,
+          // Aegis writes total_weekly_hours / email_collected / role_collected /
+          // time_off_submitted; older rows used the shorter names. Read both so
+          // these columns reflect what was actually collected.
+          weeklyHours: meta?.total_weekly_hours ?? meta?.weekly_hours ?? null,
           flaggedLow: !!meta?.flagged_low_availability,
-          emailCollected: !!meta?.email,
-          roleCollected: !!meta?.role,
-          timeOffSubmitted: !!(meta?.time_off || meta?.has_time_off),
+          emailCollected: !!(meta?.email_collected ?? meta?.email),
+          roleCollected: !!(meta?.role_collected ?? meta?.role),
+          timeOffSubmitted: !!(meta?.time_off_submitted ?? meta?.time_off ?? meta?.has_time_off),
           completedAt: log.created_at,
+          commsStatus,
+          commsAt,
         }
       }
 
@@ -308,6 +386,8 @@ export default function OnboardingTab() {
           roleCollected: !!content.role,
           timeOffSubmitted: false,
           completedAt: null,
+          commsStatus,
+          commsAt,
         }
       }
 
@@ -325,6 +405,8 @@ export default function OnboardingTab() {
         roleCollected: false,
         timeOffSubmitted: false,
         completedAt: null,
+        commsStatus,
+        commsAt,
       }
     })
 
@@ -338,6 +420,7 @@ export default function OnboardingTab() {
     if (filter === 'in_progress') return r.status === 'in_progress'
     if (filter === 'complete')    return r.status === 'complete'
     if (filter === 'flagged')     return r.flaggedLow
+    if (filter === 'opted_out')   return r.commsStatus === 'opted_out'
     return true
   })
 
@@ -362,10 +445,10 @@ export default function OnboardingTab() {
     <div>
       {/* Filters */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, alignItems: 'center' }}>
-        {(['all', 'not_started', 'in_progress', 'complete', 'flagged'] as FilterType[]).map((f) => {
+        {(['all', 'not_started', 'in_progress', 'complete', 'flagged', 'opted_out'] as FilterType[]).map((f) => {
           const labels: Record<FilterType, string> = {
             all: 'All', not_started: 'Not Started', in_progress: 'In Progress',
-            complete: 'Complete', flagged: 'Flagged',
+            complete: 'Complete', flagged: 'Flagged', opted_out: 'Opted Out',
           }
           return (
             <button
@@ -407,19 +490,21 @@ export default function OnboardingTab() {
         ) : (
           <table className="data-table" style={{ tableLayout: 'fixed', width: '100%' }}>
             <colgroup>
-              <col style={{ width: '15%' }} />
-              <col style={{ width: '13%' }} />
-              <col style={{ width: '26%' }} />
-              <col style={{ width: '7%' }} />
+              <col style={{ width: '14%' }} />
+              <col style={{ width: '11%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '21%' }} />
               <col style={{ width: '6%' }} />
               <col style={{ width: '6%' }} />
+              <col style={{ width: '6%' }} />
               <col style={{ width: '7%' }} />
-              <col style={{ width: '13%' }} />
+              <col style={{ width: '11%' }} />
             </colgroup>
             <thead>
               <tr>
                 <th>Employee</th>
                 <th>Status</th>
+                <th>Comms</th>
                 <th>Availability</th>
                 <th>Hrs/wk</th>
                 <th>Email</th>
@@ -451,6 +536,9 @@ export default function OnboardingTab() {
                         </div>
                       )}
                     </div>
+                  </td>
+                  <td>
+                    <CommsBadge status={row.commsStatus} at={row.commsAt} />
                   </td>
                   <td>
                     {row.availabilityFormatted ? (
