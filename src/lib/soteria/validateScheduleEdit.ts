@@ -222,6 +222,13 @@ export function resolveEffectiveAvailability(
   const fallback = { slots: normal, customApplied: false }
   if (!custom || !custom.active) return fallback
   if (custom.end_date && custom.end_date < weekStart) return fallback
+  // Symmetric with the end gate (Finding 3): don't apply a future-effective
+  // override before it starts. A week is in-window iff
+  //   effective_start_date <= weekStart <= end_date.
+  // NULL/undefined effective_start_date = in effect immediately (back-compat).
+  // Whole-week granularity, matching the end gate: a week whose week_start is
+  // before the effective start uses normal availability for the WHOLE week.
+  if (custom.effective_start_date && custom.effective_start_date > weekStart) return fallback
 
   const toSlots = (ps: CustomAvailabilityPattern[]): ValidatorAvailability[] =>
     ps.map(p => ({ day_of_week: p.day_of_week, start_time: p.start_time, end_time: p.end_time }))

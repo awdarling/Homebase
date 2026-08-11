@@ -9,6 +9,7 @@
 
 import {
   validateScheduleEdit,
+  resolveEffectiveAvailability,
   type ValidatorAssignment,
   type ValidatorEmployee,
   type ValidatorAvailability,
@@ -325,6 +326,76 @@ function run(
     timeOff: [{ employee_id: 'A', start_date: '2026-06-23', end_date: '2026-06-25' }],
   })
   expect(issues.some(i => i.code === 'time_off'), 'legacy time-off row (no type) still blocks whole-day')
+}
+
+// ── Finding 3: future-effective custom availability must NOT apply early ────────
+// The symmetric start gate: a custom override applies only for weeks whose
+// week_start is on/after effective_start_date. WEEK_START = 2026-06-22 (Mon).
+const NARROW_MON = [{ day_of_week: 1, start_time: '09:00', end_time: '12:00' }] // only Mon 9–12
+
+// effective_start_date in the FUTURE relative to the week → custom does not apply.
+{
+  const custom: CustomAvailability = {
+    id: 'ca-fut', employee_id: 'A', company_id: 'c', type: 'date_limited',
+    effective_start_date: '2026-07-06', end_date: null,
+    cycle_weeks: null, cycle_start_date: null,
+    patterns: NARROW_MON, active: true, created_at: '2026-01-01T00:00:00Z',
+  }
+  const eff = resolveEffectiveAvailability(WEEK_START, allWeekAvail(), custom)
+  expect(!eff.customApplied, 'a future-effective override does NOT apply to an earlier week (resolver falls back to normal)')
+}
+
+// A future-effective override does not block a shift this week (end-to-end).
+{
+  const a = emp('A', ['Lifeguard'])
+  const custom: CustomAvailability = {
+    id: 'ca-fut2', employee_id: 'A', company_id: 'c', type: 'date_limited',
+    effective_start_date: '2026-07-06', end_date: null,
+    cycle_weeks: null, cycle_start_date: null,
+    patterns: NARROW_MON, active: true, created_at: '2026-01-01T00:00:00Z',
+  }
+  const issues = run([pmShift('A')], ['A'], [a], { customByEmp: new Map([['A', custom]]) })
+  expect(!issues.some(i => i.code === 'custom_availability'), 'future-effective override does not block this week’s shift')
+}
+
+// effective_start_date on/before the week → the override applies (and here it
+// does NOT cover the Wed PM shift, so it correctly blocks).
+{
+  const a = emp('A', ['Lifeguard'])
+  const custom: CustomAvailability = {
+    id: 'ca-now', employee_id: 'A', company_id: 'c', type: 'date_limited',
+    effective_start_date: '2026-06-15', end_date: null,
+    cycle_weeks: null, cycle_start_date: null,
+    patterns: NARROW_MON, active: true, created_at: '2026-01-01T00:00:00Z',
+  }
+  const eff = resolveEffectiveAvailability(WEEK_START, allWeekAvail(), custom)
+  expect(eff.customApplied, 'an override whose effective start is on/before the week applies')
+  const issues = run([pmShift('A')], ['A'], [a], { customByEmp: new Map([['A', custom]]) })
+  expect(issues.some(i => i.code === 'custom_availability'), 'an active override that doesn’t cover the shift still blocks')
+}
+
+// effective_start_date exactly == weekStart → applies (inclusive boundary).
+{
+  const custom: CustomAvailability = {
+    id: 'ca-eq', employee_id: 'A', company_id: 'c', type: 'date_limited',
+    effective_start_date: WEEK_START, end_date: null,
+    cycle_weeks: null, cycle_start_date: null,
+    patterns: NARROW_MON, active: true, created_at: '2026-01-01T00:00:00Z',
+  }
+  const eff = resolveEffectiveAvailability(WEEK_START, allWeekAvail(), custom)
+  expect(eff.customApplied, 'effective_start_date == week_start applies (inclusive)')
+}
+
+// null effective_start_date → applies immediately (back-compat, unchanged).
+{
+  const custom: CustomAvailability = {
+    id: 'ca-null', employee_id: 'A', company_id: 'c', type: 'date_limited',
+    effective_start_date: null, end_date: null,
+    cycle_weeks: null, cycle_start_date: null,
+    patterns: NARROW_MON, active: true, created_at: '2026-01-01T00:00:00Z',
+  }
+  const eff = resolveEffectiveAvailability(WEEK_START, allWeekAvail(), custom)
+  expect(eff.customApplied, 'null effective_start_date applies immediately (back-compat)')
 }
 
 if (failures > 0) {

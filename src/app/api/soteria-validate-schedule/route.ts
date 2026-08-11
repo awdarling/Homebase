@@ -113,8 +113,10 @@ export async function POST(req: NextRequest) {
         .select('employee_id, day_of_week, start_time, end_time')
         .eq('company_id', company_id)
         .in('employee_id', touchedEmployeeIds.length > 0 ? touchedEmployeeIds : noTouch),
+      // select('*') so effective_start_date (migration 019, Finding 3) is picked
+      // up automatically once the column exists — no deploy-order coupling.
       supabase.from('custom_availability')
-        .select('id, employee_id, company_id, type, end_date, cycle_weeks, cycle_start_date, patterns, active, created_at')
+        .select('*')
         .eq('company_id', company_id)
         .eq('active', true)
         .in('employee_id', touchedEmployeeIds.length > 0 ? touchedEmployeeIds : noTouch),
