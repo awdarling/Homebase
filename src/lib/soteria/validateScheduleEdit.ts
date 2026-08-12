@@ -61,10 +61,27 @@ export interface ValidatorAssignment {
   hours: number
 }
 
+// A single per-date off-window inside a `partial` time-off request
+// (time_off_requests.partial_days). `custom_hours` carries a clock window
+// (start_time/end_time); `shift_off` names a specific shift (shift_name) and may
+// have null times. Shape mirrors PartialDayDetail in @/lib/types.
+export interface ValidatorPartialDayOff {
+  date: string
+  type?: string | null
+  shift_name?: string | null
+  start_time?: string | null
+  end_time?: string | null
+}
+
 export interface ValidatorTimeOff {
   employee_id: string
   start_date: string
   end_date: string
+  // Absent/null = treat as a whole-day block (back-compat with older callers).
+  // 'partial' = only the windows in partial_days are off; anything else is a
+  // full-day block across [start_date, end_date].
+  time_off_type?: string | null
+  partial_days?: ValidatorPartialDayOff[] | null
 }
 
 export interface ValidatorConflict {
@@ -232,6 +249,39 @@ export function resolveEffectiveAvailability(
 
 function availabilityContains(slots: ValidatorAvailability[], dow: number, start: string, end: string): boolean {
   return slots.some(s => s.day_of_week === dow && hhmm(s.start_time) <= hhmm(start) && hhmm(s.end_time) >= hhmm(end))
+}
+
+// Does an approved time-off request actually conflict with THIS assignment?
+// - Out of the request's date range → no conflict.
+// - Not a 'partial' request (full_day / null / anything else) → whole-day block.
+// - 'partial' → conflict ONLY when an off-window on this date actually intersects
+//   the shift: overlap the clock window (custom_hours) or match the named shift
+//   (shift_off). A partial with no window detail for this date can't be proven
+//   non-overlapping, so it blocks conservatively. A partial whose off-days don't
+//   include this shift's date does NOT block (this is the live-ops false-positive
+//   fix — a 09:00–13:00 partial no longer blocks an evening shift).
+export interface TimeOffBlock { partial: boolean; window: string | null }
+export function timeOffBlock(t: ValidatorTimeOff, a: ValidatorAssignment): TimeOffBlock | null {
+  if (!(a.date >= t.start_date && a.date <= t.end_date)) return null
+  const type = t.time_off_type ?? 'full_day'
+  if (type !== 'partial') return { partial: false, window: null }
+
+  const windows = (t.partial_days ?? []).filter(pd => pd && pd.date === a.date)
+  if (windows.length === 0) return null // partial off, but not on this shift's day
+
+  for (const w of windows) {
+    if (w.start_time && w.end_time) {
+      if (overlaps(a.start_time, a.end_time, w.start_time, w.end_time)) {
+        return { partial: true, window: `${hhmm(w.start_time)}–${hhmm(w.end_time)}` }
+      }
+    } else if (w.shift_name) {
+      if (w.shift_name === a.shift_name) return { partial: true, window: w.shift_name }
+    } else {
+      // Off this date, but the window is unspecified — can't prove non-overlap.
+      return { partial: true, window: null }
+    }
+  }
+  return null
 }
 
 // ── shift-level rule helpers (mirror the Aegis engine) ──────────────────────────
@@ -452,11 +502,15 @@ export function validateScheduleEdit(input: ValidateScheduleEditInput): Schedule
           suggestion: `Assign someone whose roles include ${a.role}, or update ${emp.name}'s qualified roles.`,
         })
       }
-      // approved time off
-      if (empTOs.some(t => a.date >= t.start_date && a.date <= t.end_date)) {
+      // approved time off — partial-day aware: only block when the off-window
+      // actually intersects the shift (see timeOffBlock).
+      const toBlock = empTOs.map(t => timeOffBlock(t, a)).find((b): b is TimeOffBlock => b != null)
+      if (toBlock) {
         issues.push({
           severity: 'error', employee_name: emp.name, code: 'time_off',
-          description: `${emp.name} has approved time off on ${a.date} but is scheduled for ${a.shift_name}.`,
+          description: toBlock.partial
+            ? `${emp.name} has approved partial time off${toBlock.window ? ` (${toBlock.window})` : ''} on ${a.date} overlapping ${a.shift_name} (${hhmm(a.start_time)}–${hhmm(a.end_time)}).`
+            : `${emp.name} has approved time off on ${a.date} but is scheduled for ${a.shift_name}.`,
           suggestion: `Remove ${emp.name} from ${a.date} or cover the shift with someone else.`,
         })
       }
