@@ -69,7 +69,8 @@ export async function POST(req: NextRequest) {
     ] = await Promise.all([
       supabase.from('employees').select('id, name, qualified_roles, max_weekly_hours').eq('company_id', company_id).eq('active', true),
       supabase.from('availability').select('employee_id, day_of_week, start_time, end_time').eq('company_id', company_id).in('employee_id', touchedEmployeeIds.length > 0 ? touchedEmployeeIds : noEmp),
-      supabase.from('custom_availability').select('id, employee_id, company_id, type, end_date, cycle_weeks, cycle_start_date, patterns, active, created_at').eq('company_id', company_id).eq('active', true).in('employee_id', touchedEmployeeIds.length > 0 ? touchedEmployeeIds : noEmp),
+      // select('*') so effective_start_date (migration 019, Finding 3) is picked up automatically once the column exists.
+      supabase.from('custom_availability').select('*').eq('company_id', company_id).eq('active', true).in('employee_id', touchedEmployeeIds.length > 0 ? touchedEmployeeIds : noEmp),
       supabase.from('time_off_requests').select('employee_id, start_date, end_date, status, time_off_type, partial_days').eq('company_id', company_id).eq('status', 'approved'),
       supabase.from('employee_conflicts').select('employee_id_1, employee_id_2, severity').eq('company_id', company_id),
       supabase.from('schedules').select('week_start').eq('id', schedule_id).is('deleted_at', null).single(),

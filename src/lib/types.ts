@@ -62,6 +62,10 @@ export interface CustomAvailability {
   employee_id: string
   company_id: string
   type: 'date_limited' | 'rotating'
+  // Effective start of the override window (inclusive). NULL/undefined = in
+  // effect immediately (back-compat with rows created before migration 019).
+  // Distinct from cycle_start_date (rotation anchor). See Finding 3.
+  effective_start_date?: string | null
   end_date: string | null
   cycle_weeks: number | null
   cycle_start_date: string | null
