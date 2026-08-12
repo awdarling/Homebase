@@ -32,6 +32,52 @@ function formatDayDate(d: string): string {
   })
 }
 
+// Print an HTML document without opening a popup window. The old path called
+// window.open() AFTER `await fetch(...)`; opening a window after an async gap is
+// no longer treated as a user gesture, so the popup blocker killed it and the
+// handler threw "Popup blocked" — what the manager saw as a crash (Finding 2).
+// A hidden same-document iframe has no popup to block; srcdoc renders the print
+// HTML and the browser's print dialog includes "Save as PDF". Cleans itself up
+// on afterprint, with a timed fallback for browsers that don't fire it.
+function printHtmlViaHiddenIframe(html: string): void {
+  if (typeof document === 'undefined') return
+  const iframe = document.createElement('iframe')
+  iframe.setAttribute('aria-hidden', 'true')
+  iframe.style.position = 'fixed'
+  iframe.style.right = '0'
+  iframe.style.bottom = '0'
+  iframe.style.width = '0'
+  iframe.style.height = '0'
+  iframe.style.border = '0'
+  iframe.srcdoc = html
+
+  let cleanedUp = false
+  const cleanup = () => {
+    if (cleanedUp) return
+    cleanedUp = true
+    setTimeout(() => iframe.remove(), 500)
+  }
+
+  iframe.onload = () => {
+    const win = iframe.contentWindow
+    if (!win) { cleanup(); return }
+    win.addEventListener('afterprint', cleanup)
+    // Let the iframe lay out before printing.
+    setTimeout(() => {
+      try {
+        win.focus()
+        win.print()
+      } catch {
+        cleanup()
+      }
+      // Fallback so a browser that never fires afterprint doesn't leak the node.
+      setTimeout(cleanup, 60000)
+    }, 100)
+  }
+
+  document.body.appendChild(iframe)
+}
+
 const CLOSE_DAY_PHRASE = 'yes, i want to close this day'
 const DELETE_DISTRIBUTED_PHRASE = 'yes, delete this distributed schedule'
 
@@ -174,12 +220,8 @@ function DownloadMenu({ scheduleId, companyId }: { scheduleId: string; companyId
         throw new Error(json.error || `Request failed (${res.status})`)
       }
       const html = await res.text()
-      const win = window.open('', '_blank')
-      if (!win) {
-        throw new Error('Popup blocked. Allow popups to download the PDF.')
-      }
-      win.document.write(html)
-      win.document.close()
+      // Render + print via a hidden iframe (no popup to be blocked — Finding 2).
+      printHtmlViaHiddenIframe(html)
       setOpen(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Download failed')
