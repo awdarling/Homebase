@@ -1135,7 +1135,8 @@ export async function POST(request: NextRequest) {
           employee_id: string
           employee_name: string
           type: 'date_limited' | 'rotating'
-          end_date: string
+          end_date?: string | null
+          effective_start_date?: string | null
           patterns?: { day_of_week: number; start_time: string; end_time: string }[]
           cycle_weeks?: number
           cycle_start_date?: string
@@ -1159,7 +1160,8 @@ export async function POST(request: NextRequest) {
           company_id: companyId,
           employee_id: d.employee_id,
           type: d.type,
-          end_date: d.end_date,
+          end_date: d.end_date ?? null,
+          effective_start_date: d.effective_start_date ?? null,
           cycle_weeks: d.type === 'rotating' ? (d.cycle_weeks ?? null) : null,
           cycle_start_date: d.type === 'rotating' ? (d.cycle_start_date ?? null) : null,
           patterns,
@@ -1173,7 +1175,9 @@ export async function POST(request: NextRequest) {
           action: 'custom_availability_set',
           entity_type: 'custom_availability',
           entity_id: d.employee_id,
-          summary: `Soteria set custom availability for ${d.employee_name} (${d.type}, until ${d.end_date})`,
+          summary: `Soteria set custom availability for ${d.employee_name} (${d.type}${
+            d.effective_start_date ? `, starting ${d.effective_start_date}` : ''
+          }${d.end_date ? `, until ${d.end_date}` : ', open-ended'})`,
         })
 
         return NextResponse.json({ success: true })
