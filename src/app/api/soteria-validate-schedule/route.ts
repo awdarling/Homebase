@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
       { data: experienceRules },
     ] = await Promise.all([
       supabase.from('employees')
-        .select('id, name, primary_role, qualified_roles, max_weekly_hours, sex, is_veteran')
+        .select('id, name, primary_role, qualified_roles, max_weekly_hours, sex, is_veteran, last_day')
         .eq('company_id', company_id)
         .eq('active', true),
       supabase.from('availability')
@@ -158,6 +158,7 @@ export async function POST(req: NextRequest) {
         max_weekly_hours: (e.max_weekly_hours as number) ?? 0,
         sex: (e as { sex?: string | null }).sex ?? undefined,
         is_veteran: (e as { is_veteran?: boolean | null }).is_veteran ?? false,
+        last_day: (e as { last_day?: string | null }).last_day ?? null,
       })
     }
 

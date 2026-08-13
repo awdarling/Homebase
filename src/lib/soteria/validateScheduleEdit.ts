@@ -42,6 +42,10 @@ export interface ValidatorEmployee {
   // that needs them simply doesn't fire for this person.
   sex?: string
   is_veteran?: boolean
+  // Feature B: acknowledged final working day (inclusive). When set and on/before
+  // the week being validated, a NON-BLOCKING advisory fires — the schedule builder
+  // does not yet auto-exclude departing staff, so this reminds the manager to review.
+  last_day?: string | null
 }
 
 export interface ValidatorAvailability {
@@ -134,6 +138,7 @@ export type ScheduleEditIssueCode =
   | 'sex_coverage'
   | 'veteran_rule'
   | 'understaffed'
+  | 'departing_employee'
 
 export interface ScheduleEditIssue {
   severity: 'error' | 'warning'
@@ -623,6 +628,32 @@ export function validateScheduleEdit(input: ValidateScheduleEditInput): Schedule
   }
   if (input.shiftTypes && input.shiftTypes.length > 0 && input.shiftRequirements && input.shiftRequirements.length > 0) {
     issues.push(...evaluateUnderstaffing(input.proposedAssignments, input.shiftTypes, input.shiftRequirements, affectedCells))
+  }
+
+  // ── Departing employees (Feature B — advisory only, never blocks) ─────────────
+  // The schedule builder does NOT yet auto-exclude staff past their last day (that
+  // in-week calculation is future work). So surface a NON-BLOCKING, person-level
+  // reminder for anyone on this schedule whose acknowledged last_day lands on or
+  // before the week being validated — the manager reviews rather than accidentally
+  // scheduling someone who's leaving. Scans ALL assigned people (not just touched),
+  // because a departure should surface regardless of what this edit changed.
+  {
+    const weekEndDate = new Date(`${input.weekStart}T12:00:00Z`)
+    weekEndDate.setUTCDate(weekEndDate.getUTCDate() + 6)
+    const weekEnd = weekEndDate.toISOString().slice(0, 10)
+    const flaggedDeparting = new Set<string>()
+    for (const a of input.proposedAssignments) {
+      if (flaggedDeparting.has(a.employee_id)) continue
+      const emp = input.employeesById.get(a.employee_id)
+      if (!emp || !emp.last_day) continue
+      if (emp.last_day > weekEnd) continue // departure is after this week — nothing to flag yet
+      flaggedDeparting.add(a.employee_id)
+      issues.push({
+        severity: 'warning', employee_name: emp.name, code: 'departing_employee',
+        description: `${emp.name} told us their last day is ${emp.last_day}. The scheduler doesn't automatically remove departing employees yet, so please double-check this schedule.`,
+        suggestion: `Review ${emp.name}'s shifts on/after ${emp.last_day}. (Automatic handling when the schedule builds is a planned improvement.)`,
+      })
+    }
   }
 
   return issues

@@ -35,6 +35,10 @@ export interface Employee {
   aegis_access?: 'manager' | 'employee' | 'blocked'
   is_veteran: boolean
   sex?: string | null
+  // Feature B: acknowledged final working day (inclusive). null = active/no
+  // departure set. A daily Aegis job flips active=false after this date; the
+  // schedule builder excludes the employee from any week starting after it.
+  last_day?: string | null
 }
 
 export interface Availability {

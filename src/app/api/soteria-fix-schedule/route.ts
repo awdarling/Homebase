@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
       { data: conflicts },
       { data: schedule },
     ] = await Promise.all([
-      supabase.from('employees').select('id, name, qualified_roles, max_weekly_hours').eq('company_id', company_id).eq('active', true),
+      supabase.from('employees').select('id, name, qualified_roles, max_weekly_hours, last_day').eq('company_id', company_id).eq('active', true),
       supabase.from('availability').select('employee_id, day_of_week, start_time, end_time').eq('company_id', company_id).in('employee_id', touchedEmployeeIds.length > 0 ? touchedEmployeeIds : noEmp),
       // select('*') so effective_start_date (migration 019, Finding 3) is picked up automatically once the column exists.
       supabase.from('custom_availability').select('*').eq('company_id', company_id).eq('active', true).in('employee_id', touchedEmployeeIds.length > 0 ? touchedEmployeeIds : noEmp),
@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
 
     const employeesById = new Map<string, ValidatorEmployee>()
     for (const e of employees ?? []) {
-      employeesById.set(e.id, { id: e.id, name: e.name, qualified_roles: (e.qualified_roles as string[]) ?? [], max_weekly_hours: (e.max_weekly_hours as number) ?? 0 })
+      employeesById.set(e.id, { id: e.id, name: e.name, qualified_roles: (e.qualified_roles as string[]) ?? [], max_weekly_hours: (e.max_weekly_hours as number) ?? 0, last_day: (e as { last_day?: string | null }).last_day ?? null })
     }
     const availByEmp = new Map<string, ValidatorAvailability[]>()
     for (const av of availability ?? []) {
