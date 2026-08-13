@@ -4,6 +4,7 @@ import { useQuria } from '@/lib/hooks/useQuria'
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { normalizeConflictSeverity } from '@/lib/conflicts/severity'
 import { logActivity as logActivityFn } from '@/lib/activity'
 
 function TrashIcon() {
@@ -37,7 +38,10 @@ export default function ConflictsTab() {
   const [employees, setEmployees] = useState<{ id: string; name: string; primary_role: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ employee_id_1: '', employee_id_2: '', reason: '', severity: 'avoid' as 'avoid' | 'never' })
+  // F2 — the soft 'avoid' severity is removed: a banned pair is always the hard
+  // 'never' rule (the scheduler only ever enforced 'never'; 'avoid' did nothing).
+  // No severity choice in the form anymore.
+  const [form, setForm] = useState({ employee_id_1: '', employee_id_2: '', reason: '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -99,18 +103,18 @@ export default function ConflictsTab() {
       employee_id_1: form.employee_id_1,
       employee_id_2: form.employee_id_2,
       reason: form.reason || null,
-      severity: form.severity,
+      severity: normalizeConflictSeverity(), // F2 — always a hard rule
     }).select().single()
     const emp1 = employees.find((e) => e.id === form.employee_id_1)
     const emp2 = employees.find((e) => e.id === form.employee_id_2)
     if (data) await logActivity(
       'conflict_created',
-      `Added ${form.severity} conflict: ${emp1?.name ?? 'employee'} ↔ ${emp2?.name ?? 'employee'}`,
+      `Added never conflict: ${emp1?.name ?? 'employee'} ↔ ${emp2?.name ?? 'employee'}`,
       data.id
     )
     setSaving(false)
     setShowForm(false)
-    setForm({ employee_id_1: '', employee_id_2: '', reason: '', severity: 'avoid' })
+    setForm({ employee_id_1: '', employee_id_2: '', reason: '' })
     setError('')
     fetchData()
   }
@@ -144,9 +148,8 @@ export default function ConflictsTab() {
         lineHeight: 1.6,
       }}>
         <span style={{ color: 'var(--accent)', fontWeight: 600 }}>Aegis reads this list.</span>
-        {' '}When building schedules, Aegis will avoid placing conflicting employees on the same shift.
-        <strong style={{ color: 'var(--text-primary)' }}> Avoid</strong> means Aegis tries not to schedule them together.
-        <strong style={{ color: 'var(--status-blocked-text)' }}> Never</strong> means Aegis will never schedule them on the same shift.
+        {' '}Any pair you add here is a hard rule —
+        <strong style={{ color: 'var(--status-blocked-text)' }}> Aegis will never place them on the same shift.</strong>
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
@@ -165,7 +168,7 @@ export default function ConflictsTab() {
           <div className="empty-state">
             <div className="empty-state-title">No conflicts recorded</div>
             <div className="empty-state-desc">
-              Add employee pairs that Aegis should avoid or never schedule together.
+              Add employee pairs that Aegis should never schedule together.
             </div>
           </div>
         ) : (
@@ -195,18 +198,24 @@ export default function ConflictsTab() {
               <div style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1 }}>
                 {c.reason ?? '—'}
               </div>
-              <span style={{
-                padding: '3px 10px',
-                borderRadius: 'var(--radius-pill)',
-                fontSize: 11,
-                fontWeight: 500,
-                background: c.severity === 'never' ? 'var(--status-blocked-bg)' : 'var(--status-action-bg)',
-                color: c.severity === 'never' ? 'var(--status-blocked-text)' : 'var(--status-action-text)',
-                border: `1px solid ${c.severity === 'never' ? 'var(--status-blocked-border)' : 'var(--status-action-border)'}`,
-                minWidth: 52,
-                textAlign: 'center' as const,
-              }}>
-                {c.severity === 'never' ? 'Never' : 'Avoid'}
+              {/* F2 — 'never' is the only rule. Any lingering legacy 'avoid' row is
+                  shown honestly as not-enforced so a manager can remove + re-add it. */}
+              <span
+                title={c.severity === 'never'
+                  ? 'Aegis will never schedule this pair together.'
+                  : "Legacy soft 'avoid' — this is NOT enforced by scheduling. Remove it and add the pair again to make it a hard rule."}
+                style={{
+                  padding: '3px 10px',
+                  borderRadius: 'var(--radius-pill)',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  background: c.severity === 'never' ? 'var(--status-blocked-bg)' : 'var(--bg-surface-3)',
+                  color: c.severity === 'never' ? 'var(--status-blocked-text)' : 'var(--text-muted)',
+                  border: `1px solid ${c.severity === 'never' ? 'var(--status-blocked-border)' : 'var(--border-default)'}`,
+                  minWidth: 52,
+                  textAlign: 'center' as const,
+                }}>
+                {c.severity === 'never' ? 'Never' : 'Avoid (not enforced)'}
               </span>
               <button
                 onClick={() => handleRemove(c)}
@@ -262,12 +271,16 @@ export default function ConflictsTab() {
                   {employees.map((e) => <option key={e.id} value={e.id}>{e.name} ({e.primary_role})</option>)}
                 </select>
               </div>
-              <div className="form-group">
-                <label className="form-label">Severity</label>
-                <select className="form-select" value={form.severity} onChange={(e) => setForm((f) => ({ ...f, severity: e.target.value as 'avoid' | 'never' }))}>
-                  <option value="avoid">Avoid — schedule together only if necessary</option>
-                  <option value="never">Never — do not schedule together under any circumstances</option>
-                </select>
+              <div style={{
+                fontSize: 12,
+                color: 'var(--text-secondary)',
+                background: 'var(--bg-surface-2)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-md)',
+                padding: '10px 12px',
+                lineHeight: 1.5,
+              }}>
+                This pair will <strong style={{ color: 'var(--status-blocked-text)' }}>never</strong> be scheduled on the same shift.
               </div>
               <div className="form-group">
                 <label className="form-label">Reason <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
