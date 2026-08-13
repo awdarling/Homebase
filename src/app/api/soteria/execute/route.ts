@@ -7,6 +7,7 @@ import { planConfiguration, summarizePlan, type ConfigBundle, type ExistingConfi
 import { planRosterImport, type RosterRowInput } from '@/lib/soteria/rosterImport'
 import { inferShiftStructureFromSchedule, type ScheduleRowInput } from '@/lib/soteria/scheduleInference'
 import { postToAegisInternal, AegisInternalError, AegisInternalConfigError } from '@/lib/aegis-internal'
+import { normalizeConflictSeverity } from '@/lib/conflicts/severity'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -908,16 +909,12 @@ export async function POST(request: NextRequest) {
           employee_id_1: string
           employee_id_2: string
           reason?: string | null
-          severity?: string
         }
-        const ALLOWED_SEVERITIES = ['avoid', 'never'] as const
-        const severity = d.severity ?? 'avoid'
-        if (!ALLOWED_SEVERITIES.includes(severity as typeof ALLOWED_SEVERITIES[number])) {
-          return NextResponse.json(
-            { error: `Severity must be either "avoid" or "never".` },
-            { status: 400 },
-          )
-        }
+        // F2 — a banned pair is ALWAYS the hard 'never' rule. The soft 'avoid'
+        // option was removed (the scheduler only ever enforced 'never'); force
+        // 'never' here so no soft pair can be created regardless of the model's
+        // output.
+        const severity = normalizeConflictSeverity()
         const { data, error } = await supabase.from('employee_conflicts').insert({
           company_id: companyId,
           employee_id_1: d.employee_id_1,
@@ -2206,23 +2203,23 @@ export async function POST(request: NextRequest) {
 
       case 'update_conflict': {
         const d = action.data as { id?: string; severity?: string; reason?: string | null }
-        const ALLOWED_SEVERITIES = ['avoid', 'never'] as const
         if (!d.id || typeof d.id !== 'string') {
           return NextResponse.json({ error: 'I need to know which conflict to update.' }, { status: 400 })
         }
         const updates: Record<string, unknown> = {}
+        // F2 — severity is no longer a manager knob: every conflict is the hard
+        // 'never' rule. If a severity somehow arrives, normalize it to 'never'
+        // (this also lets a legacy soft 'avoid' pair be upgraded to the hard rule);
+        // an 'avoid' can never be written back.
         if (d.severity !== undefined) {
-          if (!ALLOWED_SEVERITIES.includes(d.severity as typeof ALLOWED_SEVERITIES[number])) {
-            return NextResponse.json({ error: `Severity must be either "avoid" or "never".` }, { status: 400 })
-          }
-          updates.severity = d.severity
+          updates.severity = normalizeConflictSeverity(d.severity)
         }
         if (d.reason !== undefined) {
           updates.reason = d.reason === null ? null : String(d.reason).trim() || null
         }
         if (Object.keys(updates).length === 0) {
           return NextResponse.json(
-            { error: 'Tell me what to change on this conflict — severity or reason.' },
+            { error: 'Tell me what to change on this conflict — the reason.' },
             { status: 400 },
           )
         }

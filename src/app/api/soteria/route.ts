@@ -161,7 +161,7 @@ Whenever a manager expresses a scheduling preference, intent, or constraint:
 Preference → rule mapping (use the existing actions listed below; shapes are in the action list + CONSTRAINT VOCABULARY):
 - "no doubles" / "no overtime" / "nobody works two overlapping shifts" → update_policy (doubles_policy)
 - "experienced / veteran staff on <shift>" / "at least N veterans on <shift>" → add_shift_experience_rule
-- "keep <A> and <B> apart" / "never schedule them together" → add_conflict (severity 'never'; 'avoid' only if they hedge)
+- "keep <A> and <B> apart" / "never schedule them together" / "don't put <A> with <B>" → add_conflict (always a hard rule — Aegis never co-schedules the pair; there is no soft option)
 - "we're closed <date>" / "<event> on <date>" → add_event (a closure, or event_shifts if it changes staffing)
 - "<person> is a <role>" / "<person> maxes at N hours" / "<person> earns $X" / "<person> is a veteran" → update_employee
 - "<person>'s last day is <date>" / "set <person>'s last day to <date>" / "<person> is leaving on <date>" → update_employee with updates.last_day (this ACKNOWLEDGES a departure Aegis flagged; do NOT also set active:false — the daily job handles deactivation). "<person> isn't leaving anymore / un-quit / rehire <person>" → update_employee with last_day:null (and active:true for a rehire).
@@ -355,8 +355,8 @@ Action types:
 - delete_role_requirement — data: { id } — Deletes a single role requirement (one row in shift_requirements).
 - update_policy — data: { policy_key, policy_value, policy_value_json?, policy_type?, description? } — Sets or updates a policy. For structured rules (the 7 CONSTRAINT VOCABULARY types), set policy_value_json to the parser-accepted shape and policy_value to a human-readable label (e.g., policy_value: "Monday", policy_value_json: "monday" for week_start_day). For unstructured legacy policies, set policy_value only.
 - delete_policy — data: { id, policy_key }
-- add_conflict — data: { employee_id_1, employee_id_2, reason?, severity?: 'avoid' | 'never' } — 'avoid' is a soft conflict (engine deprioritizes co-scheduling but allows it); 'never' is a hard conflict (engine refuses to co-schedule under any circumstances). Defaults to 'avoid' if omitted. Do not emit any other value.
-- update_conflict — data: { id, severity?: 'avoid' | 'never', reason? } — Edits an existing conflict pair. At least one of severity or reason must be provided. severity, if provided, must be 'avoid' or 'never'.
+- add_conflict — data: { employee_id_1, employee_id_2, reason? } — Adds a banned pair. A conflict is ALWAYS a hard rule: Aegis refuses to co-schedule the two under any circumstances. There is no soft/'avoid' option — do not offer one or emit a severity field.
+- update_conflict — data: { id, reason? } — Edits an existing conflict pair's reason. (Severity isn't adjustable — every conflict is a hard 'never' rule.)
 - delete_conflict — data: { id } — Removes a conflict pair so the engine will once again consider co-scheduling those two employees normally.
 - add_role — data: { name, color? } — Creates a new role in the company role list. color, if provided, must be a hex color like "#10b981". Refuses duplicates by name. After creating, the role is available to assign to employees and to use in shift role requirements.
 - update_role — data: { id, name?, color? } — Edits an existing role. At least one of name or color must be provided. When the name changes, the new name automatically propagates to every employee's primary_role and qualified_roles, and to every shift requirement that accepts the old role. Tell the manager what was updated, including how many references were touched.
