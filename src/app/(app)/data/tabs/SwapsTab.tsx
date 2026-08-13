@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useCompany } from '@/lib/hooks/useCompany'
+import { swapRowDescriptor } from '@/lib/aegis-actions/labels'
 
 interface SwapRequest {
   id: string
@@ -156,7 +157,7 @@ export default function SwapsTab() {
       )}
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16, gap: 10 }}>
         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          Shift swap requests initiated by employees or Aegis.
+          Shift pickup &amp; swap requests from employees or Aegis — one employee gives up a shift, another picks it up.
           {pendingCount > 0 && (
             <span style={{ marginLeft: 8, color: 'var(--accent)', fontWeight: 500 }}>
               {pendingCount} awaiting your approval.
@@ -185,6 +186,9 @@ export default function SwapsTab() {
           const config = STATUS_CONFIG[swap.status]
           const isPendingManager = swap.status === 'pending_manager'
           const isActing = acting === swap.id
+          // B5 — these rows are one-way handoffs (giver → taker), not mutual
+          // swaps. Shared vocabulary with the action-result pages.
+          const descriptor = swapRowDescriptor(!!swap.receiving_employee_id)
 
           return (
             <div
@@ -223,18 +227,33 @@ export default function SwapsTab() {
                 </div>
               </div>
 
-              {/* Center: swap details */}
+              {/* Center: pickup / coverage details (one-way giver → taker) */}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                   <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
                     {swap.requesting_employee?.name ?? 'Unknown'}
                   </span>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>↔</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }} title={descriptor.hint}>{descriptor.arrow}</span>
                   <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
                     {swap.receiving_employee?.name ?? (
                       <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>Finding coverage...</span>
                     )}
                   </span>
+                  <span style={{
+                    fontSize: 10,
+                    fontWeight: 500,
+                    color: 'var(--text-muted)',
+                    background: 'var(--bg-surface-2)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-pill)',
+                    padding: '1px 7px',
+                    marginLeft: 2,
+                  }}>
+                    {descriptor.kind}
+                  </span>
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-disabled)', marginBottom: 6 }}>
+                  {descriptor.hint}
                 </div>
                 <div style={{ display: 'flex', gap: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
                   <span>{swap.shift_name} shift</span>
@@ -300,9 +319,9 @@ export default function SwapsTab() {
             borderRadius: 'var(--radius-lg)',
           }}>
             <div className="empty-state">
-              <div className="empty-state-title">No swap requests</div>
+              <div className="empty-state-title">No pickup or swap requests</div>
               <div className="empty-state-desc">
-                When employees or Aegis initiate shift swaps they will appear here for tracking and approval.
+                When employees or Aegis request to give up or pick up a shift, they will appear here for tracking and approval.
               </div>
             </div>
           </div>

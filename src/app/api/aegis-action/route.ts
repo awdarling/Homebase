@@ -2,6 +2,8 @@ import { NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { verifyToken, consumeToken, type ActionType, type TokenRow } from '@/lib/aegis-actions/tokens'
 import { dispatchAction, dispatchSwapProposal } from '@/lib/aegis-actions/dispatcher'
+import { actionResultTitle } from '@/lib/aegis-actions/labels'
+import { AEGIS_LOGO_DATA_URI } from '@/lib/aegis-actions/aegisLogo'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -91,11 +93,12 @@ function renderActionResultPage(opts: {
     background: #000000;
     border-bottom: 2px solid #f97316;
   }
-  .header img {
+  .header .logo {
     width: 56px;
     height: 56px;
     border-radius: 10px;
     display: block;
+    flex-shrink: 0;
   }
   .header .wordmark {
     font-size: 22px;
@@ -154,7 +157,10 @@ function renderActionResultPage(opts: {
 <div class="wrap">
   <div class="card">
     <div class="header">
-      <img src="/aegis-icon.jpg" alt="Aegis">
+      <!-- B5: the real Aegis logo, inlined as a data URI (see aegisLogo.ts) so it
+           renders on every result state without a second network request that a
+           mail-client webview could block. -->
+      <img class="logo" src="${AEGIS_LOGO_DATA_URI}" alt="Aegis" width="56" height="56">
       <span class="wordmark">Aegis</span>
     </div>
     <div class="body">
@@ -239,7 +245,9 @@ function describeAction(action_type: ActionType, payload: Record<string, unknown
 }
 
 function actionTitle(action_type: ActionType): string {
-  return action_type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  // B5 — plain-English titles that distinguish a one-way pickup from a trade
+  // (shared with SwapsTab via lib/aegis-actions/labels).
+  return actionResultTitle(action_type)
 }
 
 // ── Error page ──────────────────────────────────────────────────────────────
