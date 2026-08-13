@@ -45,29 +45,29 @@ export const CATEGORY_LIST: CategoryMeta[] = [
     engineEffect: `Turned all the way up, Aegis always gives the next shift to the person with the fewest hours so far. Turned off, it ignores hours entirely. Most clubs keep it high so the work is shared fairly.`,
     singleton: true,
   },
-  // ── REMOVED FROM THE UI 2026-07-13 (partial_shifts, conflict_resolution) ──
+  // ── REMOVED FROM THE UI: partial_shifts (2026-07-13), conflict_resolution
+  //    (2026-08-13, F1 — Alexander's STRIP call) ──
   // Both were settable but read by NOTHING in the engine (drift D11) — a manager
   // could set them, Soteria and Aegis would confirm, and the schedule came out
   // identical. Rather than ship a rule that silently does nothing, they're pulled
-  // from every surface a user touches. The SCAFFOLDING is deliberately kept —
-  // categorizeByKey(), the formatPolicySummary cases, the modal components, and
-  // the constraint parser still recognise the keys — so these can be switched
-  // back on as a focused feature (partial shifts is real engine work: slot
-  // splitting, partial assignments, wage/coverage) without rebuilding the plumbing.
-  // To re-enable: restore the two CATEGORY_LIST entries below and wire the engine
-  // reader. See DEV_ROADMAP.md.
+  // from every surface a user touches: with no entry here, the Rules page renders
+  // no card for them (it maps over CATEGORY_LIST), so a manager cannot create or
+  // edit one. Any pre-existing dead row in `policies` simply no longer surfaces.
+  // The SCAFFOLDING is deliberately kept — categorizeByKey(), the
+  // formatPolicySummary cases, PartialShiftsModal / ConflictResolutionModal, the
+  // modalForCategory cases, the per-category buckets, and the constraint parser
+  // still recognise the keys — so either can be switched back on as a focused
+  // feature (partial shifts is real engine work: slot splitting, partial
+  // assignments, wage/coverage; conflict_resolution needs an engine reader for the
+  // soft branch) by restoring its entry here and wiring the engine reader.
+  // NB: this is the conflict-resolution POLICY (what to do when a banned pair
+  // would be co-scheduled), distinct from the employee_conflicts 'avoid' severity
+  // (F2/D13). See DRIFT_REGISTER §F and the Data Contract D11/D13.
   {
     key: 'doubles_policy',
     label: 'Two Shifts in One Day',
     description: `Whether one person can be put on more than one shift on the same day.`,
     engineEffect: `Never (the default): once someone is on the schedule for a day, they're done for that day. Only in emergencies: Aegis gives someone a second shift that day only when no one else can cover it. Always allow: a second shift on the same day is fine.`,
-    singleton: true,
-  },
-  {
-    key: 'conflict_resolution',
-    label: `When Two People Shouldn't Work Together`,
-    description: `What Aegis does when a shift would put two people together who you've said shouldn't be paired up.`,
-    engineEffect: `Aegis first tries to move one of the two to a different shift. This setting decides what happens if that isn't possible: keep looking for another arrangement, or make the assignment anyway and call it out clearly in your summary so you can decide.`,
     singleton: true,
   },
 ]
