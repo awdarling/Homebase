@@ -398,6 +398,37 @@ const NARROW_MON = [{ day_of_week: 1, start_time: '09:00', end_time: '12:00' }] 
   expect(eff.customApplied, 'null effective_start_date applies immediately (back-compat)')
 }
 
+// ── Feature B: departing-employee advisory (non-blocking, person-level) ────────
+// WEEK_START = 2026-06-22 (Mon); week end = 2026-06-28.
+{
+  // last_day WITHIN the week → one non-blocking 'departing_employee' warning.
+  const a = emp('A', ['Lifeguard'], 40, { last_day: WED }) // 2026-06-24
+  const issues = run([pmShift('A')], ['A'], [a])
+  const dep = issues.filter(i => i.code === 'departing_employee')
+  expect(dep.length === 1, 'a departing employee on the schedule is flagged once')
+  expect(dep[0]?.severity === 'warning', 'the departing-employee flag is a NON-BLOCKING warning, never an error')
+  expect(!issues.some(i => i.code === 'departing_employee' && i.severity === 'error'), 'departing-employee never blocks publishing')
+}
+{
+  // last_day BEFORE the week (already gone) → still flagged — this is exactly the
+  // case we want a manager to catch.
+  const a = emp('A', ['Lifeguard'], 40, { last_day: '2026-06-01' })
+  const issues = run([pmShift('A')], ['A'], [a])
+  expect(issues.some(i => i.code === 'departing_employee'), 'an employee whose last day is before the week is flagged when still scheduled')
+}
+{
+  // last_day AFTER this week → no flag yet (their departure isn't relevant to this week).
+  const a = emp('A', ['Lifeguard'], 40, { last_day: '2026-07-15' })
+  const issues = run([pmShift('A')], ['A'], [a])
+  expect(!issues.some(i => i.code === 'departing_employee'), 'a future last day beyond this week does not flag this week')
+}
+{
+  // no last_day → no flag (back-compat).
+  const a = emp('A', ['Lifeguard'])
+  const issues = run([pmShift('A')], ['A'], [a])
+  expect(!issues.some(i => i.code === 'departing_employee'), 'an employee with no last day is never flagged')
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`)
   process.exit(1)

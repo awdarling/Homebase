@@ -187,6 +187,7 @@ export default function EmployeesTab() {
     individual_wage: '',
     is_veteran: false,
     sex: '',
+    last_day: '',
   })
   const [availForm, setAvailForm] = useState<AvailabilityRow[]>(DEFAULT_AVAILABILITY)
   const [saving, setSaving] = useState(false)
@@ -335,6 +336,7 @@ export default function EmployeesTab() {
       individual_wage: '',
       is_veteran: false,
       sex: '',
+      last_day: '',
     })
     setAvailForm(DEFAULT_AVAILABILITY)
     setError('')
@@ -353,6 +355,7 @@ export default function EmployeesTab() {
       individual_wage: emp.individual_wage != null ? String(emp.individual_wage) : '',
       is_veteran: !!emp.is_veteran,
       sex: emp.sex ?? '',
+      last_day: emp.last_day ?? '',
     })
     setAvailForm(buildAvailForm(emp.id))
     setError('')
@@ -407,6 +410,10 @@ export default function EmployeesTab() {
       individual_wage: form.individual_wage !== '' ? parseFloat(form.individual_wage) : null,
       is_veteran: form.is_veteran,
       sex: form.sex || null,
+      // Feature B: acknowledged last working day (or null to clear). The save flow
+      // keeps active:true — the employee works until the day passes; a daily Aegis
+      // job deactivates them after it. Clearing last_day + active:true = rehire.
+      last_day: form.last_day.trim() || null,
       active: true,
     }
 
@@ -779,6 +786,14 @@ export default function EmployeesTab() {
                         <div style={{ color: 'var(--text-primary)', fontSize: 13 }}>{emp.name}</div>
                         <div style={{ fontSize: 10, color: emp.active ? 'var(--status-ready-text)' : 'var(--text-disabled)', marginTop: 1 }}>
                           {emp.active ? 'Active' : 'Inactive'}
+                          {emp.last_day && (
+                            <span
+                              title={`Last day ${emp.last_day} — auto-deactivates after this date`}
+                              style={{ color: 'var(--status-blocked-text)', marginLeft: 6 }}
+                            >
+                              · Leaving {new Date(emp.last_day + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -987,6 +1002,31 @@ export default function EmployeesTab() {
                 <div className="form-group">
                   <label className="form-label">Phone <span style={{ color: 'var(--status-blocked-text)', fontWeight: 400 }}>*</span></label>
                   <input className="form-input" value={form.contact_phone} onChange={(e) => setForm((f) => ({ ...f, contact_phone: e.target.value }))} placeholder="Required" />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Last day <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(offboarding)</span></label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    className="form-input"
+                    type="date"
+                    value={form.last_day}
+                    onChange={(e) => setForm((f) => ({ ...f, last_day: e.target.value }))}
+                    style={{ flex: 1 }}
+                  />
+                  {form.last_day && (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => setForm((f) => ({ ...f, last_day: '' }))}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.55, marginTop: 4 }}>
+                  The employee&apos;s final working day. Setting it acknowledges a departure — they&apos;re automatically deactivated and dropped from future schedules after this date. Leave blank (or Clear) for an active employee.
                 </div>
               </div>
 

@@ -171,16 +171,33 @@ export async function POST(request: NextRequest) {
             individual_wage?: number | null
             is_veteran?: boolean
             active?: boolean
+            // Feature B: acknowledged final working day (inclusive). YYYY-MM-DD to
+            // set, null to clear (rescinded notice / re-hire). The manager setting
+            // this IS the acknowledgment of a departure — a daily Aegis job flips
+            // active=false after it, and the builder excludes weeks starting after it.
+            last_day?: string | null
           }
         }
 
         const allowed: (keyof typeof d.updates)[] = [
           'name', 'primary_role', 'qualified_roles', 'max_weekly_hours',
           'contact_email', 'contact_phone', 'individual_wage', 'is_veteran', 'active',
+          'last_day',
         ]
         const updates: Record<string, unknown> = {}
         for (const k of allowed) {
           if (d.updates[k] !== undefined) updates[k] = d.updates[k]
+        }
+
+        // last_day: accept a YYYY-MM-DD string (set) or null (clear); reject anything
+        // else so a malformed model value can't land as a bad date.
+        if (updates.last_day !== undefined && updates.last_day !== null) {
+          if (typeof updates.last_day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(updates.last_day)) {
+            return NextResponse.json(
+              { error: 'last_day must be a YYYY-MM-DD date or null' },
+              { status: 400 },
+            )
+          }
         }
 
         // ── D16 — primary_role MUST be inside qualified_roles ─────────────────
