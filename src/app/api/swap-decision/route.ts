@@ -43,10 +43,15 @@ export async function POST(req: NextRequest) {
   const actor = userRow as { company_id: string; email: string | null; name: string | null; avatar_url: string | null }
 
   // ── Load the swap for company scoping + display context ──────────────────
+  // `*` rather than a column list ON PURPOSE. L4b needs `kind` /
+  // `target_shift_*`, which migration 023 adds — naming them explicitly would
+  // make this route throw 42703 (column does not exist) on any deploy that lands
+  // before Alexander runs the SQL. With `*` the fields are simply absent until
+  // then and the copy falls back to the neutral "swap" wording.
   const { data: reqRow, error: reqErr } = await service
     .from('swap_requests')
     .select(`
-      id, company_id, shift_date, status,
+      *,
       requesting_employee:employees!swap_requests_requesting_employee_fkey(name),
       receiving_employee:employees!swap_requests_receiving_employee_fkey(name)
     `)
@@ -62,6 +67,10 @@ export async function POST(req: NextRequest) {
     company_id: string
     shift_date: string | null
     status: string
+    // L4b, migration 023. Optional: absent on a pre-migration database.
+    kind?: string | null
+    target_shift_date?: string | null
+    target_shift_name?: string | null
     requesting_employee: { name: string } | { name: string }[] | null
     receiving_employee: { name: string } | { name: string }[] | null
   }
@@ -83,6 +92,9 @@ export async function POST(req: NextRequest) {
     shiftDate: reqData.shift_date,
     actorName: actor.name,
     actorAvatarUrl: actor.avatar_url,
+    swapKind: reqData.kind ?? null,
+    targetShiftDate: reqData.target_shift_date ?? null,
+    targetShiftName: reqData.target_shift_name ?? null,
   })
 
   // 409 when the swap was already decided (no change made); 200 on success; 400 otherwise.
