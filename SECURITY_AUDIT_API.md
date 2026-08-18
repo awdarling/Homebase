@@ -1,5 +1,23 @@
 # Homebase `/api/*` Auth Audit — Phase 1 (Security)
 
+> ## ⚠️ STATUS RECONCILIATION — 2026-08-18
+>
+> This audit was written **2026-06-09**. Four of its five open flags have since been fixed in
+> `main` and the document did not say so. Re-verified against the current code on 2026-08-18:
+>
+> | Flag | Was | **Now (verified 2026-08-18)** |
+> |---|---|---|
+> | **F1 — `create-user` privilege escalation** (HIGH) | flagged, unfixed | **FIXED.** `src/app/api/create-user/route.ts` now does getUser → 401, loads the caller's own `role`/`company_id`, restricts creation to `owner`/`quria`, caps the assignable role at the caller's own rank via `ROLE_RANK`, and binds `company_id` to the caller (only `quria` may target another company). |
+> | **F2 — `stripe` POST unscoped billing** (MED) | flagged, unfixed | **STILL OPEN.** `src/app/api/stripe/route.ts` has no `getUser()`, no role gate and no company binding — it still trusts `company_id`/`customer_id` from the request body behind only the middleware login gate. |
+> | **F3 — `stripe/webhook` redirected by middleware** | flagged, unfixed | **FIXED.** `src/middleware.ts:40` now includes `pathname === '/api/stripe/webhook'` in `isPublic`. |
+> | **F4 — `aegis-action` token hygiene** | needed confirming | **CONFIRMED OK.** `src/lib/aegis-actions/tokens.ts` stores `expires_at`, rejects expired tokens on consume (`:78`), and filters on `expires_at` when issuing (`:98`). Single-use consumption was already in place. |
+> | **F5 — RLS as defence in depth** | strategic, open | **STILL OPEN**, and it is the largest one. Every route still uses the RLS-bypassing service-role key and re-implements company scoping in application code, so a forgotten guard is a cross-tenant hole rather than a failed query. Tracked as open item #3 in `claude/OPEN_ITEMS_MASTER.md`. |
+>
+> **So the live open items from this audit are F2 and F5.** Everything below this banner is the
+> original 2026-06-09 text, preserved unchanged for its reasoning — read the table above for what
+> is actually true today.
+
+
 **Date:** 2026-06-09 · **Scope:** every route under `src/app/api/**/route.ts` (15 routes) · **Method:** static read of each handler + the active middleware (`src/middleware.ts`). Diagnose-first; no live-data runs (Supabase REST is not on the sandbox egress allowlist). **Branch:** `security/api-auth-audit`.
 
 ## TL;DR
