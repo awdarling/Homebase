@@ -4,7 +4,7 @@ import { useCompany } from '@/lib/hooks/useCompany'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import type { Employee } from '@/lib/types'
+import type { Employee, NotifyCategory } from '@/lib/types'
 
 
 
@@ -16,6 +16,12 @@ interface UserRecord {
   avatar_url: string | null
   created_at: string
   last_sign_in_at?: string | null
+  /**
+   * The PERSON this login belongs to (migration 025). Aegis reads a manager's
+   * phone from that employee record. NULL means it falls back to matching on
+   * email address — which silently fails the moment the two differ.
+   */
+  employee_id?: string | null
 }
 
 interface QuriaStaffRecord {
@@ -166,6 +172,14 @@ export default function AccessPage() {
         users={users}
         currentUser={currentUser}
         companyId={COMPANY_ID}
+        onChange={fetchData}
+      />
+
+      <div style={{ height: 40 }} />
+
+      <ManagerContactSection
+        users={users}
+        employees={employees}
         onChange={fetchData}
       />
 
@@ -1031,5 +1045,269 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle: string })
         {subtitle}
       </div>
     </div>
+  )
+}
+
+// ─── Manager Contact Section ──────────────────────────────────────────────────
+//
+// The fix for "Aegis can't text a manager" (migration 025).
+//
+// A login is not a person. The PERSON is the employee record — that is where a
+// phone number lives. This section is where you say which person a login
+// belongs to. Until you do, Aegis falls back to matching on email address, which
+// breaks the moment someone signs in with a different address from the one on
+// their employee record — and it used to break SILENTLY.
+
+const CATEGORY_LABELS: { key: NotifyCategory; label: string; hint: string }[] = [
+  { key: 'approvals',      label: 'Approvals',        hint: 'Time off, swaps, availability changes waiting on a decision' },
+  { key: 'trades',         label: 'Trades',           hint: 'Shift swaps and pickups between staff' },
+  { key: 'schedule_posts', label: 'Schedule posted',  hint: 'When a schedule is published and sent out' },
+  { key: 'reports',        label: 'Reports',          hint: 'Onboarding summaries and end-of-day reports' },
+]
+
+function ManagerContactSection({
+  users,
+  employees,
+  onChange,
+}: {
+  users: UserRecord[]
+  employees: Employee[]
+  onChange: () => void
+}) {
+  const supabase = createClient()
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [error, setError] = useState('')
+
+  // Only people who can actually receive operational messages. A quria platform
+  // admin holds a login for cross-company access, not to receive one club's
+  // time-off approvals — their own contact details live in quria_staff.
+  const managerLogins = users.filter((u) => u.role === 'manager' || u.role === 'owner')
+
+  const personById = new Map(employees.map((e) => [e.id, e]))
+  const takenBy = new Map<string, string>()
+  for (const u of managerLogins) {
+    if (u.employee_id) takenBy.set(u.employee_id, u.name)
+  }
+
+  async function linkPerson(userId: string, employeeId: string | null) {
+    setBusyId(userId)
+    setError('')
+    const { error: e } = await supabase
+      .from('users')
+      .update({ employee_id: employeeId })
+      .eq('id', userId)
+    setBusyId(null)
+    if (e) { setError(e.message); return }
+    onChange()
+  }
+
+  async function setPref(employeeId: string, key: NotifyCategory, value: boolean) {
+    const person = personById.get(employeeId)
+    if (!person) return
+    setBusyId(employeeId)
+    setError('')
+    const next = { ...(person.notification_prefs ?? {}), [key]: value }
+    const { error: e } = await supabase
+      .from('employees')
+      .update({ notification_prefs: next })
+      .eq('id', employeeId)
+    setBusyId(null)
+    if (e) { setError(e.message); return }
+    onChange()
+  }
+
+  async function setSchedulable(employeeId: string, value: boolean) {
+    setBusyId(employeeId)
+    setError('')
+    const { error: e } = await supabase
+      .from('employees')
+      .update({ schedulable: value })
+      .eq('id', employeeId)
+    setBusyId(null)
+    if (e) { setError(e.message); return }
+    onChange()
+  }
+
+  const unlinked = managerLogins.filter((u) => !u.employee_id)
+
+  return (
+    <section>
+      <SectionHeader
+        title="Manager Contact"
+        subtitle="Which person each login belongs to, and what Aegis sends them"
+      />
+
+      {unlinked.length > 0 && (
+        <div style={{
+          background: 'var(--accent-dim)',
+          border: '1px solid var(--accent-border)',
+          borderRadius: 'var(--radius-lg)',
+          padding: '12px 16px',
+          fontSize: 12,
+          color: 'var(--text-secondary)',
+          marginBottom: 16,
+          lineHeight: 1.6,
+        }}>
+          <span style={{ color: 'var(--accent)', fontWeight: 600 }}>
+            {unlinked.length === 1
+              ? '1 login is not linked to a person yet.'
+              : `${unlinked.length} logins are not linked to a person yet.`}
+          </span>
+          {' '}Aegis is guessing who they are by matching their sign-in email to an
+          employee record. That works until the two addresses differ — then it stops
+          texting them, with no warning. Link them below.
+        </div>
+      )}
+
+      {error && (
+        <div style={{ fontSize: 12, color: 'var(--danger, #e5484d)', marginBottom: 12 }}>{error}</div>
+      )}
+
+      <div style={{
+        background: 'var(--bg-surface-1)',
+        border: '1px solid var(--border-default)',
+        borderRadius: 'var(--radius-lg)',
+        overflow: 'hidden',
+      }}>
+        {managerLogins.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-title">No managers yet</div>
+            <div className="empty-state-desc">Add a manager or owner above and they will appear here.</div>
+          </div>
+        ) : managerLogins.map((user, i) => {
+          const person = user.employee_id ? personById.get(user.employee_id) ?? null : null
+          const phone = person?.contact_phone ?? null
+          const isOwner = user.role === 'owner'
+          const busy = busyId === user.id || (person ? busyId === person.id : false)
+
+          const reach = !person
+            ? { text: 'Not linked — email only', tone: 'var(--accent)' }
+            : !phone
+              ? { text: 'Linked, but no phone on file — email only', tone: 'var(--accent)' }
+              : { text: `Texts go to ${phone}`, tone: 'var(--text-muted)' }
+
+          return (
+            <div key={user.id} style={{
+              padding: '16px 20px',
+              borderBottom: i < managerLogins.length - 1 ? '1px solid var(--border-subtle)' : 'none',
+              opacity: busy ? 0.6 : 1,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 180 }}>
+                  <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500 }}>
+                    {user.name}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                    {user.email}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <label style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                    Is this person
+                  </label>
+                  <select
+                    value={user.employee_id ?? ''}
+                    disabled={busy}
+                    onChange={(e) => linkPerson(user.id, e.target.value || null)}
+                    style={{
+                      background: 'var(--bg-surface-2, var(--bg-surface-1))',
+                      color: 'var(--text-primary)',
+                      border: `1px solid ${user.employee_id ? 'var(--border-default)' : 'var(--accent-border)'}`,
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '5px 10px',
+                      fontSize: 12,
+                      fontFamily: 'var(--font-body)',
+                      minWidth: 200,
+                      cursor: busy ? 'wait' : 'pointer',
+                      outline: 'none',
+                    }}
+                  >
+                    <option value="">Not linked</option>
+                    {employees.map((e) => {
+                      const claimedBy = takenBy.get(e.id)
+                      const claimedByElse = claimedBy && claimedBy !== user.name
+                      return (
+                        <option key={e.id} value={e.id} disabled={!!claimedByElse}>
+                          {e.name}{claimedByElse ? ` — already ${claimedBy}` : ''}
+                        </option>
+                      )
+                    })}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ fontSize: 11, color: reach.tone, marginTop: 10 }}>
+                {reach.text}
+              </div>
+
+              {person && (
+                <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: 'var(--text-secondary)', cursor: busy ? 'wait' : 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={person.schedulable !== false}
+                      disabled={busy}
+                      onChange={(e) => setSchedulable(person.id, e.target.checked)}
+                      style={{ marginTop: 2 }}
+                    />
+                    <span>
+                      Can be put on a schedule
+                      <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                        Uncheck for someone who works here and needs to hear from Aegis but never
+                        takes a shift — an owner, a bookkeeper. Different from marking them
+                        inactive, which means they are away and should not be contacted at all.
+                      </span>
+                    </span>
+                  </label>
+
+                  <div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+                      Send them
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 8 }}>
+                      {CATEGORY_LABELS.map(({ key, label, hint }) => {
+                        const explicit = person.notification_prefs?.[key]
+                        const on = typeof explicit === 'boolean' ? explicit : !isOwner
+                        return (
+                          <label key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: 'var(--text-secondary)', cursor: busy ? 'wait' : 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={on}
+                              disabled={busy}
+                              onChange={(e) => setPref(person.id, key, e.target.checked)}
+                              style={{ marginTop: 2 }}
+                            />
+                            <span>
+                              {label}
+                              {typeof explicit !== 'boolean' && (
+                                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                                  {isOwner ? ' · off for owners by default' : ' · on by default'}
+                                </span>
+                              )}
+                              <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                                {hint}
+                              </span>
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                    {isOwner && (
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.55 }}>
+                        Owners hear nothing by default. Switch a category on to see what Aegis
+                        feels like from a manager&rsquo;s side, then switch it off again.
+                        Anything that genuinely needs a decision still reaches you if there is
+                        nobody else to send it to.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </section>
   )
 }
