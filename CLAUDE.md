@@ -3,9 +3,16 @@
 Read this in full at the start of every session and follow it.
 
 ## The system you're working on
-- **Aegis** — the scheduling + email "brain." Lives at `~/Desktop/Aegis`, deploys to Railway.
-- **Homebase** — the web app and the part that talks to the database. Lives at `~/Desktop/homebase`, deploys to Vercel.
-- They share one database (Supabase). GitHub repos are under `awdarling`.
+- **Aegis** — the scheduling + messaging "brain." Node/Express on Railway. Repo: `awdarling/Aegis`.
+- **Homebase** — the web app and the part that talks to the database. Next.js on Vercel. Repo: `awdarling/Homebase`.
+- They share one database (Supabase).
+- **Aegis talks to people over text message (Telnyx) and email (SendGrid).** Text is live in
+  production — counsel cleared the consent chain on 2026-08-13 and Aegis sent 543 texts in the 14
+  days to 2026-08-18 (checked against the live database, not a document). There is no Twilio
+  anywhere; it was removed on 2026-07-29.
+- Paths on Alexander's laptop change; don't hardcode them. Clone from GitHub and work in your own
+  copy. **Never run git commands against his clones through a device bridge** — it leaves a lock
+  file the bridge cannot remove and jams his repo.
 
 ## 1. Who you're working with
 You're working with Alexander, who owns and directs this project. He is **not a software engineer.** He makes the decisions; he does not read code and cannot guess technical steps on his own. Treat him as smart but non-technical.
@@ -50,11 +57,28 @@ You may **prepare** these and hand him exact steps. **Never do them yourself** �
 - **No loose ends.** Always say which branch your work is on and what state it's in.
 
 ## 5. The mission — hold this direction
-**North Star:** get every Aegis **email** workflow working and tested on the live club (Watermark), learn which ones feel natural, then later move the winners to **text message (SMS).**
-- Build and test the email workflows **first.** The big "rewrite the documentation" job waits until the workflows are proven. Small doc fixes along the way are fine.
-- If Alexander drifts into unrelated side-quests, gently remind him of this email-workflow priority and steer him back.
+**North Star (updated 2026-08-18): text message first.** The email workflows are built and proven
+on the live club, and SMS is live. The direction now is Alexander's stated policy:
 
-## 6. Where things stand (keep this updated as work lands)
+> Email is only for (a) someone who has no text number or has not opted in, or (b) an action item
+> that needs a click-through button. **Everything else texts first.**
+
+- A manager text must carry real context — who, what, for when, why. Never a bare "you have a
+  notification" ping.
+- If Alexander drifts into unrelated side-quests, gently steer him back to this.
+
+## 6. Where things stand
+
+**Do not maintain a status list in this file.** It went stale and started misleading sessions. The
+one-page current state is `claude/OPEN_ITEMS_MASTER.md` in the Claude project — read that. See
+`docs/CANONICAL_SOURCES.md` for which documents live where.
+
+The snapshot below is **frozen as of 2026-07-13** and kept only for the technical gotchas at the
+end, which are still true. Do not trust its status claims.
+
+<details>
+<summary>Frozen 2026-07-13 snapshot — status claims are stale</summary>
+
 **Done and verified on the live club:**
 - Schedule download (right colors, full names + roles)
 - Send the schedule to all staff by email
@@ -74,7 +98,12 @@ You may **prepare** these and hand him exact steps. **Never do them yourself** �
 - A test runner (vitest) now exists in Aegis — use it; add a test for every workflow.
 - The Supabase library is pinned to exact `2.104.1`. A fresh full reinstall can bump it to `2.108.1`, which **crashes the live Aegis server.** If that happens, pin it back to `2.104.1`. (Proper long-term fix — newer Node, or the `ws` package — is deferred.)
 - For the email-button features, deploy **Homebase before Aegis.** The other order breaks the buttons.
-- Test accounts are in `TEST_IDENTITIES.md`. **Never email real employees while testing** — use the test accounts.
+- Test accounts are in `TEST_IDENTITIES.md` **in the Claude project** (the repo copies were stale
+  and were removed on 2026-08-18). **Never message real employees while testing** — use the test
+  accounts.
+
+</details>
 
 ## 7. When he asks "where are we?"
-Give a plain-English status from section 6 plus anything new since, and name the single most useful next step.
+Read `claude/OPEN_ITEMS_MASTER.md` in the Claude project, give a plain-English status from it plus
+anything new since, and name the single most useful next step. Do not answer from this file.
