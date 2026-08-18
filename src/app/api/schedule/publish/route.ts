@@ -44,7 +44,7 @@ interface ScheduleRow {
  *   atomically unpublish+archive the old row and publish this one
  *   (publish_schedule_swap RPC), then notify ONLY the employees whose shifts
  *   changed. The old row is kept (archived, superseded_by) and only its saved
- *   wage/hours estimate is cleared so payroll/reports follow the new schedule.
+ *   wage/hours estimate is cleared so reports follow the new schedule.
  *
  * Body: { scheduleId: string }
  */

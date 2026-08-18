@@ -13,8 +13,11 @@ const NAV_LINKS = [
   { href: '/rules',    label: 'Rules' },
   { href: '/schedule', label: 'Schedule' },
   { href: '/activity', label: 'Activity' },
-  { href: '/payroll',  label: 'Payroll' },
 ]
+
+// Payroll is intentionally NOT in the nav (2026-08-18). The feature is not built;
+// /payroll serves an honest "coming soon" page rather than a finished-looking one,
+// and there is no reason to send anyone there until it does something.
 
 export default function Nav() {
   const pathname = usePathname()
