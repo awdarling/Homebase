@@ -524,7 +524,6 @@ async function main() {
     { company_id: cid, actor: 'aegis',   action: 'schedule_distributed',          entity_type: 'schedule', entity_id: scheduleInserted[0].id, summary: 'Schedule distributed to 18 employees', metadata: { employee_count: 18 }, created_at: addDays(now, -3).toISOString() },
     { company_id: cid, actor: 'system',  action: 'onboarding_complete',           entity_type: 'employee', entity_id: E.marcus, summary: 'Marcus Webb completed onboarding', metadata: { employee_id: E.marcus }, created_at: addDays(now, -5).toISOString() },
     { company_id: cid, actor: 'manager', action: 'employee_updated',              entity_type: 'employee', entity_id: E.rachel, summary: 'Rachel Torres wage updated to $20.50/hr', metadata: { employee_id: E.rachel, field: 'individual_wage', value: 20.50 }, created_at: addDays(now, -6).toISOString() },
-    { company_id: cid, actor: 'aegis',   action: 'payroll_check_clean',           entity_type: null,       entity_id: null,     summary: 'Payroll check complete — all 18 employees clean', metadata: { employee_count: 18, issue_count: 0, clean_count: 18 }, created_at: addDays(now, -7).toISOString() },
     { company_id: cid, actor: 'aegis',   action: 'swap_pending_manager',          entity_type: 'employee', entity_id: E.jordan, summary: 'Jordan Casey and Marcus Webb swap pending manager approval', metadata: { requester_id: E.jordan, target_id: E.marcus }, created_at: addDays(now, -1).toISOString() },
   ]).select())
   console.log(`  ✅  ${logInserted.length} activity log entries`)
