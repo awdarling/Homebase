@@ -8,6 +8,7 @@ import { planRosterImport, type RosterRowInput } from '@/lib/soteria/rosterImpor
 import { inferShiftStructureFromSchedule, type ScheduleRowInput } from '@/lib/soteria/scheduleInference'
 import { postToAegisInternal, AegisInternalError, AegisInternalConfigError } from '@/lib/aegis-internal'
 import { normalizeConflictSeverity } from '@/lib/conflicts/severity'
+import { activeStateLogAction, activeStateSummary, applyActiveStateRule } from '@/lib/employees/active-state'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -235,9 +236,38 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        // ── Active state means the same thing here as it does on the button ──
+        //
+        // Rule 0b: "what does deactivating/reactivating an employee write?" has
+        // one answer, in @/lib/employees/active-state. Turning `active` back on
+        // without clearing `last_day` leaves the employee for Aegis's daily
+        // offboarding sweep to switch straight back off; turning it off must
+        // never invent a departure date. A caller that names `last_day`
+        // explicitly is doing something else and is left alone.
+        let stateChange: 'activate' | 'deactivate' | null = null
+        let clearedLastDay: string | null = null
+        if ('active' in updates) {
+          const { data: before } = await supabase
+            .from('employees')
+            .select('active, last_day')
+            .eq('id', d.employee_id)
+            .eq('company_id', companyId)
+            .maybeSingle()
+          const prior = before as { active: boolean; last_day: string | null } | null
+          // Only a real change is a change — re-asserting the current state is a
+          // no-op and must not write a misleading activity row.
+          if (prior && prior.active !== updates.active) {
+            stateChange = updates.active === true ? 'activate' : 'deactivate'
+            if (stateChange === 'activate' && !('last_day' in updates)) {
+              clearedLastDay = prior.last_day
+            }
+          }
+        }
+        const patch = applyActiveStateRule(updates)
+
         const { data, error } = await supabase
           .from('employees')
-          .update(updates)
+          .update(patch)
           .eq('id', d.employee_id)
           .eq('company_id', companyId)
           .select('id, name')
@@ -247,10 +277,12 @@ export async function POST(request: NextRequest) {
         await supabase.from('activity_log').insert({
           company_id: companyId,
           actor: 'soteria',
-          action: 'employee_updated',
+          action: stateChange ? activeStateLogAction(stateChange) : 'employee_updated',
           entity_type: 'employee',
           entity_id: d.employee_id,
-          summary: `Soteria updated ${data?.name ?? 'an employee'}`,
+          summary: stateChange
+            ? activeStateSummary(stateChange, data?.name ?? 'an employee', clearedLastDay, 'soteria')
+            : `Soteria updated ${data?.name ?? 'an employee'}`,
         })
         return NextResponse.json({ success: true, data })
       }
