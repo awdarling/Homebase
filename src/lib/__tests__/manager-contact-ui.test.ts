@@ -49,10 +49,10 @@ expect(/Different from marking them/.test(page),
 for (const key of ['approvals', 'trades', 'schedule_posts', 'reports']) {
   expect(new RegExp(`key: '${key}'`).test(page), `the '${key}' category is offered`)
 }
-expect(/typeof explicit === 'boolean' \? explicit : !isOwner/.test(page),
-  'an owner defaults to OFF and everyone else defaults to ON, matching the Aegis resolver')
-expect(/Owners hear nothing by default/.test(page),
-  'the UI tells an owner they can switch a category on to try it')
+expect(/wantsCategory\(user\.role, person\.notification_prefs, key\)/.test(page),
+  'the checkbox asks the shared rule, rather than restating it inline')
+expect(/Owners still get approvals and reports by default/.test(page),
+  'the UI tells an owner the truth about what they receive')
 expect(/nobody else to send it to/.test(page),
   'the UI states the safety valve — an action item never reaches nobody')
 

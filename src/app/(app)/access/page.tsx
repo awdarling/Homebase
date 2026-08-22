@@ -2,6 +2,7 @@
 import { useCompany } from '@/lib/hooks/useCompany'
 
 import { useEffect, useState } from 'react'
+import { wantsCategory, defaultNote } from '@/lib/notifications/managerNotificationDefaults'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import type { Employee, NotifyCategory } from '@/lib/types'
@@ -1268,7 +1269,9 @@ function ManagerContactSection({
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 8 }}>
                       {CATEGORY_LABELS.map(({ key, label, hint }) => {
                         const explicit = person.notification_prefs?.[key]
-                        const on = typeof explicit === 'boolean' ? explicit : !isOwner
+                        // RULE 0: this checkbox must agree with what Aegis does.
+                        // The rule lives in one module, mirrored from Aegis.
+                        const on = wantsCategory(user.role, person.notification_prefs, key)
                         return (
                           <label key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: 'var(--text-secondary)', cursor: busy ? 'wait' : 'pointer' }}>
                             <input
@@ -1282,7 +1285,7 @@ function ManagerContactSection({
                               {label}
                               {typeof explicit !== 'boolean' && (
                                 <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                                  {isOwner ? ' · off for owners by default' : ' · on by default'}
+                                  {defaultNote(user.role, key)}
                                 </span>
                               )}
                               <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
@@ -1295,10 +1298,12 @@ function ManagerContactSection({
                     </div>
                     {isOwner && (
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.55 }}>
-                        Owners hear nothing by default. Switch a category on to see what Aegis
-                        feels like from a manager&rsquo;s side, then switch it off again.
-                        Anything that genuinely needs a decision still reaches you if there is
-                        nobody else to send it to.
+                        Owners still get approvals and reports by default &mdash; the things
+                        that need you. What is off by default is the minute-to-minute traffic
+                        you hired managers to handle: trades and schedule posts. Switch either
+                        on to see what Aegis feels like from a manager&rsquo;s side, then switch
+                        it off again. And anything that genuinely needs a decision still reaches
+                        you if there is nobody else to send it to.
                       </div>
                     )}
                   </div>
