@@ -6,6 +6,14 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { logActivity as logActivityFn } from '@/lib/activity'
 import { VetBadge } from '@/components/common/VetBadge'
+import {
+  activeStateAction,
+  activeStateLabel,
+  activeStateLogAction,
+  activeStatePatch,
+  activeStateSummary,
+  needsActiveStateConfirm,
+} from '@/lib/employees/active-state'
 import type {
   Employee,
   CustomAvailability,
@@ -193,6 +201,10 @@ export default function EmployeesTab() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  // The active/inactive control lives inside the employee's panel, not on the
+  // roster row — reaching it takes deliberately opening one person's profile.
+  const [confirmActiveState, setConfirmActiveState] = useState<Employee | null>(null)
+  const [activeStateBusy, setActiveStateBusy] = useState(false)
 
   // Custom availability state
   const [customAvailability, setCustomAvailability] = useState<Record<string, CustomAvailability | null>>({})
@@ -279,11 +291,10 @@ export default function EmployeesTab() {
       parts.push(`wage: ${fmt(oldWage)} → ${fmt(newWage)}/hr`)
     }
 
-    // Save flow always writes active: true, so this branch only fires when an
-    // inactive employee is being reactivated through the edit form.
-    if (oldEmp.active === false) {
-      parts.push('reactivated')
-    }
+    // NOT diffed: `active`. Save no longer writes it at all — only the
+    // Deactivate/Activate control does, and that control logs its own row.
+    // (This used to push 'reactivated' whenever an inactive employee was saved,
+    // which was true only because the save payload silently reactivated them.)
 
     const newSex = formState.sex || null
     const oldSex = oldEmp.sex ?? null
@@ -410,11 +421,15 @@ export default function EmployeesTab() {
       individual_wage: form.individual_wage !== '' ? parseFloat(form.individual_wage) : null,
       is_veteran: form.is_veteran,
       sex: form.sex || null,
-      // Feature B: acknowledged last working day (or null to clear). The save flow
-      // keeps active:true — the employee works until the day passes; a daily Aegis
-      // job deactivates them after it. Clearing last_day + active:true = rehire.
+      // Feature B: acknowledged last working day (or null to clear). The employee
+      // works until the day passes; a daily Aegis job deactivates them after it.
+      //
+      // `active` is deliberately NOT here. Save preserves whatever the active
+      // state already is: opening a deactivated employee to fix their phone
+      // number must not silently put them back on the schedule. The ONLY things
+      // that change `active` are the Deactivate/Activate control in this panel
+      // and Soteria — both through @/lib/employees/active-state.
       last_day: form.last_day.trim() || null,
-      active: true,
     }
 
     let empId = editingEmployee?.id
@@ -467,7 +482,9 @@ export default function EmployeesTab() {
         )
       }
     } else {
-      const { data } = await supabase.from('employees').insert(payload).select().single()
+      // A newly added employee starts active — the only place `active` is
+      // written outside the Deactivate/Activate control.
+      const { data } = await supabase.from('employees').insert({ ...payload, active: true }).select().single()
       empId = data?.id
       if (empId) await logActivity('employee_created', `Added employee: ${form.name}`, empId)
     }
@@ -502,14 +519,51 @@ export default function EmployeesTab() {
     fetchData()
   }
 
-  async function handleToggleActive(emp: Employee) {
-    await supabase.from('employees').update({ active: !emp.active }).eq('id', emp.id)
+  // ── Deactivate / Activate ──────────────────────────────────────────────────
+  //
+  // One control, two directions, reached only by opening an employee's panel.
+  // Replaces the old `handleToggleActive`, which had no call site anywhere in
+  // the repo AND was unsafe: it flipped `active` without clearing `last_day`, so
+  // Aegis's daily offboarding sweep would have switched a reactivated employee
+  // straight back off within 24 hours. Both directions are defined once, in
+  // @/lib/employees/active-state, so Soteria cannot drift from this.
+  function startActiveStateChange(emp: Employee) {
+    if (needsActiveStateConfirm(emp)) {
+      setConfirmActiveState(emp)
+      return
+    }
+    void applyActiveStateChange(emp)
+  }
+
+  async function applyActiveStateChange(emp: Employee) {
+    const action = activeStateAction(emp)
+    setActiveStateBusy(true)
+    setError('')
+    const { error: updErr } = await supabase
+      .from('employees')
+      .update(activeStatePatch(emp))
+      .eq('id', emp.id)
+      .eq('company_id', COMPANY_ID)
+    setConfirmActiveState(null)
+    if (updErr) {
+      setActiveStateBusy(false)
+      setError(`Could not ${action} ${emp.name}: ${updErr.message}`)
+      return
+    }
     await logActivity(
-      emp.active ? 'employee_deactivated' : 'employee_activated',
-      `${emp.active ? 'Deactivated' : 'Activated'} employee: ${emp.name}`,
+      activeStateLogAction(action),
+      activeStateSummary(action, emp.name, emp.last_day),
       emp.id
     )
-    fetchData()
+    // Keep the panel open on the employee's NEW state, so the control flips in
+    // place and any unsaved edits in the form survive.
+    const updated: Employee = action === 'activate'
+      ? { ...emp, active: true, last_day: null }
+      : { ...emp, active: false }
+    setEditingEmployee(updated)
+    if (action === 'activate') setForm((f) => ({ ...f, last_day: '' }))
+    await fetchData()
+    setActiveStateBusy(false)
   }
 
   function openCustomAvailModal(emp: Employee) {
@@ -783,7 +837,7 @@ export default function EmployeesTab() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <InitialsAvatar name={emp.name} role={emp.primary_role} roles={roles} />
                       <div>
-                        <div style={{ color: 'var(--text-primary)', fontSize: 13 }}>{emp.name}</div>
+                        <div style={{ color: emp.active ? 'var(--text-primary)' : 'var(--text-muted)', fontSize: 13 }}>{emp.name}</div>
                         <div style={{ fontSize: 10, color: emp.active ? 'var(--status-ready-text)' : 'var(--text-disabled)', marginTop: 1 }}>
                           {emp.active ? 'Active' : 'Inactive'}
                           {emp.last_day && (
@@ -910,6 +964,62 @@ export default function EmployeesTab() {
                 style={{ background: 'var(--status-blocked-bg)', color: 'var(--status-blocked-text)', border: '1px solid var(--status-blocked-border)' }}
               >
                 Delete Permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm the active-state change. Always shown for a deactivation; for an
+          activation, only when a recorded departure date would be erased. */}
+      {confirmActiveState && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 400, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ background: 'var(--bg-surface-1)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-xl)', padding: 28, width: '100%', maxWidth: 440 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 10 }}>
+              {confirmActiveState.active
+                ? `Deactivate ${confirmActiveState.name}?`
+                : `Bring ${confirmActiveState.name} back?`}
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.6 }}>
+              {confirmActiveState.active ? (
+                <>
+                  They&apos;ll be left out of every future schedule build, and Aegis will stop
+                  texting and emailing them — it won&apos;t recognise them if they text in either.
+                  {' '}
+                  <strong style={{ color: 'var(--text-secondary)' }}>
+                    Schedules you&apos;ve already published don&apos;t change
+                  </strong>
+                  , so if they&apos;re on this week&apos;s, they stay on it. Nothing is deleted:
+                  their availability, contact details and history are all kept, and Activate brings
+                  them back whole.
+                </>
+              ) : (
+                <>
+                  Their last day of {formatShortDate(confirmActiveState.last_day as string)} will be
+                  cleared, and they&apos;ll go back on the schedule and start hearing from Aegis
+                  again.
+                </>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => setConfirmActiveState(null)}
+                disabled={activeStateBusy}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={() => applyActiveStateChange(confirmActiveState)}
+                disabled={activeStateBusy}
+                style={confirmActiveState.active
+                  ? { background: 'var(--status-blocked-bg)', color: 'var(--status-blocked-text)', border: '1px solid var(--status-blocked-border)' }
+                  : { background: 'var(--accent)', color: '#fff', border: '1px solid var(--accent)' }}
+              >
+                {activeStateBusy
+                  ? 'Working…'
+                  : (confirmActiveState.active ? 'Deactivate' : 'Activate')}
               </button>
             </div>
           </div>
@@ -1195,11 +1305,25 @@ export default function EmployeesTab() {
               </div>
             )}
 
-            <div style={{ display: 'flex', gap: 8, marginTop: 20, justifyContent: 'flex-end' }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(false)}>Cancel</button>
-              <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
-                {saving ? 'Saving...' : 'Save Employee'}
-              </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 20, flexWrap: 'wrap' }}>
+              {editingEmployee && (
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => startActiveStateChange(editingEmployee)}
+                  disabled={activeStateBusy || saving}
+                  style={editingEmployee.active
+                    ? { color: 'var(--status-blocked-text)', borderColor: 'var(--status-blocked-border)' }
+                    : undefined}
+                >
+                  {activeStateBusy ? 'Working…' : activeStateLabel(editingEmployee)}
+                </button>
+              )}
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                <button className="btn btn-secondary btn-sm" onClick={() => setShowForm(false)}>Cancel</button>
+                <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving || activeStateBusy}>
+                  {saving ? 'Saving...' : 'Save Employee'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

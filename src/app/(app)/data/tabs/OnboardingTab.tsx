@@ -4,6 +4,15 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useCompany } from '@/lib/hooks/useCompany'
 import type { Employee } from '@/lib/types'
+// L5 — RULE 0b: the ONE set of onboarding-tab status rules, unit-tested in
+// src/lib/onboarding/__tests__/tabStatus.test.ts.
+import {
+  ONBOARDING_TERMINAL_ACTIONS,
+  TIMELINE_ONLY_ACTIONS,
+  LAST_EVENT_LABELS,
+  statusFromTerminalAction,
+  completedAtFor,
+} from '@/lib/onboarding/tabStatus'
 
 type OnboardingStatus = 'not_started' | 'in_progress' | 'complete' | 'timed_out' | 'skipped'
 type FilterType = 'all' | 'not_started' | 'in_progress' | 'complete' | 'flagged' | 'opted_out'
@@ -66,14 +75,25 @@ interface EmployeeOnboardingRow {
   roleCollected: boolean
   timeOffSubmitted: boolean
   completedAt: string | null
+  // L5 — the most recent terminal onboarding event, shown in its own column.
+  // Kept SEPARATE from completedAt so a timeout can be surfaced honestly
+  // instead of masquerading as a completion.
+  lastEventAt: string | null
+  lastEventAction: string | null
   commsStatus: CommsStatus
   commsAt: string | null
 }
 
-const ONBOARDING_ACTIONS = ['onboarding_complete', 'onboarding_timeout', 'onboarding_skipped_no_phone']
+// L5 — the terminal-action list, the status mapping, the completedAt rule and
+// the timeline-only list now live in @/lib/onboarding/tabStatus so they can be
+// unit-tested. This component was the only home for them, and it isn't testable
+// — which is how "a timeout fills the Completed column" shipped unnoticed.
+const ONBOARDING_ACTIONS = ONBOARDING_TERMINAL_ACTIONS
 // SMS consent lifecycle events (Aegis writes these). The tab surfaces the LATEST
 // one per employee as their Communication status.
 const CONSENT_ACTIONS = ['employee_opt_in_confirmed', 'employee_opt_in_declined', 'employee_opted_out', 'employee_resubscribed']
+
+
 
 const COMMS_CONFIG: Record<CommsStatus, { label: string; color: string; bg: string; border: string }> = {
   opted_in:     { label: 'Opted in',      color: 'var(--status-ready-text)',   bg: 'var(--status-ready-bg)',   border: 'var(--status-ready-border)' },
@@ -274,7 +294,7 @@ export default function OnboardingTab() {
 
     const [empRes, logsRes] = await Promise.all([
       supabase.from('employees').select('*').eq('company_id', COMPANY_ID).eq('active', true).order('name'),
-      supabase.from('activity_log').select('*').eq('company_id', COMPANY_ID).in('action', [...ONBOARDING_ACTIONS, ...CONSENT_ACTIONS]).order('created_at', { ascending: false }),
+      supabase.from('activity_log').select('*').eq('company_id', COMPANY_ID).in('action', [...ONBOARDING_ACTIONS, ...CONSENT_ACTIONS, ...TIMELINE_ONLY_ACTIONS]).order('created_at', { ascending: false }),
     ])
 
     let memoryRows: AegisMemoryRow[] = []
@@ -315,25 +335,33 @@ export default function OnboardingTab() {
       if (empId && !commsByEmpId.has(empId)) commsByEmpId.set(empId, log)
     }
 
-    // Index aegis_memory by employee_id (from content JSON) and by phone (from source)
+    // Index the live onboarding sessions by employee_id.
+    //
+    // L5 — the second index here used to be `memByPhone`, built by capturing the
+    // tail of `onboarding:<...>` and then looked up with `emp.contact_phone`.
+    // The session key has been employee-id-keyed since well before this tab
+    // shipped, so that capture is a UUID and the lookup could NEVER hit. It was
+    // leftover from a phone-keyed era and only served to hide the real fallback.
+    // Removed rather than fixed: the `onboarding:<employee_id>` source is itself
+    // a perfectly good index, so it's used directly as the fallback when the
+    // content JSON is unparseable or lacks employee_id.
     const memByEmpId = new Map<string, AegisMemoryRow>()
-    const memByPhone = new Map<string, AegisMemoryRow>()
     for (const row of memoryRows) {
+      const sourceMatch = row.source.match(/^onboarding:(.+)$/)
+      const idFromSource = sourceMatch ? sourceMatch[1] : null
+      let idFromContent: string | null = null
       try {
-        const content = JSON.parse(row.content) as MemoryContent
-        if (content.employee_id && !memByEmpId.has(content.employee_id)) {
-          memByEmpId.set(content.employee_id, row)
-        }
-        const phoneMatch = row.source.match(/^onboarding:(.+)$/)
-        if (phoneMatch) memByPhone.set(phoneMatch[1], row)
+        idFromContent = (JSON.parse(row.content) as MemoryContent).employee_id ?? null
       } catch {
-        // skip unparseable rows
+        // Unparseable content — the source key still identifies the employee.
       }
+      const empId = idFromContent ?? idFromSource
+      if (empId && !memByEmpId.has(empId)) memByEmpId.set(empId, row)
     }
 
     const onboardingRows: EmployeeOnboardingRow[] = empList.map((emp) => {
       const log = logByEmpId.get(emp.id)
-      const memRow = memByEmpId.get(emp.id) ?? (emp.contact_phone ? memByPhone.get(emp.contact_phone) : undefined)
+      const memRow = memByEmpId.get(emp.id)
 
       const comms = commsByEmpId.get(emp.id)
       const commsStatus = commsStatusFromAction(comms?.action)
@@ -341,11 +369,7 @@ export default function OnboardingTab() {
 
       if (log) {
         const meta = log.metadata as OnboardingMeta | null
-        const status: OnboardingStatus =
-          log.action === 'onboarding_complete'         ? 'complete' :
-          log.action === 'onboarding_timeout'          ? 'timed_out' :
-          log.action === 'onboarding_skipped_no_phone' ? 'skipped' :
-          'not_started'
+        const status: OnboardingStatus = statusFromTerminalAction(log.action)
 
         const formatted = formatAvailabilityParsed(meta?.availability_parsed)
         const raw = typeof meta?.availability_raw === 'string' ? meta.availability_raw : null
@@ -364,7 +388,19 @@ export default function OnboardingTab() {
           emailCollected: !!(meta?.email_collected ?? meta?.email),
           roleCollected: !!(meta?.role_collected ?? meta?.role),
           timeOffSubmitted: !!(meta?.time_off_submitted ?? meta?.time_off ?? meta?.has_time_off),
-          completedAt: log.created_at,
+          // L5 — ONLY a real completion fills the "Completed" column.
+          //
+          // This used to be `completedAt: log.created_at` inside a branch that
+          // covers ALL terminal actions, so a TIMEOUT stamped the Completed
+          // column with its own timestamp. That is exactly what Alexander saw:
+          // Bennet Nieukoop's row read Status "Timed Out" (red) next to
+          // Completed "Aug 16, 4:13 PM" — and that date WAS the timeout event.
+          // One row asserting two contradictory things about the same person.
+          completedAt: completedAtFor(log.action, log.created_at),
+          // The terminal event's own timestamp, shown separately as "Last event"
+          // so a timeout is still visible without pretending to be a completion.
+          lastEventAt: log.created_at,
+          lastEventAction: log.action,
           commsStatus,
           commsAt,
         }
@@ -386,6 +422,8 @@ export default function OnboardingTab() {
           roleCollected: !!content.role,
           timeOffSubmitted: false,
           completedAt: null,
+          lastEventAt: null,
+          lastEventAction: null,
           commsStatus,
           commsAt,
         }
@@ -405,6 +443,8 @@ export default function OnboardingTab() {
         roleCollected: false,
         timeOffSubmitted: false,
         completedAt: null,
+        lastEventAt: null,
+        lastEventAction: null,
         commsStatus,
         commsAt,
       }
@@ -511,6 +551,7 @@ export default function OnboardingTab() {
                 <th>Role</th>
                 <th>Time Off</th>
                 <th>Completed</th>
+                <th>Last Event</th>
               </tr>
             </thead>
             <tbody>
@@ -575,6 +616,22 @@ export default function OnboardingTab() {
                   <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                     {row.completedAt
                       ? <span>{formatDateTime(row.completedAt)}</span>
+                      : <span style={{ color: 'var(--text-disabled)' }}>—</span>}
+                  </td>
+                  {/* L5 — the terminal event in its own right. A timeout shows
+                      HERE, never in the Completed column. */}
+                  <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    {row.lastEventAt
+                      ? (
+                        <span>
+                          {formatDateTime(row.lastEventAt)}
+                          {row.lastEventAction && row.lastEventAction !== 'onboarding_complete' && (
+                            <span style={{ display: 'block', color: 'var(--text-disabled)' }}>
+                              {LAST_EVENT_LABELS[row.lastEventAction] ?? row.lastEventAction}
+                            </span>
+                          )}
+                        </span>
+                      )
                       : <span style={{ color: 'var(--text-disabled)' }}>—</span>}
                   </td>
                 </tr>
