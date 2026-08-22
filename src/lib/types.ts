@@ -18,6 +18,19 @@ export interface User {
   name: string
   role: string
   created_at: string
+  /** Set when this login's access has been revoked; null while it is live. */
+  access_revoked_at?: string | null
+  /**
+   * The PERSON this login belongs to (migration 025). Contact details — phone,
+   * email, notification preferences — live on that employee row and are read
+   * from there. `users` has no phone by design: one human, one phone number,
+   * one place.
+   *
+   * NULL means not yet linked. Aegis falls back to matching on email address,
+   * which breaks the moment someone's login email differs from the address on
+   * their employee record.
+   */
+  employee_id?: string | null
 }
 
 export interface Employee {
@@ -39,7 +52,31 @@ export interface Employee {
   // departure set. A daily Aegis job flips active=false after this date; the
   // schedule builder excludes the employee from any week starting after it.
   last_day?: string | null
+  /**
+   * May this person be placed on a schedule? (migration 025, default true.)
+   *
+   * DISTINCT from `active`:
+   *   active=false      → not here right now. Uncontactable AND unschedulable.
+   *                       Seasonal staff between summers, someone on leave.
+   *                       Reversible — flip it back when they return.
+   *   schedulable=false → here, reachable, still gets messages, but never
+   *                       rostered. An owner, a bookkeeper.
+   */
+  schedulable?: boolean
+  /**
+   * Per-category notification opt-in/out (migration 025):
+   * { approvals, trades, schedule_posts, reports }.
+   *
+   * An ABSENT key means "use the default for my role" — an owner defaults to
+   * OFF for every category, everyone else defaults to ON.
+   */
+  notification_prefs?: NotificationPrefs | null
 }
+
+/** The four things Aegis can notify a manager about. */
+export type NotifyCategory = 'approvals' | 'trades' | 'schedule_posts' | 'reports'
+
+export type NotificationPrefs = Partial<Record<NotifyCategory, boolean>>
 
 export interface Availability {
   id: string
@@ -468,17 +505,6 @@ export interface WageRow {
   rate_source: 'individual' | 'role' | 'unknown'
 }
 
-export interface TimeClockIntegration {
-  id: string
-  company_id: string
-  provider: 'northstar' | 'manual'
-  api_key: string | null
-  api_base_url: string | null
-  location_id: string | null
-  active: boolean
-  created_at: string
-  updated_at: string
-}
 
 export interface QuriaStaff {
   id: string
@@ -506,20 +532,6 @@ export interface SwapRequest {
   updated_at: string
 }
 
-export interface PayrollIntegration {
-  id: string
-  company_id: string
-  provider: 'axios_engage' | 'manual'
-  api_key: string | null
-  company_identifier: string | null
-  pay_period: 'weekly' | 'biweekly' | 'semimonthly'
-  payroll_check_day: number
-  auto_check_enabled: boolean
-  last_run_at: string | null
-  active: boolean
-  created_at: string
-  updated_at: string
-}
 
 export interface BillingInfo {
   stripe_customer_id: string | null

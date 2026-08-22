@@ -398,26 +398,60 @@ const NARROW_MON = [{ day_of_week: 1, start_time: '09:00', end_time: '12:00' }] 
   expect(eff.customApplied, 'null effective_start_date applies immediately (back-compat)')
 }
 
-// ── Feature B: departing-employee advisory (non-blocking, person-level) ────────
-// WEEK_START = 2026-06-22 (Mon); week end = 2026-06-28.
+// ── Departing-employee advisory — NARROWED by L1 ──────────────────────────────
+// WEEK_START = 2026-06-22 (Mon); week end = 2026-06-28. WED = 2026-06-24.
+//
+// Feature B fired this for ANY assigned person whose last_day fell on or before
+// the week, because the Aegis builder ignored last_day completely. L1 makes the
+// builder gate per date (engine/eligibility.ts isPastLastDay), so the trigger is
+// now the actual defect: an assignment DATE strictly AFTER the last day. The
+// boundary is `>`, never `>=` — the employee works their last day.
+const TUE = '2026-06-23'
+const THU = '2026-06-25'
+const FRI = '2026-06-26'
 {
-  // last_day WITHIN the week → one non-blocking 'departing_employee' warning.
-  const a = emp('A', ['Lifeguard'], 40, { last_day: WED }) // 2026-06-24
-  const issues = run([pmShift('A')], ['A'], [a])
-  const dep = issues.filter(i => i.code === 'departing_employee')
-  expect(dep.length === 1, 'a departing employee on the schedule is flagged once')
-  expect(dep[0]?.severity === 'warning', 'the departing-employee flag is a NON-BLOCKING warning, never an error')
-  expect(!issues.some(i => i.code === 'departing_employee' && i.severity === 'error'), 'departing-employee never blocks publishing')
+  // THE NARROWING: scheduled ON their last day → NOT flagged. Pre-L1 this
+  // warned on every correctly-built final week, which trained managers to
+  // dismiss the advisory.
+  const a = emp('A', ['Lifeguard'], 40, { last_day: WED })
+  const issues = run([pmShift('A', WED)], ['A'], [a])
+  expect(!issues.some(i => i.code === 'departing_employee'), 'working ON the last day is legitimate and is not flagged')
 }
 {
-  // last_day BEFORE the week (already gone) → still flagged — this is exactly the
-  // case we want a manager to catch.
+  // Scheduled BEFORE their last day → not flagged either.
+  const a = emp('A', ['Lifeguard'], 40, { last_day: WED })
+  const issues = run([pmShift('A', TUE)], ['A'], [a])
+  expect(!issues.some(i => i.code === 'departing_employee'), 'working before the last day is not flagged')
+}
+{
+  // THE REAL DEFECT: scheduled AFTER their last day → one non-blocking warning.
+  // Post-L1 the builder cannot produce this, so it means a hand edit.
+  const a = emp('A', ['Lifeguard'], 40, { last_day: WED })
+  const issues = run([pmShift('A', THU)], ['A'], [a])
+  const dep = issues.filter(i => i.code === 'departing_employee')
+  expect(dep.length === 1, 'a shift after the last day is flagged once')
+  expect(dep[0]?.severity === 'warning', 'the departing-employee flag is a NON-BLOCKING warning, never an error')
+  expect(!issues.some(i => i.code === 'departing_employee' && i.severity === 'error'), 'departing-employee never blocks publishing')
+  expect(dep[0]?.description.includes(THU) === true, 'the warning names the offending date')
+}
+{
+  // Mixed week — legitimate days AND an over-run day. Flagged once, and the
+  // message must name ONLY the offending dates, not the whole week.
+  const a = emp('A', ['Lifeguard'], 40, { last_day: WED })
+  const issues = run([pmShift('A', TUE), pmShift('A', WED), pmShift('A', THU), pmShift('A', FRI)], ['A'], [a])
+  const dep = issues.filter(i => i.code === 'departing_employee')
+  expect(dep.length === 1, 'a departing employee is flagged once, not once per shift')
+  expect(dep[0]?.description.includes(THU) && dep[0]?.description.includes(FRI) === true, 'both offending dates are named')
+  expect(dep[0]?.description.includes(TUE) === false, 'a legitimate pre-departure day is NOT named as a problem')
+}
+{
+  // last_day BEFORE the week (already gone) → every assigned day is after it.
   const a = emp('A', ['Lifeguard'], 40, { last_day: '2026-06-01' })
   const issues = run([pmShift('A')], ['A'], [a])
   expect(issues.some(i => i.code === 'departing_employee'), 'an employee whose last day is before the week is flagged when still scheduled')
 }
 {
-  // last_day AFTER this week → no flag yet (their departure isn't relevant to this week).
+  // last_day AFTER this week → no flag (nothing is past it).
   const a = emp('A', ['Lifeguard'], 40, { last_day: '2026-07-15' })
   const issues = run([pmShift('A')], ['A'], [a])
   expect(!issues.some(i => i.code === 'departing_employee'), 'a future last day beyond this week does not flag this week')

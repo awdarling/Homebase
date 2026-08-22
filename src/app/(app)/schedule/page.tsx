@@ -16,6 +16,7 @@ import ScheduleReviewPanel, { type ScheduleChange } from '@/components/schedule/
 import AddShiftPanel from '@/components/schedule/AddShiftPanel'
 import WageBreakdownPanel from '@/components/schedule/WageBreakdownPanel'
 import ManualScheduleBuilder from '@/components/schedule/ManualScheduleBuilder'
+import { printHtmlViaHiddenIframe } from '@/lib/schedule/printHtmlViaHiddenIframe'
 import type { Schedule, ScheduleAssignment, ScheduleGap, ScheduleTemplate } from '@/lib/types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -32,51 +33,12 @@ function formatDayDate(d: string): string {
   })
 }
 
-// Print an HTML document without opening a popup window. The old path called
-// window.open() AFTER `await fetch(...)`; opening a window after an async gap is
-// no longer treated as a user gesture, so the popup blocker killed it and the
-// handler threw "Popup blocked" — what the manager saw as a crash (Finding 2).
-// A hidden same-document iframe has no popup to block; srcdoc renders the print
-// HTML and the browser's print dialog includes "Save as PDF". Cleans itself up
-// on afterprint, with a timed fallback for browsers that don't fire it.
-function printHtmlViaHiddenIframe(html: string): void {
-  if (typeof document === 'undefined') return
-  const iframe = document.createElement('iframe')
-  iframe.setAttribute('aria-hidden', 'true')
-  iframe.style.position = 'fixed'
-  iframe.style.right = '0'
-  iframe.style.bottom = '0'
-  iframe.style.width = '0'
-  iframe.style.height = '0'
-  iframe.style.border = '0'
-  iframe.srcdoc = html
-
-  let cleanedUp = false
-  const cleanup = () => {
-    if (cleanedUp) return
-    cleanedUp = true
-    setTimeout(() => iframe.remove(), 500)
-  }
-
-  iframe.onload = () => {
-    const win = iframe.contentWindow
-    if (!win) { cleanup(); return }
-    win.addEventListener('afterprint', cleanup)
-    // Let the iframe lay out before printing.
-    setTimeout(() => {
-      try {
-        win.focus()
-        win.print()
-      } catch {
-        cleanup()
-      }
-      // Fallback so a browser that never fires afterprint doesn't leak the node.
-      setTimeout(cleanup, 60000)
-    }, 100)
-  }
-
-  document.body.appendChild(iframe)
-}
+// The hidden-iframe print lifecycle now lives in
+// @/lib/schedule/printHtmlViaHiddenIframe. It was inlined here, which is why its
+// cleanup logic was never unit-tested — and its cleanup logic was the L2 bug
+// (a 60-second timer that removed the iframe out from under an open print
+// dialog). Extracting it made the lifecycle testable; see that module's header
+// for the measured Chromium trace and the design rule.
 
 const CLOSE_DAY_PHRASE = 'yes, i want to close this day'
 const DELETE_DISTRIBUTED_PHRASE = 'yes, delete this distributed schedule'

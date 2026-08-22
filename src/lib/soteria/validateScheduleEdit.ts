@@ -630,28 +630,48 @@ export function validateScheduleEdit(input: ValidateScheduleEditInput): Schedule
     issues.push(...evaluateUnderstaffing(input.proposedAssignments, input.shiftTypes, input.shiftRequirements, affectedCells))
   }
 
-  // ── Departing employees (Feature B — advisory only, never blocks) ─────────────
-  // The schedule builder does NOT yet auto-exclude staff past their last day (that
-  // in-week calculation is future work). So surface a NON-BLOCKING, person-level
-  // reminder for anyone on this schedule whose acknowledged last_day lands on or
-  // before the week being validated — the manager reviews rather than accidentally
-  // scheduling someone who's leaving. Scans ALL assigned people (not just touched),
-  // because a departure should surface regardless of what this edit changed.
+  // ── Departing employees (Feature B advisory, NARROWED by L1) ──────────────────
+  //
+  // Feature B shipped this as a whole-week advisory because the builder ignored
+  // `last_day` entirely: it fired for ANY assigned person whose last_day fell on
+  // or before the week, so a manager who correctly scheduled a Wednesday leaver
+  // Mon–Wed still got warned, and the copy told them the scheduler "doesn't
+  // automatically remove departing employees yet".
+  //
+  // L1 (Aegis engine/eligibility.ts `isPastLastDay`) makes the BUILDER honor
+  // last_day per date, so that copy is now false and the whole-week trigger is
+  // pure noise on every correctly-built schedule. An advisory that cries wolf on
+  // the normal case is worse than no advisory — managers learn to dismiss it.
+  //
+  // So the trigger is narrowed to the real defect: an assignment whose DATE is
+  // strictly AFTER the person's last day. The builder can no longer produce one
+  // of those, which leaves exactly the paths L1 does NOT own — a manual drag in
+  // the schedule UI, a Soteria `move_shift`/`assign_shift`, or a schedule built
+  // before L1 shipped and edited afterwards. That is precisely where a human
+  // still needs catching.
+  //
+  // BOUNDARY: strictly `>`. The employee WORKS their last day — same rule as
+  // Aegis `isPastLastDay` and the daily offboarding sweep. Never `>=`.
+  //
+  // Scans ALL assigned people (not just touched), because a departure should
+  // surface regardless of what this particular edit changed.
   {
-    const weekEndDate = new Date(`${input.weekStart}T12:00:00Z`)
-    weekEndDate.setUTCDate(weekEndDate.getUTCDate() + 6)
-    const weekEnd = weekEndDate.toISOString().slice(0, 10)
     const flaggedDeparting = new Set<string>()
     for (const a of input.proposedAssignments) {
       if (flaggedDeparting.has(a.employee_id)) continue
       const emp = input.employeesById.get(a.employee_id)
       if (!emp || !emp.last_day) continue
-      if (emp.last_day > weekEnd) continue // departure is after this week — nothing to flag yet
+      if (a.date <= emp.last_day) continue // on or before their last day — legitimate, they work it
       flaggedDeparting.add(a.employee_id)
+      const offending = input.proposedAssignments
+        .filter(x => x.employee_id === a.employee_id && x.date > emp.last_day!)
+        .map(x => x.date)
+        .sort()
+      const dayWord = offending.length === 1 ? 'a shift' : `${offending.length} shifts`
       issues.push({
         severity: 'warning', employee_name: emp.name, code: 'departing_employee',
-        description: `${emp.name} told us their last day is ${emp.last_day}. The scheduler doesn't automatically remove departing employees yet, so please double-check this schedule.`,
-        suggestion: `Review ${emp.name}'s shifts on/after ${emp.last_day}. (Automatic handling when the schedule builds is a planned improvement.)`,
+        description: `${emp.name}'s last day is ${emp.last_day}, but this schedule still has ${dayWord} for them after that (${offending.join(', ')}). The schedule builder excludes departing staff automatically, so this was most likely added by hand.`,
+        suggestion: `Remove or reassign ${emp.name}'s shifts on ${offending.join(', ')} — or, if they're staying, clear their last day on the Employees tab.`,
       })
     }
   }
