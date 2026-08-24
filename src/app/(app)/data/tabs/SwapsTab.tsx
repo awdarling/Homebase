@@ -22,6 +22,16 @@ interface SwapRequest {
   updated_at: string
   requesting_employee?: { name: string }
   receiving_employee?: { name: string }
+  // ── L4b (migration 023) ───────────────────────────────────────────────────
+  // Optional because the fetch is `select('*')` and these columns don't exist
+  // on a database where 023 hasn't run yet. A row with no `kind` is described
+  // neutrally rather than guessed at — see swapRowDescriptor.
+  /** 'giveaway' | 'pickup' | 'trade'. */
+  kind?: string | null
+  /** TRADE only: the shift the RECEIVER gives back to the requester. */
+  target_shift_date?: string | null
+  target_shift_name?: string | null
+  target_shift_role?: string | null
 }
 
 const STATUS_CONFIG: Record<string, { label: string; badge: string; color: string; bg: string; border: string }> = {
@@ -157,7 +167,9 @@ export default function SwapsTab() {
       )}
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16, gap: 10 }}>
         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          Shift pickup &amp; swap requests from employees or Aegis — one employee gives up a shift, another picks it up.
+          Shift pickup, coverage &amp; trade requests from employees or Aegis. A <strong style={{ fontWeight: 600 }}>pickup</strong> is one-way
+          — one employee gives up a shift and another takes it. A <strong style={{ fontWeight: 600 }}>trade</strong> is two-way — both give up a
+          shift, so approving it changes two days.
           {pendingCount > 0 && (
             <span style={{ marginLeft: 8, color: 'var(--accent)', fontWeight: 500 }}>
               {pendingCount} awaiting your approval.
@@ -186,9 +198,14 @@ export default function SwapsTab() {
           const config = STATUS_CONFIG[swap.status]
           const isPendingManager = swap.status === 'pending_manager'
           const isActing = acting === swap.id
-          // B5 — these rows are one-way handoffs (giver → taker), not mutual
-          // swaps. Shared vocabulary with the action-result pages.
-          const descriptor = swapRowDescriptor(!!swap.receiving_employee_id)
+          // L4b — was `swapRowDescriptor(!!swap.receiving_employee_id)`, which
+          // labelled EVERY assigned row "Pickup →" on the stated assumption that
+          // "two-way trades ride the email path and don't create these rows".
+          // They do create these rows, and the tab renders live Approve/Deny
+          // buttons for them — so a manager decided a TRADE while reading it as
+          // a one-way pickup. `kind` (migration 023) lets the row say what it is.
+          const descriptor = swapRowDescriptor(!!swap.receiving_employee_id, swap.kind)
+          const isTrade = swap.kind === 'trade' && !!swap.target_shift_date
 
           return (
             <div
@@ -227,7 +244,8 @@ export default function SwapsTab() {
                 </div>
               </div>
 
-              {/* Center: pickup / coverage details (one-way giver → taker) */}
+              {/* Center: request details. One-way (giver → taker) or, for a
+                  trade, both legs — see the isTrade block below. */}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                   <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
@@ -264,6 +282,33 @@ export default function SwapsTab() {
                     via {swap.initiated_by}
                   </span>
                 </div>
+
+                {/* L4b — a trade moves TWO shifts. Spell both out: approving it
+                    changes two days, and every other element on this row shows
+                    only the requester's. */}
+                {isTrade && (
+                  <div style={{
+                    marginTop: 8,
+                    padding: '7px 10px',
+                    background: 'var(--bg-surface-2)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: 11,
+                    color: 'var(--text-secondary)',
+                    lineHeight: 1.6,
+                  }}>
+                    <div>
+                      <strong style={{ fontWeight: 600 }}>{swap.receiving_employee?.name ?? 'The coworker'}</strong>
+                      {' takes '}{swap.shift_name}{' on '}{formatDate(swap.shift_date)}
+                    </div>
+                    <div>
+                      <strong style={{ fontWeight: 600 }}>{swap.requesting_employee?.name ?? 'The requester'}</strong>
+                      {' takes '}{swap.target_shift_name ?? 'their shift'}
+                      {' on '}{formatDate(swap.target_shift_date as string)}
+                      {swap.target_shift_role ? ` (${swap.target_shift_role})` : ''}
+                    </div>
+                  </div>
+                )}
                 {swap.notes && (
                   <div style={{
                     fontSize: 11,

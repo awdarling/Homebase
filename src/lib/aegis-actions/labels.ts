@@ -41,22 +41,70 @@ export function actionResultTitle(action_type: string): string {
   )
 }
 
-// How a manager-facing swap_requests row should read. These rows are one-way
-// handoffs — the requesting employee gives up a shift and the receiving employee
-// picks it up (two-way trades ride the email path and don't create these rows) —
-// so the row uses a directional arrow, never the bidirectional ↔ that implied a
-// mutual swap. When there is no receiver yet, coverage is still being found.
+// How a manager-facing swap_requests row should read.
+//
+// ── L4b — THIS USED TO BE WRONG FOR TRADES ──────────────────────────────────
+//
+// The old version took only `receiverPresent` and labelled EVERY row "Pickup"
+// with a one-way arrow, on the stated assumption that "two-way trades ride the
+// email path and don't create these rows". That assumption was false — both the
+// broadcast trade and the directed trade create exactly these rows, and the tab
+// rendered live Approve/Deny buttons for them. So a manager looking at a TRADE
+// saw it described as a one-way pickup, approved it on that understanding, and
+// (before L4) got a half-applied schedule.
+//
+// It is the same false invariant that appeared as a comment in three other files
+// while being implemented in none. Now that `swap_requests.kind` exists
+// (migration 023) the row can say what it actually is, so this describes it
+// truthfully: a trade gets the bidirectional ↔ it always deserved.
 export interface SwapRowDescriptor {
-  /** Short chip label: an assigned pickup vs. a still-open coverage request. */
+  /** Short chip label: Trade / Pickup / Open coverage. */
   kind: string
-  /** One-way arrow between the giver and the taker. */
+  /** ↔ for a two-way trade; → for a one-way handoff. */
   arrow: string
   /** Micro-caption under the two names. */
   hint: string
 }
 
-export function swapRowDescriptor(receiverPresent: boolean): SwapRowDescriptor {
-  return receiverPresent
-    ? { kind: 'Pickup', arrow: '→', hint: 'gives up → picks up' }
-    : { kind: 'Open coverage', arrow: '→', hint: 'gives up → finding coverage' }
+/**
+ * @param receiverPresent  is a coworker attached yet?
+ * @param swapKind         `swap_requests.kind` — 'trade' | 'giveaway' | 'pickup',
+ *                         or null for a row created before migration 023, which
+ *                         is described neutrally rather than guessed at.
+ */
+export function swapRowDescriptor(
+  receiverPresent: boolean,
+  swapKind?: string | null,
+): SwapRowDescriptor {
+  if (!receiverPresent) {
+    return { kind: 'Open coverage', arrow: '→', hint: 'gives up → finding coverage' }
+  }
+  if (swapKind === 'trade') {
+    return { kind: 'Trade', arrow: '↔', hint: 'two-way — both give up a shift' }
+  }
+  if (swapKind === 'giveaway' || swapKind === 'pickup') {
+    return { kind: 'Pickup', arrow: '→', hint: 'gives up → picks up' }
+  }
+  // Unknown (pre-023 row). Don't assert one-way — that mislabel is the bug.
+  return { kind: 'Swap', arrow: '→', hint: 'gives up → picks up (kind not recorded)' }
+}
+
+/**
+ * The NOUN to use when talking to a manager about a request.
+ *
+ * Rule 0b — the Swaps tab chip, the confirmation message the manager reads after
+ * clicking Approve, and the activity_log summary must all call the same thing by
+ * the same name. Before L4b, `src/lib/swaps/decide.ts` hard-coded "swap"
+ * everywhere: a manager who approved a two-way TRADE was told "the swap is
+ * approved and the schedule's updated" while the activity feed recorded
+ * "Approved shift swap: A → B" — a one-way arrow for a two-way move.
+ *
+ * Lower-case, for use mid-sentence ("the trade is approved"). Capitalise at the
+ * call site when it starts one.
+ */
+export function swapNounFor(swapKind?: string | null): 'trade' | 'pickup' | 'swap' {
+  if (swapKind === 'trade') return 'trade'
+  if (swapKind === 'giveaway' || swapKind === 'pickup') return 'pickup'
+  // Unknown kind (pre-023 row): the umbrella word is the only honest one.
+  return 'swap'
 }
