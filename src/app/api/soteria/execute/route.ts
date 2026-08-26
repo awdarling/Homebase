@@ -1084,7 +1084,8 @@ export async function POST(request: NextRequest) {
           employee_id: r.employee_id,
           start_date: r.start_date,
           end_date: r.end_date,
-          reason: r.reason ?? 'personal',
+          // Decision 2026-08-26: no reason → NULL (rendered "no reason given"), never invented.
+          reason: (r.reason ?? '').trim() || null,
           status: 'pending',
           time_off_type: r.time_off_type,
           partial_days: r.partial_days ?? null,
