@@ -307,8 +307,26 @@ function HomebaseSection({
     onChange()
   }
 
+  // Role changes go through the server (see api/update-user-role). Writing
+  // users.role from the browser silently updated nothing — no policy allows it.
+  const [roleError, setRoleError] = useState<string | null>(null)
   async function handleRoleChange(userId: string, newRole: string) {
-    await supabase.from('users').update({ role: newRole }).eq('id', userId)
+    setRoleError(null)
+    try {
+      const res = await fetch('/api/update-user-role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, role: newRole }),
+      })
+      const data = (await res.json()) as { error?: string }
+      if (!res.ok) {
+        setRoleError(data.error ?? 'Could not change the role.')
+        return
+      }
+    } catch {
+      setRoleError('Failed to reach the server.')
+      return
+    }
     onChange()
   }
 
@@ -318,6 +336,9 @@ function HomebaseSection({
         title="Homebase Access"
         subtitle="Who can log into the manager platform"
       />
+      {roleError && (
+        <div style={{ fontSize: 12, color: 'var(--danger, #c0392b)', marginBottom: 10 }}>{roleError}</div>
+      )}
 
       <div style={{
         display: 'grid',
