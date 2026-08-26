@@ -38,6 +38,7 @@ function BillingContent() {
   const [currentUser, setCurrentUser] = useState<{ role: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
   const [notesValue, setNotesValue] = useState('')
   const [priceValue, setPriceValue] = useState('')
   const [billingEmailValue, setBillingEmailValue] = useState('')
@@ -80,62 +81,32 @@ function BillingContent() {
     setLoading(false)
   }
 
-  async function handleStartSubscription() {
-    if (!billing) return
+  // Owner (or Quria) only — the server enforces it; the page just mirrors it.
+  async function callBilling(action: 'start_checkout' | 'open_portal') {
     setActionLoading(true)
-
-    let customerId = billing.stripe_customer_id
-
-    if (!customerId) {
-      const res = await fetch('/api/stripe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'create_customer',
-          email: billing.billing_email ?? '',
-          name: billing.name,
-          company_id: COMPANY_ID,
-        }),
-      })
-      const data = await res.json()
-      customerId = data.customer_id
-      await supabase.from('companies').update({ stripe_customer_id: customerId }).eq('id', COMPANY_ID)
-    }
-
+    setActionError(null)
     const res = await fetch('/api/stripe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'create_checkout',
-        customer_id: customerId,
-        amount_cents: billing.subscription_price,
-        plan_name: 'Homebase + Aegis',
-        plan_description: `Monthly subscription — ${billing.name}`,
-        billing_model: billing?.billing_model ?? 'subscription',
-        price_id: billing?.stripe_price_id ?? null,
-        origin: window.location.origin,
-      }),
+      body: JSON.stringify({ action, company_id: COMPANY_ID }),
     })
-    const data = await res.json()
-    if (data.url) window.location.href = data.url
+    const data = (await res.json()) as { url?: string; error?: string }
+    if (res.ok && data.url) {
+      window.location.href = data.url
+      return
+    }
+    setActionError(data.error ?? 'Billing action failed.')
     setActionLoading(false)
+  }
+
+  async function handleStartSubscription() {
+    if (!billing) return
+    await callBilling('start_checkout')
   }
 
   async function handleManageBilling() {
     if (!billing?.stripe_customer_id) return
-    setActionLoading(true)
-    const res = await fetch('/api/stripe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'create_portal',
-        customer_id: billing.stripe_customer_id,
-        origin: window.location.origin,
-      }),
-    })
-    const data = await res.json()
-    if (data.url) window.location.href = data.url
-    setActionLoading(false)
+    await callBilling('open_portal')
   }
 
   async function handleSaveAdmin() {
@@ -152,6 +123,8 @@ function BillingContent() {
   }
 
   const canSeePricing = isQuria || currentUser?.role === 'owner' || currentUser?.role === 'manager'
+  // Option A (Alexander, 2026-08-24): only the owner — or Quria — may start or manage the subscription.
+  const canManageBilling = isQuria || currentUser?.role === 'owner'
   const statusInfo = STATUS_STYLES[billing?.subscription_status ?? 'inactive'] ?? STATUS_STYLES.inactive
   const success = searchParams.get('success')
   const cancelled = searchParams.get('cancelled')
@@ -271,35 +244,45 @@ function BillingContent() {
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: 8 }}>
-            {isOneTime ? (
-              isPaid ? null : (
+          {canManageBilling ? (
+            <div style={{ display: 'flex', gap: 8 }}>
+              {isOneTime ? (
+                isPaid ? null : (
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={handleStartSubscription}
+                    disabled={actionLoading || !billing?.subscription_price}
+                  >
+                    {actionLoading ? 'Loading...' : 'Complete Payment'}
+                  </button>
+                )
+              ) : billing?.subscription_status !== 'active' ? (
                 <button
                   className="btn btn-primary btn-sm"
                   onClick={handleStartSubscription}
                   disabled={actionLoading || !billing?.subscription_price}
                 >
-                  {actionLoading ? 'Loading...' : 'Complete Payment'}
+                  {actionLoading ? 'Loading...' : 'Start Subscription'}
                 </button>
-              )
-            ) : billing?.subscription_status !== 'active' ? (
-              <button
-                className="btn btn-primary btn-sm"
-                onClick={handleStartSubscription}
-                disabled={actionLoading || !billing?.subscription_price}
-              >
-                {actionLoading ? 'Loading...' : 'Start Subscription'}
-              </button>
-            ) : (
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={handleManageBilling}
-                disabled={actionLoading}
-              >
-                {actionLoading ? 'Loading...' : 'Manage Billing'}
-              </button>
-            )}
-          </div>
+              ) : (
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleManageBilling}
+                  disabled={actionLoading}
+                >
+                  {actionLoading ? 'Loading...' : 'Manage Billing'}
+                </button>
+              )}
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Only the account owner can start or change the subscription.
+            </div>
+          )}
+
+          {actionError && (
+            <div style={{ fontSize: 11, color: 'var(--danger, #c0392b)', marginTop: 10 }}>{actionError}</div>
+          )}
 
           {!isQuria && !billing?.subscription_price && billing?.subscription_status !== 'active' && (
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>
