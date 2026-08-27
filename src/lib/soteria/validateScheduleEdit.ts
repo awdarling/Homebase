@@ -219,6 +219,34 @@ export interface EffectiveAvailability {
   customApplied: boolean
 }
 
+// ── "Is this override in force today?" — one rule (Rule 0b) ─────────────────
+//
+// W-1 / C-1 + J-2 (2026-08-26): the Soteria context read `active = true` and never
+// looked at end_date, so Soteria would describe Jenna as "on a temporary schedule
+// until 2026-07-16" in late August. This is the same gate the week resolver below
+// applies (end_date < weekStart → ignore), anchored to a single day instead of a
+// week. `today` must be the COMPANY's local date (YYYY-MM-DD), not the server's.
+// A future-start row counts as current (it is a live commitment); callers that
+// display it can word "starting <date>" themselves.
+export function isCustomAvailabilityCurrent(
+  row: { active?: boolean | null; end_date?: string | null } | null | undefined,
+  today: string,
+): boolean {
+  if (!row) return false
+  if (row.active === false) return false
+  if (row.end_date && row.end_date < today) return false
+  return true
+}
+
+// Today's date (YYYY-MM-DD) in the given IANA timezone; falls back to UTC on a bad zone.
+export function todayInTimezone(tz: string | null | undefined, now: Date = new Date()): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'UTC' }).format(now)
+  } catch {
+    return now.toISOString().slice(0, 10)
+  }
+}
+
 export function resolveEffectiveAvailability(
   weekStart: string,
   normal: ValidatorAvailability[],

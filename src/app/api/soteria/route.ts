@@ -10,6 +10,7 @@ import {
   formatCustomAvailabilitySection,
   formatVeteranRulesSection,
 } from '@/lib/soteria/contextFormatters'
+import { isCustomAvailabilityCurrent, todayInTimezone } from '@/lib/soteria/validateScheduleEdit'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -36,7 +37,7 @@ async function getCompanyContext(companyId: string) {
     { data: wageRates },
     { data: events },
     { data: availability },
-    { data: customAvailability },
+    { data: customAvailabilityRaw },
     { data: veteranRules },
   ] = await Promise.all([
     supabase.from('companies').select('*').eq('id', companyId).single(),
@@ -55,6 +56,13 @@ async function getCompanyContext(companyId: string) {
     supabase.from('custom_availability').select('*').eq('company_id', companyId).eq('active', true),
     supabase.from('shift_experience_rules').select('*').eq('company_id', companyId).eq('active', true),
   ])
+
+  // W-1 / C-1: `active = true` alone is not "in force" — 10 of Watermark's 17
+  // active overrides had already ended. Drop the expired ones here so Soteria
+  // never describes a dead override to the manager. Same rule as Aegis's
+  // isOverrideCurrent, anchored to the COMPANY's local date.
+  const todayLocal = todayInTimezone((company as { timezone?: string | null } | null)?.timezone)
+  const customAvailability = (customAvailabilityRaw ?? []).filter(row => isCustomAvailabilityCurrent(row, todayLocal))
 
   const employeeCount = employees?.length ?? 0
   const isNewCompany = employeeCount === 0 && !profile?.description
