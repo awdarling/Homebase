@@ -5,7 +5,7 @@ import { useEffect, useState, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { Schedule, PartialDayDetail } from '@/lib/types'
-import { buildOutRows, type OutRow } from '@/lib/time-off/out-summary'
+import { buildOutRows, summarizeOutCounts, type OutRow } from '@/lib/time-off/out-summary'
 
 interface ActivityEntry {
   id: string
@@ -322,7 +322,9 @@ export default function HomePage() {
   const outRows = buildOutRows(approvedTO, selRange.start, selRange.end)
   const outNextCount = buildOutRows(approvedTO, nextRange.start, nextRange.end).length
   const employeeCount = employees.length
-  const outPercent = employeeCount > 0 ? (outRows.length / employeeCount) * 100 : 0
+  // W-3: a partial-day person is "partly out", never counted as out — the old
+  // "9 of 23 staff out — 39% out" read a crisis into five four-hour windows.
+  const outCounts = summarizeOutCounts(outRows)
   const roleTally = outRows.reduce<Record<string, number>>((acc, r) => { acc[r.role] = (acc[r.role] ?? 0) + 1; return acc }, {})
   const roleBreak = Object.entries(roleTally).sort(([, a], [, b]) => b - a).map(([role, n]) => `${n} ${role}${n === 1 ? '' : 's'}`)
 
@@ -514,17 +516,15 @@ export default function HomePage() {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '12px 16px', background: 'var(--bg-surface-2)', borderBottom: '1px solid var(--border-subtle)', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
-              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22 }}>{outRows.length}</span>
+              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22 }}>{outCounts.full}</span>
               <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>of {employeeCount} staff out</span>
             </div>
-            <span style={{
-              fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 'var(--radius-pill)',
-              color: outPercent > 25 ? 'var(--status-blocked-text)' : 'var(--accent)',
-              background: outPercent > 25 ? 'var(--status-blocked-bg)' : 'var(--accent-dim)',
-              border: `1px solid ${outPercent > 25 ? 'var(--status-blocked-border)' : 'var(--accent-border)'}`,
-            }}>
-              {Math.round(outPercent)}% out
-            </span>
+            {outCounts.partial > 0 && (
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
+                <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, color: 'var(--text-secondary)' }}>{outCounts.partial}</span>
+                <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>partly out (part of a day)</span>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8, marginLeft: 'auto', flexWrap: 'wrap' }}>
               {roleBreak.map((rb, i) => (
                 <span key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', background: 'var(--bg-surface-3)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-pill)', padding: '3px 10px' }}>{rb} out</span>

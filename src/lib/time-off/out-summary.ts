@@ -95,7 +95,10 @@ export function partialTimeLabel(days: PartialDayDetail[] | null | undefined): s
   const fmtOne = (d: PartialDayDetail): string | null => {
     const s = fmtClock(d.start_time)
     const e = fmtClock(d.end_time)
-    if (s && e) return `${s} – ${e}`
+    // W-3 (§N11): a `shift_off` entry carries BOTH the shift name and its real
+    // hours (W-1 fills them from the published assignment) — show both, and
+    // treat it exactly like `custom_hours` when only times are present.
+    if (s && e) return d.shift_name ? `${d.shift_name} shift, ${s} – ${e}` : `${s} – ${e}`
     if (d.shift_name) return `${d.shift_name} shift`
     return null
   }
@@ -219,4 +222,20 @@ export function buildOutRows(reqs: TORequestLike[], rs: string, re: string): Out
       summary,
     }
   }).sort((a, b) => b.days - a.days || a.name.localeCompare(b.name))
+}
+
+// ── W-3: honest counts for the Home card ─────────────────────────────────────
+//
+// "9 of 23 staff out — 39% out" counted every partial-day row as fully out; a
+// manager read a crisis into five people who each miss a four-hour window.
+// A person is "out" only when at least one whole day is off; all-partial rows
+// are "partly out". No percentage — the split IS the summary.
+export function summarizeOutCounts(rows: OutRow[]): { full: number; partial: number } {
+  let full = 0
+  let partial = 0
+  for (const r of rows) {
+    if (r.days > 0 && r.partialDays >= r.days) partial++
+    else full++
+  }
+  return { full, partial }
 }

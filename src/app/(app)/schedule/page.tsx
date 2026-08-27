@@ -17,7 +17,8 @@ import AddShiftPanel from '@/components/schedule/AddShiftPanel'
 import WageBreakdownPanel from '@/components/schedule/WageBreakdownPanel'
 import ManualScheduleBuilder from '@/components/schedule/ManualScheduleBuilder'
 import { printHtmlViaHiddenIframe } from '@/lib/schedule/printHtmlViaHiddenIframe'
-import type { Schedule, ScheduleAssignment, ScheduleGap, ScheduleTemplate } from '@/lib/types'
+import type { Availability, CustomAvailability, Schedule, ScheduleAssignment, ScheduleGap, ScheduleTemplate, TimeOffRequest } from '@/lib/types'
+import { buildEmployeeWeekStrips, type EmployeeWeekStrip } from '@/lib/schedule/employeeWeekStrip'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1073,6 +1074,9 @@ export default function SchedulePage() {
   // Veteran indicators for the schedule grid: veteran employee ids → "VET"
   // name badge; shift NAME → veteran-rule tag on the shift row header.
   const [veteranIds, setVeteranIds] = useState<Set<string>>(new Set())
+  // W-3 (J-1d): per-employee availability + time-off strips for the CURRENT
+  // week's employee-rows layout.
+  const [employeeStrips, setEmployeeStrips] = useState<Record<string, EmployeeWeekStrip> | undefined>(undefined)
   const [shiftRuleLabels, setShiftRuleLabels] = useState<Record<string, string>>({})
   // Day-scoped veteran rules → plain-English notes shown behind an expandable
   // marker on the shift row (so a Sat/Sun-only rule isn't badged as all-week).
@@ -1236,6 +1240,45 @@ export default function SchedulePage() {
   const historySchedules = allSchedules
     .filter(s => classifySchedule(s) === 'past')
     .sort((a, b) => b.week_start.localeCompare(a.week_start))
+
+  // ── W-3 (J-1d): the builder's INPUTS beside its output ────────────────────
+  // For the current week's employee-rows layout: each row shows the person's
+  // availability (normal, or the CURRENT override — company-local today, never
+  // the browser clock; C-1's lesson) and their approved time off. Loaded once
+  // per current schedule.
+  const currentScheduleId = currentSchedule?.id ?? null
+  useEffect(() => {
+    if (!currentScheduleId || !companyId) { setEmployeeStrips(undefined); return }
+    const sched = allSchedules.find(x => x.id === currentScheduleId)
+    if (!sched) { setEmployeeStrips(undefined); return }
+    let cancelled = false
+    ;(async () => {
+      const employeeIds = Array.from(new Set((sched.data?.assignments ?? []).map(a => a.employee_id).filter(Boolean)))
+      if (employeeIds.length === 0) { if (!cancelled) setEmployeeStrips(undefined); return }
+      const [availRes, overrideRes, toRes, companyRes] = await Promise.all([
+        supabase.from('availability').select('id, employee_id, company_id, day_of_week, start_time, end_time').eq('company_id', companyId),
+        supabase.from('custom_availability').select('*').eq('company_id', companyId).eq('active', true),
+        supabase.from('time_off_requests').select('employee_id, start_date, end_date, time_off_type, partial_days')
+          .eq('company_id', companyId).eq('status', 'approved')
+          .lte('start_date', sched.week_end).gte('end_date', sched.week_start),
+        supabase.from('companies').select('timezone').eq('id', companyId).maybeSingle(),
+      ])
+      if (cancelled) return
+      const timezone = (companyRes.data as { timezone?: string | null } | null)?.timezone || 'America/New_York'
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
+      setEmployeeStrips(buildEmployeeWeekStrips({
+        employeeIds,
+        availability: ((availRes.data as Availability[]) ?? []),
+        overrides: ((overrideRes.data as CustomAvailability[]) ?? []),
+        approvedTimeOff: ((toRes.data as Pick<TimeOffRequest, 'employee_id' | 'start_date' | 'end_date' | 'time_off_type' | 'partial_days'>[]) ?? []),
+        weekStart: sched.week_start,
+        weekEnd: sched.week_end,
+        today,
+      }))
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentScheduleId, companyId])
   const filteredHistory = historySchedules.filter(s => scheduleMatchesSearch(s, search))
 
   // ── Derived edit state ──────────────────────────────────────────────────
@@ -1797,6 +1840,7 @@ export default function SchedulePage() {
                 onCloseDay={(date) => requestCloseDay(currentSchedule.id, date)}
                 onReopenDay={(date) => handleReopenDay(currentSchedule.id, date)}
                 veteranIds={veteranIds}
+                employeeStrips={employeeStrips}
                 shiftRuleLabels={shiftRuleLabels}
                 shiftRuleNotes={shiftRuleNotes}
               />

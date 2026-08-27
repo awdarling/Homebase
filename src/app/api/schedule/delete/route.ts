@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
+import { deleteSchedulePatch } from '@/lib/schedule/deleteArchive'
 
 // Service-role client — bypasses RLS. Mirrors SEC-1 (create-user/route.ts).
 const adminSupabase = createClient(
@@ -52,7 +53,7 @@ export async function POST(req: NextRequest) {
   //    ourselves (a quria admin may act cross-company).
   const { data: schedRow, error: schedErr } = await adminSupabase
     .from('schedules')
-    .select('id, company_id, week_end, distributed_at, deleted_at')
+    .select('id, company_id, week_end, distributed_at, deleted_at, published_at')
     .eq('id', scheduleId)
     .maybeSingle()
   if (schedErr) {
@@ -67,6 +68,7 @@ export async function POST(req: NextRequest) {
     week_end: string
     distributed_at: string | null
     deleted_at: string | null
+    published_at: string | null
   }
   // Already soft-deleted → idempotent not-found.
   if (schedule.deleted_at) {
@@ -97,9 +99,13 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Soft delete: set deleted_at via the service role. No hard DELETE. ────
+  // W-3: a PUBLISHED schedule is also archived on delete (archived_at set,
+  // published_at cleared — the same shape republish writes), so a reader that
+  // forgets to filter deleted_at can never mistake it for the live schedule
+  // (Jack's Aug 23 delete-and-rebuild left one looking live).
   const { error: updErr } = await adminSupabase
     .from('schedules')
-    .update({ deleted_at: new Date().toISOString() })
+    .update(deleteSchedulePatch(schedule, new Date().toISOString()))
     .eq('id', scheduleId)
   if (updErr) {
     return NextResponse.json({ error: updErr.message }, { status: 400 })
