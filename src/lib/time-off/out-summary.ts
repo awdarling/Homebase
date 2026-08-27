@@ -8,6 +8,7 @@
 // Pure + self-contained (no React / DOM) so it can be unit-tested directly.
 
 import type { PartialDayDetail } from '@/lib/types'
+import { displayReason } from './reason'
 
 export interface TORequestLike {
   id: string
@@ -180,7 +181,7 @@ export function buildOutRows(reqs: TORequestLike[], rs: string, re: string): Out
       end: en,
       isPartial,
       timeLabel: isPartial ? partialTimeLabel(r.partial_days) : null,
-      reason: (r.reason ?? '').trim() || '—',
+      reason: displayReason(r.reason),
     })
   }
 

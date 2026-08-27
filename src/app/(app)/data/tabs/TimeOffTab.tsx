@@ -1,5 +1,6 @@
 'use client'
 import { useCompany } from '@/lib/hooks/useCompany'
+import { displayReason } from '@/lib/time-off/reason'
 import { useQuria } from '@/lib/hooks/useQuria'
 
 import { useEffect, useMemo, useState } from 'react'
@@ -633,7 +634,7 @@ export default function TimeOffTab() {
                     {formatDate(req.start_date)} – {formatDate(req.end_date)}
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1, minWidth: 0 }}>
-                    {req.reason ?? '—'}
+                    {displayReason(req.reason)}
                   </div>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                     {req.aegis_recommendation && <AegisBadge rec={req.aegis_recommendation} />}
