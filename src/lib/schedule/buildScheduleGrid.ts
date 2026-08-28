@@ -263,9 +263,11 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
         const cellAsgs = baseClosed ? [] : (row.cellsByDate[col.date] ?? [])
         const employees: GridCellEmployee[] = cellAsgs.map(a => isEmployee
           // Employee rows: the person IS the row, so each cell names the SHIFT.
-          ? { name: a.shift_name ?? '', role: showRole ? (a.role ?? '') : '' }
+          // W-3: an approved call-out is marked so the printed/emailed grid
+          // agrees with the greyed on-screen card (Alexander, 2026-08-27).
+          ? { name: `${a.shift_name ?? ''}${a.called_out ? ' (called out)' : ''}`, role: showRole ? (a.role ?? '') : '' }
           // Role rows: the role IS the row, so each cell names the person.
-          : { name: a.employee_name ?? '', role: '' })
+          : { name: `${a.employee_name ?? ''}${a.called_out ? ' (called out)' : ''}`, role: '' })
         const kind: CellKind = baseClosed ? 'closed' : (employees.length > 0 ? 'filled' : 'empty')
         return {
           kind,
@@ -325,7 +327,9 @@ export function buildScheduleGrid(input: BuildScheduleGridInput): ScheduleGrid {
         .slice()
         .sort(compareByRoleThenName)
         .map(a => ({
-          name: a.employee_name ?? '',
+          // W-3: the printed/emailed grid marks an approved call-out just like
+          // the on-screen card greys it — the two must never disagree.
+          name: `${a.employee_name ?? ''}${a.called_out ? ' (called out)' : ''}`,
           role: showRole ? (a.role ?? '') : '',
         }))
       const unfilled = gap ? (gap.required_count - gap.filled_count) : 0

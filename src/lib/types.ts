@@ -140,7 +140,8 @@ export interface TimeOffRequest {
   start_date: string
   end_date: string
   reason: string | null
-  status: 'pending' | 'approved' | 'denied'
+  // 'cancelled' — migration 022 (L3) widened the live CHECK; this type lagged it.
+  status: 'pending' | 'approved' | 'denied' | 'cancelled'
   requested_at: string
   decided_at: string | null
   decided_by: string | null
@@ -238,6 +239,14 @@ export interface ScheduleAssignment {
   start_time: string
   end_time: string
   hours: number
+  /**
+   * W-2/W-3 (Alexander, 2026-08-27): an APPROVED call-out. The assignment
+   * stays on the published schedule — removing it would hide the very hole
+   * the manager chose to handle — but renders greyed out ("absence approved —
+   * needs coverage") and Aegis excludes it from every wage estimate. Cleared
+   * when a coverer takes the shift. Written by Aegis's decision webhook.
+   */
+  called_out?: boolean
 }
 
 export interface ScheduleGap {
@@ -290,6 +299,36 @@ export type FlaggedIssue =
         on_duty: Array<{ name: string; role: string; sex: string }>
       }
     }
+  | {
+      // W-1 (Aegis, J-1d): an active, schedulable employee ended the build with
+      // ZERO shifts — the flag names them and the engine's own reasons (Mia's
+      // week of Aug 17: two approved partial time-offs plus a 9–12 availability
+      // override left nothing she could work, and no screen said so). W-3
+      // renders it (this type lagged the Aegis producer — DRIFT_REGISTER §N7).
+      type: 'zero_shifts'
+      date: string // week start
+      description: string
+      metadata: {
+        employee_id: string
+        employee_name: string
+        reasons: Record<string, number>
+        availability: string
+        time_off: string
+        eligible_slots: number
+      }
+    }
+  | {
+      // Universal safety invariant (Aegis producer): one person holding two
+      // time-overlapping assignments on the same day.
+      type: 'double_booking'
+      date: string
+      description: string
+      metadata: {
+        employee_id: string
+        employee_name: string
+        shifts: Array<{ shift_name: string; role: string; start_time: string; end_time: string }>
+      }
+    }
 
 export interface ScheduleData {
   assignments: ScheduleAssignment[]
@@ -323,6 +362,9 @@ export interface StaffingReport {
   gap_summary: string
   special_notes_applied: string[]
   aegis_notes: string
+  /** W-1 (Aegis): active employees the build left with NO shifts (J-1d). */
+  zero_shift_employees?: Array<{ employee_id: string; name: string; description: string }>
+
   /** @deprecated wages now compute-on-read per Block 3a. New writes do not populate this field; legacy rows may still have it. */
   estimated_wages?: {
     total_estimated: number

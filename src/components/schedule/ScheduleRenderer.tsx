@@ -21,6 +21,28 @@ import { buildEmployeeRowModel, buildRoleRowModel, applyAltMove } from '@/lib/sc
 import { compareByRoleThenName } from '@/lib/schedule/cellOrder'
 import { VetBadge } from '@/components/common/VetBadge'
 
+// W-3 — the approved-call-out tag: the shift stays visible (the hole is real
+// until covered), the person is not expected. Alexander, 2026-08-27.
+function CalledOutBadge() {
+  return (
+    <span style={{
+      padding: '1px 5px',
+      background: 'rgba(239,68,68,0.12)',
+      border: '1px solid rgba(239,68,68,0.3)',
+      borderRadius: 'var(--radius-pill)',
+      fontSize: 8,
+      fontWeight: 700,
+      letterSpacing: '0.06em',
+      textTransform: 'uppercase',
+      color: '#dc2626',
+      whiteSpace: 'nowrap',
+      flexShrink: 0,
+    }}>
+      called out
+    </span>
+  )
+}
+
 interface ScheduleRendererProps {
   schedule: Schedule
   template: ScheduleTemplate
@@ -37,6 +59,13 @@ interface ScheduleRendererProps {
   shiftRuleLabels?: Record<string, string>
   /** Shift NAME → plain-English notes for day-scoped rules (e.g. "Veterans only on Saturdays & Sundays"), shown behind an expandable marker. */
   shiftRuleNotes?: Record<string, string[]>
+  /**
+   * W-3 (J-1d): employee_id → the availability + time-off strip shown under
+   * the row label on the employee-rows layout, so the builder's inputs are
+   * visible on the same screen as its output. Built by
+   * lib/schedule/employeeWeekStrip; absent = no strip.
+   */
+  employeeStrips?: Record<string, { availability: string; timeOff: string }>
 }
 
 const FONT_SIZES = {
@@ -191,6 +220,9 @@ function AssignmentCardContent({
       userSelect: 'none',
       position: 'relative',
       border: removeMode ? '1px solid rgba(239,68,68,0.4)' : undefined,
+      // W-3 (Alexander, 2026-08-27): an approved call-out STAYS on the schedule
+      // but reads as the hole it is — greyed, never silently removed.
+      opacity: assignment.called_out ? 0.45 : undefined,
     }}>
       {removeMode && (
         <div style={{
@@ -226,9 +258,11 @@ function AssignmentCardContent({
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
+          textDecoration: assignment.called_out ? 'line-through' : undefined,
         }}>
           {assignment.employee_name}
         </span>
+        {assignment.called_out && <CalledOutBadge />}
         {isVeteran && <VetBadge />}
       </div>
       {showRole && (
@@ -908,12 +942,13 @@ function AltShiftChip({
   showStartEnd: boolean
 }) {
   return (
-    <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 4, padding: '5px 7px', userSelect: 'none' }}>
+    <div style={{ background: 'rgba(255,255,255,0.08)', borderRadius: 4, padding: '5px 7px', userSelect: 'none', opacity: assignment.called_out ? 0.45 : undefined }}>
       <div style={{
         fontSize: fontSize.name, fontWeight: 500, color: 'var(--text-primary)',
         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3,
+        textDecoration: assignment.called_out ? 'line-through' : undefined,
       }}>
-        {assignment.shift_name}
+        {assignment.shift_name}{assignment.called_out ? ' · called out' : ''}
       </div>
       {showRole && (
         <div style={{ fontSize: fontSize.meta, color, lineHeight: 1.2, marginTop: 2, fontWeight: 500, opacity: 0.85 }}>
@@ -967,7 +1002,7 @@ function DraggableAltCard({
 
 function AltLayoutGrid({
   schedule, template, rowKind, closedDates, veteranIds,
-  mode, removeMode = false, pendingAssignments, onAssignmentChange,
+  mode, removeMode = false, pendingAssignments, onAssignmentChange, employeeStrips,
 }: {
   schedule: Schedule
   template: ScheduleTemplate
@@ -978,6 +1013,7 @@ function AltLayoutGrid({
   removeMode?: boolean
   pendingAssignments?: ScheduleAssignment[]
   onAssignmentChange?: (assignments: ScheduleAssignment[]) => void
+  employeeStrips?: Record<string, { availability: string; timeOff: string }>
 }) {
   const editing = mode === 'edit'
   const { display_options, column_config, color_config } = template
@@ -1064,11 +1100,19 @@ function AltLayoutGrid({
           <div key={`label-${row.id}`} style={{
             position: 'sticky', left: 0, zIndex: 5, background: 'var(--bg-surface-2)',
             borderBottom: '1px solid var(--border-subtle)', borderRight: '1px solid var(--border-default)',
-            padding: '10px 12px', display: 'flex', alignItems: 'center', minHeight: MIN_ROW_HEIGHT,
+            padding: '10px 12px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 2, minHeight: MIN_ROW_HEIGHT,
           }}>
             <span style={{ fontFamily: 'var(--font-display)', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
               {row.label}
             </span>
+            {/* W-3 (J-1d): what the builder saw for this person, on the same
+                screen as what it produced — availability + approved time off. */}
+            {rowKind === 'employee' && employeeStrips?.[row.id] && (
+              <span style={{ fontSize: 10, lineHeight: 1.35, color: 'var(--text-muted)' }}>
+                {employeeStrips[row.id].availability}
+                {employeeStrips[row.id].timeOff ? <><br />{employeeStrips[row.id].timeOff}</> : null}
+              </span>
+            )}
           </div>,
           ...orderedDates.map(date => {
             const col = colByDate.get(date)!
@@ -1164,6 +1208,7 @@ export default function ScheduleRenderer({
   veteranIds,
   shiftRuleLabels,
   shiftRuleNotes,
+  employeeStrips,
 }: ScheduleRendererProps) {
   const containerStyle: React.CSSProperties = {
     background: 'var(--bg-surface-1)',
@@ -1211,6 +1256,7 @@ export default function ScheduleRenderer({
           removeMode={removeMode}
           pendingAssignments={pendingAssignments}
           onAssignmentChange={onAssignmentChange}
+          employeeStrips={employeeStrips}
         />
       </div>
     )

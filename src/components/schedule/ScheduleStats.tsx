@@ -46,6 +46,9 @@ export default function ScheduleStats({ schedule, compact = false }: ScheduleSta
   const coverageRate = report?.coverage_rate ?? null
   const topContributors = report?.top_contributors?.slice(0, 3) ?? []
   const totalWages = wagesLoading ? null : wageTotals.estimated_pay
+  // W-3 (J-1d): active employees the build left with NO shifts — the number a
+  // manager must not have to discover from an employee's text.
+  const zeroShift = report?.zero_shift_employees ?? []
 
   const weekLabel = `${formatDate(schedule.week_start)} – ${formatDate(schedule.week_end)}`
 
@@ -126,6 +129,30 @@ export default function ScheduleStats({ schedule, compact = false }: ScheduleSta
           {totalGaps}
         </div>
       </div>
+
+      {/* W-3 (J-1d): employees with zero shifts this build */}
+      {zeroShift.length > 0 && (
+        <div
+          title={zeroShift.map(z => z.description).join('\n')}
+          style={{
+            padding,
+            background: 'rgba(239,68,68,0.08)',
+            border: '1px solid rgba(239,68,68,0.2)',
+            borderRadius: 'var(--radius-lg)',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            gap: 2,
+          }}
+        >
+          <div style={{ fontSize: labelSize, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', lineHeight: 1 }}>
+            No Shifts
+          </div>
+          <div style={{ fontSize: valueSize, fontFamily: 'var(--font-display)', fontWeight: 800, color: '#ef4444', lineHeight: 1, whiteSpace: 'nowrap' }}>
+            {zeroShift.length === 1 ? zeroShift[0].name : `${zeroShift.length} staff`}
+          </div>
+        </div>
+      )}
 
       {/* Top contributors */}
       {topContributors.length > 0 && (

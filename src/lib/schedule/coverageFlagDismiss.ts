@@ -9,11 +9,25 @@
 interface CoverageFlagLike {
   type: string
   date: string
-  metadata?: { time_window?: { start?: string; end?: string }; missing_sex?: string }
+  metadata?: {
+    time_window?: { start?: string; end?: string }
+    missing_sex?: string
+    /** W-3: zero_shifts / double_booking flags identify by the person. */
+    employee_id?: string
+  }
 }
 
-/** Stable identity for a coverage flag (type + date + window + missing sex). */
+/**
+ * Stable identity for a flag. Sex-coverage keys keep W-1's exact shape
+ * (type + date + window + missing sex) so dismissals saved before W-3 still
+ * apply; the W-3 employee-scoped types (zero_shifts, double_booking) key on
+ * the person instead — without this, every same-day flag of one type would
+ * collapse to a single dismiss key and one click would hide them all.
+ */
 export function coverageFlagKey(f: CoverageFlagLike): string {
+  if (f.type === 'zero_shifts' || f.type === 'double_booking') {
+    return [f.type, f.date, f.metadata?.employee_id ?? ''].join('|')
+  }
   const w = f.metadata?.time_window
   return [f.type, f.date, w?.start ?? '', w?.end ?? '', f.metadata?.missing_sex ?? ''].join('|')
 }

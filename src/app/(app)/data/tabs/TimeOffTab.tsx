@@ -75,7 +75,8 @@ function describePartial(days: PartialDayDetail[] | null): string | null {
   if (!days || days.length === 0) return null
   if (days.length === 1) {
     const d = days[0]
-    if (d.type === 'shift_off') return `Shift off: ${d.shift_name ?? '—'}`
+    // W-3 (§N11): shift_off rows carry real hours too (W-1) — show them.
+    if (d.type === 'shift_off') return `Shift off: ${d.shift_name ?? '—'}${d.start_time && d.end_time ? ` (${d.start_time}–${d.end_time})` : ''}`
     return `Partial: ${d.start_time ?? '—'}–${d.end_time ?? '—'}`
   }
   const first = days[0]
@@ -86,7 +87,7 @@ function describePartial(days: PartialDayDetail[] | null): string | null {
     (d.end_time ?? null) === (first.end_time ?? null),
   )
   if (allSame) {
-    if (first.type === 'shift_off') return `Shift off: ${first.shift_name ?? '—'}`
+    if (first.type === 'shift_off') return `Shift off: ${first.shift_name ?? '—'}${first.start_time && first.end_time ? ` (${first.start_time}–${first.end_time})` : ''}`
     return `Partial: ${first.start_time ?? '—'}–${first.end_time ?? '—'}`
   }
   return 'Partial (varies by day)'
