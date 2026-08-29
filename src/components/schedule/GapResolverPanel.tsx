@@ -49,9 +49,19 @@ function formatGapDate(d: string) {
   })
 }
 
-// Mirrors the server-side template in src/app/api/notify-assignment/route.ts.
-// Keep in lockstep so the preview the manager sees matches the SMS that
-// actually goes out.
+// Mirrors the server-side template in Aegis /internal/notify-assignment
+// (S-4: the send moved behind Aegis's consent gate). Keep in lockstep so the
+// preview the manager sees matches the message that actually goes out —
+// first name, human clock times (never raw HH:MM:SS).
+function formatPreviewClock(t: string): string {
+  const [hStr, mStr] = t.slice(0, 5).split(':')
+  const hNum = Number(hStr)
+  const mNum = Number(mStr)
+  const suffix = hNum >= 12 ? 'pm' : 'am'
+  const h12 = hNum % 12 === 0 ? 12 : hNum % 12
+  return mNum === 0 ? `${h12}${suffix}` : `${h12}:${String(mNum).padStart(2, '0')}${suffix}`
+}
+
 function buildAssignmentSmsPreview(args: {
   employee_name: string
   shift_name: string
@@ -64,7 +74,11 @@ function buildAssignmentSmsPreview(args: {
   const dateStr = new Date(y, mo - 1, da).toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric',
   })
-  return `Hi ${args.employee_name}, you've been added to the ${args.shift_name} shift (${args.role}, ${args.start_time}–${args.end_time}) on ${dateStr} by your manager. See you then!`
+  const first = args.employee_name.trim().split(/\s+/)[0] || args.employee_name
+  const hours = args.start_time && args.end_time
+    ? ` (${args.role}, ${formatPreviewClock(args.start_time)}–${formatPreviewClock(args.end_time)})`
+    : ` (${args.role})`
+  return `Hi ${first} — you've been added to the ${args.shift_name} shift${hours} on ${dateStr} by your manager. See you then!`
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -432,7 +446,7 @@ export default function GapResolverPanel({
                     lineHeight: 1.55,
                     marginBottom: 14,
                   }}>
-                    SMS to {notifyContext.contact_phone}: &ldquo;{buildAssignmentSmsPreview({
+                    Text to {notifyContext.contact_phone}: &ldquo;{buildAssignmentSmsPreview({
                       employee_name: notifyContext.employee_name,
                       shift_name: gap.shift_name,
                       role: notifyContext.role,
@@ -443,7 +457,7 @@ export default function GapResolverPanel({
                   </div>
                 ) : (
                   <div style={{ fontSize: 12, color: '#ca8a04', marginBottom: 14 }}>
-                    No phone number on file for this employee — sending will be skipped server-side.
+                    No phone number on file — Aegis will email them instead (same message).
                   </div>
                 )}
                 {notifyError && (
@@ -462,9 +476,9 @@ export default function GapResolverPanel({
                   <button
                     className="btn btn-primary btn-sm"
                     onClick={handleNotifySend}
-                    disabled={notifyPhase === 'sending' || !notifyContext.contact_phone}
+                    disabled={notifyPhase === 'sending'}
                   >
-                    {notifyPhase === 'sending' ? 'Sending...' : 'Send SMS'}
+                    {notifyPhase === 'sending' ? 'Sending...' : 'Send notification'}
                   </button>
                 </div>
               </div>
