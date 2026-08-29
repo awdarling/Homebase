@@ -1,7 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { TokenRow } from './tokens'
-import { postToAegisInternal, AegisInternalConfigError } from '@/lib/aegis-internal'
-import { decideTimeOffRequest } from '@/lib/time-off/decide'
+import { postToAegisInternal, AegisInternalConfigError, AegisInternalError } from '@/lib/aegis-internal'
 
 export type DispatchResult = { ok: boolean; message: string }
 
@@ -97,38 +96,101 @@ async function logAegisDeliveryFailure(
   })
 }
 
-// ── Time-off (approve / deny) ────────────────────────────────────────────────
+// ── Time-off (approve / deny / approve & find coverage) ──────────────────────
+//
+// N-3 (2026-08-28): the magic-link decision no longer writes time_off_requests
+// from Homebase. It is forwarded to Aegis's /internal/apply-time-off-decision,
+// which refuses revoked managers and lands the decision in the ONE shared core
+// (applyTimeOffDecision) — the same function the manager's texted replies use
+// (contract rule F13). That is what makes an email click and a text reply
+// mutually exclusive: whichever arrives second gets the truthful
+// "already decided" answer, never a second action. It is also what lets a
+// call-out's "Approve & find coverage" actually blast the qualified pool and
+// mark the schedule — side effects Homebase has no business re-implementing.
+//
+// Unlike the pre-N-3 shape (decide locally, notify best-effort), a failed
+// Aegis call here means NOTHING was applied — the message says so honestly
+// and points at the Homebase tab.
 
 async function handleTimeOffDecision(
-  decision: 'approved' | 'denied',
+  action: 'approve' | 'deny' | 'approve_and_cover',
   row: TokenRow,
   supabase: SupabaseClient,
 ): Promise<DispatchResult> {
   const payload = row.payload
   const time_off_request_id = strOrNull(payload.time_off_request_id)
-  const employee_name = strOrNull(payload.employee_name) ?? 'employee'
-  const start_date = strOrNull(payload.start_date)
-  const end_date = strOrNull(payload.end_date)
+  const employee_name = strOrNull(payload.employee_name) ?? 'the employee'
 
   if (!time_off_request_id) {
     return { ok: false, message: 'This link is missing the time-off request id. Approve from Homebase instead.' }
   }
 
-  // Delegate to the shared helper so the magic-link path and the in-tab
-  // Homebase path record decisions identically (guarded update + decided_by,
-  // activity log, fire-and-tolerate employee notification, manager message).
-  const result = await decideTimeOffRequest({
-    supabase,
-    timeOffRequestId: time_off_request_id,
-    decision,
-    companyId: row.company_id,
-    decidedBy: { userId: row.issued_to_user_id, email: row.issued_to_email },
-    source: 'magic_link',
-    employeeName: employee_name,
-    startDate: start_date,
-    endDate: end_date,
-  })
-  return { ok: result.ok, message: result.message }
+  try {
+    const res = await postToAegisInternal<{ ok?: boolean; outcome?: string; message?: string }>(
+      '/internal/apply-time-off-decision',
+      {
+        time_off_request_id,
+        action,
+        company_id: row.company_id,
+        manager_user_id: strOrNull(payload.manager_user_id) ?? row.issued_to_user_id,
+        manager_name: strOrNull(payload.manager_name),
+        thread_id: strOrNull(payload.thread_id),
+        raw_subject: strOrNull(payload.raw_subject),
+        call_out: Array.isArray(payload.call_out) ? payload.call_out : null,
+      },
+    )
+    const ok = res.ok !== false
+    if (ok && res.outcome === 'applied') {
+      await logDecision(supabase, {
+        company_id: row.company_id,
+        action: action === 'deny' ? 'time_off_denied_via_email' : 'time_off_approved_via_email',
+        entity_type: 'time_off_request',
+        entity_id: time_off_request_id,
+        summary: `${action === 'deny' ? 'Denied' : 'Approved'} ${employee_name}'s time-off request via email link${action === 'approve_and_cover' ? ' (coverage requested)' : ''}`,
+        metadata: {
+          decided_by: row.issued_to_user_id,
+          decided_by_email: row.issued_to_email,
+          source: 'magic_link',
+          aegis_action: action,
+        },
+      })
+    }
+    return {
+      ok,
+      message: res.message ?? (ok
+        ? `Done — ${employee_name} has been told.`
+        : 'That didn\'t go through. Open the Time Off tab in Homebase to decide it there.'),
+    }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    await logAegisDeliveryFailure(supabase, {
+      company_id: row.company_id,
+      entity_type: 'time_off_request',
+      entity_id: time_off_request_id,
+      aegis_endpoint: '/internal/apply-time-off-decision',
+      error: errMsg,
+      issued_to_user_id: row.issued_to_user_id,
+      issued_to_email: row.issued_to_email,
+    })
+    if (err instanceof AegisInternalConfigError) {
+      return {
+        ok: false,
+        message: 'Could not record the decision — the Aegis connection is not configured. Nothing has changed; please decide it from the Time Off tab in Homebase.',
+      }
+    }
+    // A 403 is Aegis's revoked-manager refusal — its body carries the
+    // manager-readable explanation; surface it rather than a generic error.
+    if (err instanceof AegisInternalError && err.status === 403) {
+      try {
+        const body = JSON.parse(err.body) as { message?: string }
+        if (body.message) return { ok: false, message: body.message }
+      } catch { /* fall through to the generic line */ }
+    }
+    return {
+      ok: false,
+      message: 'Could not record the decision right now. Nothing has changed; please decide it from the Time Off tab in Homebase.',
+    }
+  }
 }
 
 // ── Time-off re-check (recompute recommendation) ─────────────────────────────
@@ -618,9 +680,11 @@ export async function dispatchAction(
 ): Promise<DispatchResult> {
   switch (row.action_type) {
     case 'approve_to':
-      return handleTimeOffDecision('approved', row, supabase)
+      return handleTimeOffDecision('approve', row, supabase)
     case 'deny_to':
-      return handleTimeOffDecision('denied', row, supabase)
+      return handleTimeOffDecision('deny', row, supabase)
+    case 'approve_and_cover_to':
+      return handleTimeOffDecision('approve_and_cover', row, supabase)
     case 'recheck_to':
       return handleRecheckTimeOff(row, supabase)
     case 'confirm_distribution':

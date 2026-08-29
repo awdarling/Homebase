@@ -18,6 +18,7 @@
 const ACTION_TITLES: Record<string, string> = {
   approve_to: 'Approve Time Off',
   deny_to: 'Deny Time Off',
+  approve_and_cover_to: 'Approve & Find Coverage',
   recheck_to: 'Re-check Time Off',
   approve_availability: 'Approve Availability Change',
   deny_availability: 'Deny Availability Change',
