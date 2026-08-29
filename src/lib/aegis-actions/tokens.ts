@@ -4,6 +4,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 export type ActionType =
   | 'approve_to'
   | 'deny_to'
+  // N-3 / §O3 — a call-out's third choice: approve the absence AND have Aegis
+  // blast the qualified pool. Minted (Aegis-side) only when the token payload
+  // carries call_out; dispatched through Aegis's shared decision core.
+  | 'approve_and_cover_to'
   | 'approve_availability'
   | 'deny_availability'
   | 'approve_custom_availability'

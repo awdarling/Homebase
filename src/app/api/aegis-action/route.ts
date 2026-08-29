@@ -189,15 +189,38 @@ function describeAction(action_type: ActionType, payload: Record<string, unknown
   const date = get('date')
   const week = get('week')
 
+  // N-3 / §O3 — a call-out (payload.call_out present) reads as a call-out, not
+  // a generic time-off request, and names the shift where it can.
+  const callOut = Array.isArray(payload.call_out) && payload.call_out.length > 0
+    ? (payload.call_out as Array<Record<string, unknown>>)
+    : null
+  const callOutShift = callOut && typeof callOut[0]?.shift_name === 'string'
+    ? (callOut[0].shift_name as string)
+    : null
+
   switch (action_type) {
     case 'approve_to':
+      if (callOut) {
+        return employee
+          ? `Approve ${employee}'s call-out${callOutShift ? ` for the ${callOutShift} shift` : ''}? You'll handle coverage yourself — Aegis will let ${employee} know.`
+          : 'Approve this call-out? You\'ll handle coverage yourself.'
+      }
       return employee && dateRange
         ? `Approve ${employee}'s time-off request for ${dateRange}?`
         : 'Approve this time-off request?'
     case 'deny_to':
+      if (callOut) {
+        return employee
+          ? `Deny ${employee}'s call-out${callOutShift ? ` for the ${callOutShift} shift` : ''}? They'd still be expected for the shift — Aegis will let them know.`
+          : 'Deny this call-out?'
+      }
       return employee && dateRange
         ? `Deny ${employee}'s time-off request for ${dateRange}?`
         : 'Deny this time-off request?'
+    case 'approve_and_cover_to':
+      return employee
+        ? `Approve ${employee}'s call-out and have Aegis text qualified teammates to cover${callOutShift ? ` the ${callOutShift} shift` : ' the shift'}?`
+        : 'Approve this call-out and have Aegis find coverage?'
     case 'recheck_to':
       return employee && dateRange
         ? `Re-run Aegis's coverage check on ${employee}'s time-off request for ${dateRange}.`
@@ -356,6 +379,38 @@ function successPage(message: string): string {
 
 // ── Route handlers ──────────────────────────────────────────────────────────
 
+// N-3 — truthful pages for a decision that already happened through another
+// door (a texted reply, another manager's link, the Homebase tab). The token
+// itself may still be unconsumed, but the REQUEST knows its own state; the GET
+// reports that instead of offering a confirm button that could only bounce.
+const TIME_OFF_DECISION_ACTIONS: ReadonlyArray<TokenRow['action_type']> = [
+  'approve_to',
+  'deny_to',
+  'approve_and_cover_to',
+]
+
+async function timeOffAlreadyDecidedPage(row: TokenRow): Promise<string | null> {
+  if (!TIME_OFF_DECISION_ACTIONS.includes(row.action_type)) return null
+  const requestId = typeof row.payload.time_off_request_id === 'string' ? row.payload.time_off_request_id : null
+  if (!requestId) return null
+  const { data } = await supabase
+    .from('time_off_requests')
+    .select('status')
+    .eq('id', requestId)
+    .maybeSingle()
+  const status = (data as { status: string } | null)?.status
+  if (!status || status === 'pending') return null
+  const employee = typeof row.payload.employee_name === 'string' ? row.payload.employee_name : 'the employee'
+  const decided = status === 'approved' || status === 'denied'
+  return renderActionResultPage({
+    title: decided ? `Already ${status}` : 'No longer open',
+    message: decided
+      ? `This request was already ${status} — that decision stands and ${employee} has been told. Nothing further is needed.`
+      : `This request is no longer open (it was ${status}). Check the Time Off tab in Homebase for where it stands.`,
+    tone: 'info',
+  })
+}
+
 export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get('token')
   if (!token) return htmlResponse(errorPage('invalid'), 400)
@@ -365,6 +420,11 @@ export async function GET(request: NextRequest) {
     const status = result.error === 'invalid' ? 404 : 410
     return htmlResponse(errorPage(result.error), status)
   }
+
+  // A time-off decision that already happened (text reply, another manager,
+  // the Homebase tab) gets the truthful state page, not a confirm button.
+  const alreadyDecided = await timeOffAlreadyDecidedPage(result.row)
+  if (alreadyDecided) return htmlResponse(alreadyDecided)
 
   // The swap picker is interactive (choose which of your shifts to trade), so it
   // gets its own page instead of the single-Confirm page.
