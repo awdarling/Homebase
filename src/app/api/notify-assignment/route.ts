@@ -1,13 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
-import { sendTelnyxSms } from '@/lib/sms/telnyx'
+import { postToAegisInternal, AegisInternalError, AegisInternalConfigError } from '@/lib/aegis-internal'
 
-const supabase = createClient(
+// Service-role client — only used for the delivery-failure audit entry below.
+// The send itself (and its consent decision) is delegated to Aegis.
+const adminSupabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
 )
 
+/**
+ * Notify an employee that a manager assigned them to a shift (GapResolverPanel).
+ *
+ * S-4 (2026-08-28): this route used to send the SMS itself through Homebase's
+ * own Telnyx client — the ONE door in the whole system that could text an
+ * employee without passing Aegis's consent gate ("may we text this person?").
+ * Dormant (held closed by EMAIL_ONLY on Vercel), but the door existed. It is
+ * now a thin proxy, exactly like notify-day-closure: session → caller's
+ * company → forward to Aegis `/internal/notify-assignment` with the internal
+ * secret. Aegis binds the employee to the company, routes the notification
+ * SMS-first through the consent gate (email fallback for anyone who hasn't
+ * opted in), and writes the activity log. After this, exactly one function in
+ * the system decides whether an employee may be texted (Rule 0b).
+ *
+ * Body: { employee_id, shift_name, role, date, start_time, end_time, company_id }
+ * Response: { success: boolean, message: string } — the contract
+ * GapResolverPanel has always consumed.
+ */
 export async function POST(req: NextRequest) {
   const body = await req.json()
   const { employee_id, shift_name, role, date, start_time, end_time, company_id } = body as {
@@ -21,9 +41,9 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Auth check ──────────────────────────────────────────────────────────
-  // Notifications must always be authorized by a manager in the requesting
-  // company. Without this gate, anyone could send arbitrary employee
-  // assignment texts. See notify-warning safety guard (Phase 2).
+  // Notifications must always be authorized by a signed-in user of the
+  // requesting company. Without this gate, anyone could trigger arbitrary
+  // employee assignment texts.
   const ssr = await createServerSupabase()
   const { data: { user } } = await ssr.auth.getUser()
   if (!user) {
@@ -38,107 +58,49 @@ export async function POST(req: NextRequest) {
   if (!userRecord || userRecord.company_id !== company_id) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
-  const approvedById = user.id
-  const approvedByEmail = userRecord.email ?? null
 
-  // Load employee
-  const { data: employee } = await supabase
-    .from('employees')
-    .select('name, contact_phone')
-    .eq('id', employee_id)
-    .single()
-
-  if (!employee?.contact_phone) {
-    return NextResponse.json({ success: false, message: 'Employee has no phone number on file' })
-  }
-
-  // Resolve this tenant's OWN Telnyx sending number from config
-  // (company_channels.channel_value, channel_type='sms'). No global fallback —
-  // each company sends from its own number.
-  const { data: channelData } = await supabase
-    .from('company_channels')
-    .select('channel_value')
-    .eq('company_id', company_id)
-    .eq('channel_type', 'sms')
-    .limit(1)
-    .maybeSingle()
-
-  const fromNumber = (channelData as { channel_value?: string } | null)?.channel_value ?? ''
-
-  // Format the date nicely
-  const [y, mo, da] = date.split('-').map(Number)
-  const dateStr = new Date(y, mo - 1, da).toLocaleDateString('en-US', {
-    weekday: 'long', month: 'long', day: 'numeric',
-  })
-
-  const message = `Hi ${employee.name}, you've been added to the ${shift_name} shift (${role}, ${start_time}–${end_time}) on ${dateStr} by your manager. See you then!`
-
-  // Consent/safety gate — mirrors Aegis EMAIL_ONLY. No automated SMS reaches a
-  // real employee until go-live (counsel clears the consent chain). Unset
-  // defaults to email-only (SMS disabled); set EMAIL_ONLY=false in Vercel to
-  // enable sends. This keeps the route dormant even when TELNYX_API_KEY is set.
-  const emailOnly = (process.env.EMAIL_ONLY ?? 'true').toLowerCase() !== 'false'
-  if (emailOnly) {
-    await supabase.from('activity_log').insert({
+  // ── Delegate the send to Aegis (owns consent + channels + the audit log) ──
+  try {
+    const result = await postToAegisInternal<{ ok?: boolean; channel?: string; message?: string }>(
+      '/internal/notify-assignment',
+      {
+        company_id,
+        employee_id,
+        shift_name,
+        role,
+        date,
+        start_time,
+        end_time,
+        approved_by: user.id,
+        approved_by_email: userRecord.email,
+      },
+    )
+    return NextResponse.json({
+      success: result.ok !== false,
+      message: result.message ?? (result.ok !== false ? 'The employee has been notified.' : 'The employee could not be notified.'),
+    })
+  } catch (err) {
+    const detail = err instanceof AegisInternalConfigError || err instanceof AegisInternalError
+      ? err.message
+      : err instanceof Error ? err.message : 'unknown error'
+    await adminSupabase.from('activity_log').insert({
       company_id,
       actor: 'manager',
-      action: 'assignment_notification_skipped',
+      action: 'notification_delivery_failed',
       entity_type: 'employee',
       entity_id: employee_id,
-      summary: `SMS notification skipped for ${employee.name} — SMS disabled (email-only mode)`,
+      summary: 'Assignment notification could not be delivered — the Aegis call failed',
       metadata: {
+        aegis_endpoint: '/internal/notify-assignment',
+        error: detail,
         shift_name, role, date,
-        approved_by: approvedById,
-        approved_by_email: approvedByEmail,
+        approved_by: user.id,
+        approved_by_email: userRecord.email,
       },
     })
-    return NextResponse.json({ success: false, message: 'SMS disabled (email-only mode)' })
-  }
-
-  // Not configured (no Telnyx API key, or the tenant has no SMS number): skip
-  // gracefully and log it, exactly as before.
-  if (!process.env.TELNYX_API_KEY || !fromNumber) {
-    await supabase.from('activity_log').insert({
-      company_id,
-      actor: 'manager',
-      action: 'assignment_notification_skipped',
-      entity_type: 'employee',
-      entity_id: employee_id,
-      summary: `SMS notification skipped for ${employee.name} — Telnyx not configured for this company`,
-      metadata: {
-        shift_name, role, date,
-        approved_by: approvedById,
-        approved_by_email: approvedByEmail,
-      },
+    return NextResponse.json({
+      success: false,
+      message: `The assignment was saved, but the notification could not be sent: ${detail}. Please let the employee know directly.`,
     })
-    return NextResponse.json({ success: false, message: 'Telnyx not configured for this company' })
   }
-
-  const result = await sendTelnyxSms({
-    from: fromNumber,
-    to: employee.contact_phone,
-    text: message,
-  })
-
-  await supabase.from('activity_log').insert({
-    company_id,
-    actor: 'manager',
-    action: result.ok ? 'assignment_notification_sent' : 'assignment_notification_failed',
-    entity_type: 'employee',
-    entity_id: employee_id,
-    summary: result.ok
-      ? `SMS sent to ${employee.name}: ${shift_name} (${role}) on ${date}`
-      : `SMS failed for ${employee.name}: ${result.error ?? 'Unknown Telnyx error'}`,
-    metadata: {
-      shift_name, role, date,
-      telnyx_id: result.id ?? null,
-      approved_by: approvedById,
-      approved_by_email: approvedByEmail,
-    },
-  })
-
-  return NextResponse.json({
-    success: result.ok,
-    message: result.ok ? 'SMS sent successfully' : `Telnyx error: ${result.error ?? 'Unknown'}`,
-  })
 }
