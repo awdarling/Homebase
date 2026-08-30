@@ -947,15 +947,11 @@ export async function POST(request: NextRequest) {
         // 'never' here so no soft pair can be created regardless of the model's
         // output.
         const severity = normalizeConflictSeverity()
-        const { data, error } = await supabase.from('employee_conflicts').insert({
-          company_id: companyId,
-          employee_id_1: d.employee_id_1,
-          employee_id_2: d.employee_id_2,
-          reason: d.reason ?? null,
-          severity,
-        }).select().single()
-        if (error) throw error
 
+        // N-7 sweep (2026-08-30): bind BOTH employees to the caller's company
+        // BEFORE writing a cross-tenant reference nobody asked for — this used
+        // to only run AFTER the insert, for display naming, so a foreign
+        // employee_id still landed in the row (just showed as "an employee").
         const { data: empPair } = await supabase
           .from('employees')
           .select('id, name')
@@ -964,8 +960,23 @@ export async function POST(request: NextRequest) {
         const nameById = new Map<string, string>(
           ((empPair ?? []) as { id: string; name: string }[]).map(e => [e.id, e.name])
         )
-        const name1 = nameById.get(d.employee_id_1) ?? 'an employee'
-        const name2 = nameById.get(d.employee_id_2) ?? 'an employee'
+        if (!nameById.has(d.employee_id_1) || !nameById.has(d.employee_id_2)) {
+          return NextResponse.json(
+            { error: "One of those employees wasn't found in this company." },
+            { status: 404 },
+          )
+        }
+        const name1 = nameById.get(d.employee_id_1)!
+        const name2 = nameById.get(d.employee_id_2)!
+
+        const { data, error } = await supabase.from('employee_conflicts').insert({
+          company_id: companyId,
+          employee_id_1: d.employee_id_1,
+          employee_id_2: d.employee_id_2,
+          reason: d.reason ?? null,
+          severity,
+        }).select().single()
+        if (error) throw error
 
         await supabase.from('activity_log').insert({
           company_id: companyId,
@@ -1076,6 +1087,32 @@ export async function POST(request: NextRequest) {
               end_time?: string | null
             }[] | null
           }[]
+        }
+
+        // N-7 (2026-08-30): bind every employee_id in the batch to the
+        // caller's company BEFORE writing — same shape as N-10
+        // (notify-assignment) and the same fix update_availability already
+        // has. Without this, a request naming another company's employee_id
+        // would insert a time_off_requests row that is company-scoped by
+        // company_id but points at someone else's employee record.
+        const requestedIds = Array.from(new Set((d.requests ?? []).map((r) => r.employee_id)))
+        const { data: ownedEmployees, error: empErr } = await supabase
+          .from('employees')
+          .select('id')
+          .eq('company_id', companyId)
+          .in('id', requestedIds)
+        if (empErr) throw empErr
+        const ownedIds = new Set(((ownedEmployees ?? []) as { id: string }[]).map((e) => e.id))
+        const unknown = requestedIds.filter((id) => !ownedIds.has(id))
+        if (unknown.length > 0) {
+          const unknownNames = (d.requests ?? [])
+            .filter((r) => unknown.includes(r.employee_id))
+            .map((r) => r.employee_name)
+            .join(', ')
+          return NextResponse.json(
+            { error: `${unknownNames || 'One or more of those employees'} wasn't found in this company.` },
+            { status: 404 },
+          )
         }
 
         const nowIso = new Date().toISOString()
@@ -1193,6 +1230,22 @@ export async function POST(request: NextRequest) {
           }[]
         }
 
+        // N-7 sweep (2026-08-30): same unbound-employee shape as N-10 and
+        // batch_create_time_off — bind before writing.
+        const { data: customAvailEmp, error: customAvailEmpErr } = await supabase
+          .from('employees')
+          .select('id')
+          .eq('id', d.employee_id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+        if (customAvailEmpErr) throw customAvailEmpErr
+        if (!customAvailEmp) {
+          return NextResponse.json(
+            { error: `${d.employee_name || 'That employee'} wasn't found in this company.` },
+            { status: 404 },
+          )
+        }
+
         const { error: deactivateErr } = await supabase
           .from('custom_availability')
           .update({ active: false })
@@ -1307,6 +1360,9 @@ export async function POST(request: NextRequest) {
           const detail = err instanceof AegisInternalConfigError || err instanceof AegisInternalError
             ? err.message
             : err instanceof Error ? err.message : 'unknown error'
+          // N-8 (2026-08-30): `detail` can carry Aegis's raw response body —
+          // it belongs in the activity log for whoever debugs this, not in
+          // what the manager sees on screen.
           await supabase.from('activity_log').insert({
             company_id: companyId,
             actor: 'soteria',
@@ -1316,7 +1372,7 @@ export async function POST(request: NextRequest) {
             metadata: { target_week: targetWeek },
           })
           return NextResponse.json(
-            { error: `I couldn't reach the scheduling engine: ${detail}` },
+            { error: "I couldn't reach the scheduling engine. Please try again in a moment." },
             { status: 502 }
           )
         }
@@ -1421,6 +1477,7 @@ export async function POST(request: NextRequest) {
           const detail = err instanceof AegisInternalConfigError || err instanceof AegisInternalError
             ? err.message
             : err instanceof Error ? err.message : 'unknown error'
+          // N-8 (2026-08-30): keep the raw detail in the activity log only.
           await supabase.from('activity_log').insert({
             company_id: companyId,
             actor: 'soteria',
@@ -1432,7 +1489,7 @@ export async function POST(request: NextRequest) {
           })
           // No orphan outputs: say it did NOT go out.
           return NextResponse.json(
-            { error: `I couldn't get that to Aegis, so nothing was sent to the team: ${detail}` },
+            { error: "I couldn't get that to Aegis, so nothing was sent to the team. Please try again in a moment." },
             { status: 502 },
           )
         }

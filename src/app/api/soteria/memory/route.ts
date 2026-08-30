@@ -35,6 +35,13 @@ async function authorize(
   return { ok: true }
 }
 
+// N-8 (2026-08-30): log the real Supabase error server-side; the caller gets
+// a generic message rather than raw constraint/column detail.
+function dbError(action: string, message: string): NextResponse {
+  console.error(`[soteria/memory] ${action} failed:`, message)
+  return NextResponse.json({ error: `Could not ${action}. Please try again.` }, { status: 500 })
+}
+
 export async function GET(request: NextRequest) {
   const companyId = request.nextUrl.searchParams.get('companyId') ?? ''
   if (!companyId) return NextResponse.json({ error: 'companyId required' }, { status: 400 })
@@ -46,7 +53,7 @@ export async function GET(request: NextRequest) {
     .select('id, memory_type, content, source, created_at')
     .eq('company_id', companyId)
     .order('created_at', { ascending: false })
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return dbError('load Soteria memory', error.message)
   return NextResponse.json({ memories: data ?? [] })
 }
 
@@ -62,7 +69,7 @@ export async function DELETE(request: NextRequest) {
     .delete()
     .eq('id', id)
     .eq('company_id', companyId)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return dbError('delete that memory', error.message)
 
   await supabase.from('activity_log').insert({
     company_id: companyId,

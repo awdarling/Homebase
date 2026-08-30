@@ -32,6 +32,15 @@ async function requireQuria(): Promise<{ error: NextResponse } | { error: null }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+// N-8 (2026-08-30): a raw Supabase error (constraint names, column names,
+// internal schema shape) used to go straight to the browser. Log the real
+// detail server-side; the caller gets a generic message. Same pattern as the
+// `stripe` / `update-user-role` routes already use (S-2 fix batch).
+function dbError(action: string, message: string): NextResponse {
+  console.error(`[monitoring-inbox] ${action} failed:`, message)
+  return NextResponse.json({ error: `Could not ${action}. Please try again.` }, { status: 500 })
+}
+
 // GET /api/monitoring-inbox?company_id=... → list a company's monitoring inboxes
 export async function GET(req: NextRequest) {
   const gate = await requireQuria()
@@ -46,7 +55,7 @@ export async function GET(req: NextRequest) {
     .eq('company_id', companyId)
     .order('created_at')
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+  if (error) return dbError('load monitoring inboxes', error.message)
   return NextResponse.json({ inboxes: data ?? [] })
 }
 
@@ -74,14 +83,14 @@ export async function POST(req: NextRequest) {
       .from('company_monitoring_inboxes')
       .update({ active: true })
       .eq('id', (existing as { id: string }).id)
-    if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+    if (error) return dbError('reactivate that monitoring inbox', error.message)
     return NextResponse.json({ success: true, reactivated: true })
   }
 
   const { error } = await adminSupabase
     .from('company_monitoring_inboxes')
     .insert({ company_id, email: clean, active: true })
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+  if (error) return dbError('add that monitoring inbox', error.message)
   return NextResponse.json({ success: true })
 }
 
@@ -98,7 +107,7 @@ export async function PATCH(req: NextRequest) {
     .from('company_monitoring_inboxes')
     .update({ active })
     .eq('id', id)
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+  if (error) return dbError('update that monitoring inbox', error.message)
   return NextResponse.json({ success: true })
 }
 
@@ -113,6 +122,6 @@ export async function DELETE(req: NextRequest) {
     .from('company_monitoring_inboxes')
     .delete()
     .eq('id', id)
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+  if (error) return dbError('remove that monitoring inbox', error.message)
   return NextResponse.json({ success: true })
 }

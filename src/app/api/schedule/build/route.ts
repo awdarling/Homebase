@@ -89,11 +89,16 @@ export async function POST(req: NextRequest) {
       gaps: result.gaps,
     })
   } catch (err) {
+    // N-8 (2026-08-30): the raw AegisInternalError message can carry the
+    // Aegis response body verbatim (up to 240 chars) — which can include
+    // internal error detail never meant for a manager's screen. Log it
+    // server-side; the caller gets a generic message.
     const detail = err instanceof AegisInternalConfigError || err instanceof AegisInternalError
       ? err.message
       : err instanceof Error ? err.message : 'unknown error'
+    console.error('[schedule/build] failed:', detail)
     return NextResponse.json(
-      { error: `Could not reach the schedule builder: ${detail}` },
+      { error: 'Could not reach the schedule builder. Please try again in a moment.' },
       { status: 502 },
     )
   }
