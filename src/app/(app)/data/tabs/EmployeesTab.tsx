@@ -20,26 +20,19 @@ import type {
   CustomAvailabilityPattern,
   CustomAvailabilityWeek,
 } from '@/lib/types'
+// O11 (2026-08-30): this tab used to hand-roll its own "is this override still
+// in force" check (active + end_date >= the browser's local today), which
+// could disagree with Rule 0b's one real answer — especially since it used the
+// manager's browser date instead of the company's own timezone. Import the
+// shared decider (also used by Soteria's context and the schedule week strip)
+// instead of re-deriving it here.
+import { isCustomAvailabilityCurrent, todayInTimezone } from '@/lib/soteria/validateScheduleEdit'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-
-function todayIso(): string {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${dd}`
-}
 
 function formatShortDate(d: string): string {
   const [y, m, day] = d.split('-').map(Number)
   return new Date(y, m - 1, day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function isCustomAvailActive(ca: CustomAvailability | null | undefined): boolean {
-  if (!ca || !ca.active) return false
-  if (!ca.end_date) return true
-  return ca.end_date >= todayIso()
 }
 
 function emptyWeekRows(): AvailabilityRow[] {
@@ -568,7 +561,7 @@ export default function EmployeesTab() {
 
   function openCustomAvailModal(emp: Employee) {
     const existing = customAvailability[emp.id]
-    if (existing && isCustomAvailActive(existing)) {
+    if (existing && isCustomAvailabilityCurrent(existing, todayInTimezone(company?.timezone))) {
       let weekArrays: AvailabilityRow[][]
       if (existing.type === 'date_limited') {
         const patterns = (existing.patterns ?? []) as CustomAvailabilityPattern[]
@@ -856,7 +849,7 @@ export default function EmployeesTab() {
                     {emp.is_veteran && <VetBadge />}
                   </td>
                   <td style={{ textAlign: 'center' }}>
-                    {isCustomAvailActive(customAvailability[emp.id]) && (
+                    {isCustomAvailabilityCurrent(customAvailability[emp.id], todayInTimezone(company?.timezone)) && (
                       <span
                         onClick={(e) => { e.stopPropagation(); openCustomAvailModal(emp) }}
                         title="Custom availability active — click to view"
@@ -1202,7 +1195,7 @@ export default function EmployeesTab() {
 
               {editingEmployee && (() => {
                 const ca = customAvailability[editingEmployee.id]
-                if (isCustomAvailActive(ca)) {
+                if (isCustomAvailabilityCurrent(ca, todayInTimezone(company?.timezone))) {
                   return (
                     <div style={{
                       background: 'var(--accent-dim)',

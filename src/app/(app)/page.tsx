@@ -420,10 +420,12 @@ export default function HomePage() {
     statusLabel = 'No Schedule'
     statusClass = 'badge'
     statusStyle = { background: 'var(--bg-surface-3)', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }
-  } else if ((currentSchedule.status === 'published' || currentSchedule.status === 'approved') && unfilledGapsCount > 0) {
+    // O10 (2026-08-30): currentSchedule.status can never be 'approved' — the
+    // live schedules_status_check constraint only allows draft/published/distributed.
+  } else if (currentSchedule.status === 'published' && unfilledGapsCount > 0) {
     statusLabel = 'Coverage Gap'
     statusClass = 'badge badge-blocked'
-  } else if (currentSchedule.status === 'published' || currentSchedule.status === 'approved') {
+  } else if (currentSchedule.status === 'published') {
     statusLabel = 'Ready'
     statusClass = 'badge badge-ready'
   } else {
