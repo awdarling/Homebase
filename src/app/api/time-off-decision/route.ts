@@ -1,27 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
-import { decideTimeOffRequest, type TimeOffDecision } from '@/lib/time-off/decide'
+import { postToAegisInternal, AegisInternalConfigError, AegisInternalError } from '@/lib/aegis-internal'
 
-// Service-role client — the guarded decision write must bypass RLS, exactly as
-// the magic-link dispatcher does. Auth is enforced separately via the cookie
-// session below before any write happens.
+// Service-role client — used only to load the request for the early
+// company-scope check below (a friendlier 403 than waiting on Aegis). The
+// decision write itself happens on the Aegis side.
 const service = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 )
 
+export type TimeOffTabAction = 'approve' | 'deny' | 'approve_and_cover'
+
+// P2 (DRIFT §P2, 2026-08-30): the in-tab Time Off decision now lands in the
+// SAME shared core as the email magic-link and the manager's texted reply
+// (F13) — forwarded to Aegis's /internal/apply-time-off-decision, exactly as
+// lib/aegis-actions/dispatcher.ts's handleTimeOffDecision does for the email
+// door. Before this, `decideTimeOffRequest` (now retired) was a second,
+// separate decision core that had never heard of a call-out: an in-tab
+// approval never marked the shift on the schedule, never started coverage,
+// and never retired a manager's parked text-reply state.
+//
+// Note what this route does NOT send: no `call_out` snapshot. The tab has no
+// business knowing whether a request is a call-out just to decide it — Aegis
+// resolves that itself, server-side, from the same to_thread:<id> side row
+// the magic-link path already reads for threading. The browser only needs to
+// know it FOR DISPLAY, to decide whether to show the third button (see
+// TimeOffTab.tsx's separate, lightweight aegis_memory read for that).
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as {
     timeOffRequestId?: string
-    decision?: string
+    action?: string
   } | null
 
   const timeOffRequestId = body?.timeOffRequestId
-  const decision = body?.decision
-  if (!timeOffRequestId || (decision !== 'approved' && decision !== 'denied')) {
+  const action = body?.action
+  if (!timeOffRequestId || (action !== 'approve' && action !== 'deny' && action !== 'approve_and_cover')) {
     return NextResponse.json(
-      { ok: false, message: 'Need a timeOffRequestId and a decision of "approved" or "denied".' },
+      { ok: false, message: 'Need a timeOffRequestId and an action of "approve", "deny" or "approve_and_cover".' },
       { status: 400 },
     )
   }
@@ -42,10 +59,13 @@ export async function POST(req: NextRequest) {
   }
   const actor = userRow as { company_id: string; email: string | null; name: string | null; avatar_url: string | null }
 
-  // ── Load the request for company scoping + message/display context ───────
+  // ── Load the request for an early, friendly company-scope check ──────────
+  // (Aegis re-checks this itself with a company-bound lookup — this is only
+  // so a foreign request reads as "belongs to a different company" instead
+  // of the generic "couldn't find that request" Aegis would otherwise say.)
   const { data: reqRow, error: reqErr } = await service
     .from('time_off_requests')
-    .select('id, company_id, start_date, end_date, employee:employees(name)')
+    .select('id, company_id, employee:employees(name)')
     .eq('id', timeOffRequestId)
     .maybeSingle()
   if (reqErr) {
@@ -56,8 +76,6 @@ export async function POST(req: NextRequest) {
   }
   const reqData = reqRow as unknown as {
     company_id: string
-    start_date: string | null
-    end_date: string | null
     employee: { name: string } | { name: string }[] | null
   }
   // A manager may only decide requests inside their own company.
@@ -65,21 +83,54 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, message: 'That request belongs to a different company.' }, { status: 403 })
   }
   const employee = Array.isArray(reqData.employee) ? reqData.employee[0] : reqData.employee
+  const employeeName = employee?.name ?? 'the employee'
 
-  const result = await decideTimeOffRequest({
-    supabase: service,
-    timeOffRequestId,
-    decision: decision as TimeOffDecision,
-    companyId: actor.company_id,
-    decidedBy: { userId: user.id, email: actor.email ?? user.email ?? null },
-    source: 'in_tab',
-    employeeName: employee?.name,
-    startDate: reqData.start_date,
-    endDate: reqData.end_date,
-    actorName: actor.name,
-    actorAvatarUrl: actor.avatar_url,
-  })
-
-  // 409 when the row was already decided (no change made); 200 otherwise.
-  return NextResponse.json(result, { status: result.ok ? 200 : result.alreadyDecided ? 409 : 400 })
+  try {
+    const res = await postToAegisInternal<{ ok?: boolean; outcome?: string; message?: string }>(
+      '/internal/apply-time-off-decision',
+      {
+        time_off_request_id: timeOffRequestId,
+        action,
+        company_id: actor.company_id,
+        manager_user_id: user.id,
+        manager_name: actor.name,
+        manager_avatar_url: actor.avatar_url,
+        source: 'in_tab',
+      },
+    )
+    const ok = res.ok !== false
+    const alreadyDecided = res.outcome === 'already_decided'
+    return NextResponse.json(
+      {
+        ok,
+        alreadyDecided,
+        message: res.message ?? (ok
+          ? `Done — ${employeeName} has been told.`
+          : "That didn't go through. Please try again from the Time Off tab."),
+      },
+      { status: ok ? 200 : alreadyDecided ? 409 : 400 },
+    )
+  } catch (err) {
+    if (err instanceof AegisInternalConfigError) {
+      return NextResponse.json(
+        { ok: false, message: 'Could not record the decision — the Aegis connection is not configured.' },
+        { status: 500 },
+      )
+    }
+    // A 403 is Aegis's revoked-manager refusal — its body carries the
+    // manager-readable explanation; surface it rather than a generic error.
+    if (err instanceof AegisInternalError && err.status === 403) {
+      try {
+        const parsed = JSON.parse(err.body) as { message?: string }
+        if (parsed.message) {
+          return NextResponse.json({ ok: false, message: parsed.message }, { status: 403 })
+        }
+      } catch { /* fall through to the generic line */ }
+    }
+    const errMsg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json(
+      { ok: false, message: `Could not record that decision: ${errMsg}` },
+      { status: 500 },
+    )
+  }
 }
