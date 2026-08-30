@@ -175,6 +175,11 @@ export default function TimeOffTab() {
   const [decidingId, setDecidingId] = useState<string | null>(null)
   // TO-RERUN-1: which request is currently re-running its Aegis recommendation.
   const [recheckingId, setRecheckingId] = useState<string | null>(null)
+  // P2: which PENDING requests are call-outs, so the row can show the
+  // call-out-aware button set. This is DISPLAY ONLY — the decision itself
+  // never sends call_out; Aegis resolves that server-side from the same
+  // to_thread:<id> row this reads (see /api/time-off-decision).
+  const [callOutIds, setCallOutIds] = useState<Set<string>>(new Set())
 
   // ── Time-off mode + type ──────────────────────────────────────────────────
   const [toMode, setToMode] = useState<'single' | 'multi'>('single')
@@ -218,6 +223,33 @@ export default function TimeOffTab() {
     if (toRes.data) setRequests(toRes.data as TORequest[])
     if (empRes.data) setEmployees(empRes.data)
     setLoading(false)
+
+    // P2: which of the PENDING requests are call-outs, so their row can show
+    // "Approve & find coverage" / "Approve only" instead of a plain Approve.
+    // The snapshot lives on the to_thread:<id> aegis_memory row (written by
+    // Aegis at submission, for both channels) — never on time_off_requests.
+    const pendingIds = ((toRes.data ?? []) as TORequest[])
+      .filter(r => r.status === 'pending')
+      .map(r => r.id)
+    if (pendingIds.length === 0) {
+      setCallOutIds(new Set())
+      return
+    }
+    const { data: threadRows } = await supabase
+      .from('aegis_memory')
+      .select('source, content')
+      .eq('company_id', COMPANY_ID)
+      .in('source', pendingIds.map(id => `to_thread:${id}`))
+    const ids = new Set<string>()
+    for (const row of (threadRows ?? []) as { source: string; content: string }[]) {
+      try {
+        const parsed = JSON.parse(row.content) as { call_out?: unknown }
+        if (Array.isArray(parsed.call_out) && parsed.call_out.length > 0) {
+          ids.add(row.source.slice('to_thread:'.length))
+        }
+      } catch { /* malformed side row — treat as not-a-call-out */ }
+    }
+    setCallOutIds(ids)
   }
 
   async function logActivity(action: string, summary: string, entityId?: string) {
@@ -234,12 +266,13 @@ export default function TimeOffTab() {
     })
   }
 
-  // Routes through POST /api/time-off-decision so the in-tab path is identical
-  // to the email magic-link path: guarded update + decided_by (from the server
-  // auth cookie), activity log, and the employee notification — none of which a
-  // client component can do directly. The returned message (incl. how the
-  // employee was notified) surfaces as a toast.
-  async function handleDecision(req: TORequest, decision: 'approved' | 'denied') {
+  // P2 (DRIFT §P2): routes through POST /api/time-off-decision, which now
+  // forwards to Aegis's /internal/apply-time-off-decision — the SAME shared
+  // core the email link and a manager's texted reply use (F13). That is what
+  // makes an in-tab approve of a call-out actually mark the shift on the
+  // schedule, start coverage when asked, and retire any parked text-reply
+  // state — none of which the old, separate in-tab decision function did.
+  async function handleDecision(req: TORequest, action: 'approve' | 'deny' | 'approve_and_cover') {
     if (decidingId) return
     setDecidingId(req.id)
     setNotice('')
@@ -247,7 +280,7 @@ export default function TimeOffTab() {
       const res = await fetch('/api/time-off-decision', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ timeOffRequestId: req.id, decision }),
+        body: JSON.stringify({ timeOffRequestId: req.id, action }),
       })
       const data = (await res.json().catch(() => null)) as { ok?: boolean; message?: string } | null
       setNotice(data?.message ?? (res.ok ? 'Decision saved.' : 'Something went wrong recording that decision.'))
@@ -653,23 +686,62 @@ export default function TimeOffTab() {
                         >
                           {recheckingId === req.id ? 'Re-checking…' : 'Re-run check'}
                         </button>
+                        {/* P2: a call-out gets the same three-button choice the
+                            manager's email already has — "Approve & find
+                            coverage" leading, "Approve only" secondary — since
+                            approving here can also blast the qualified pool.
+                            A plain time-off request keeps the single Approve
+                            button, unchanged. */}
+                        {callOutIds.has(req.id) ? (
+                          <>
+                            <button
+                              className="btn btn-sm"
+                              onClick={() => handleDecision(req, 'approve_and_cover')}
+                              disabled={decidingId !== null}
+                              title="Mark the shift covered and text the qualified pool to find someone"
+                              style={{
+                                background: 'var(--status-ready-bg)',
+                                color: 'var(--status-ready-text)',
+                                border: '1px solid var(--status-ready-border)',
+                                opacity: decidingId !== null ? 0.6 : 1,
+                                cursor: decidingId !== null ? 'default' : 'pointer',
+                                fontWeight: 600,
+                              }}
+                            >
+                              {decidingId === req.id ? 'Saving…' : 'Approve & find coverage'}
+                            </button>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => handleDecision(req, 'approve')}
+                              disabled={decidingId !== null}
+                              title="Approve the absence — you'll find coverage yourself"
+                              style={{
+                                opacity: decidingId !== null ? 0.6 : 1,
+                                cursor: decidingId !== null ? 'default' : 'pointer',
+                              }}
+                            >
+                              Approve only
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => handleDecision(req, 'approve')}
+                            disabled={decidingId !== null}
+                            style={{
+                              background: 'var(--status-ready-bg)',
+                              color: 'var(--status-ready-text)',
+                              border: '1px solid var(--status-ready-border)',
+                              opacity: decidingId !== null ? 0.6 : 1,
+                              cursor: decidingId !== null ? 'default' : 'pointer',
+                            }}
+                          >
+                            {decidingId === req.id ? 'Saving…' : 'Approve'}
+                          </button>
+                        )}
                         <button
                           className="btn btn-sm"
-                          onClick={() => handleDecision(req, 'approved')}
-                          disabled={decidingId !== null}
-                          style={{
-                            background: 'var(--status-ready-bg)',
-                            color: 'var(--status-ready-text)',
-                            border: '1px solid var(--status-ready-border)',
-                            opacity: decidingId !== null ? 0.6 : 1,
-                            cursor: decidingId !== null ? 'default' : 'pointer',
-                          }}
-                        >
-                          {decidingId === req.id ? 'Saving…' : 'Approve'}
-                        </button>
-                        <button
-                          className="btn btn-sm"
-                          onClick={() => handleDecision(req, 'denied')}
+                          onClick={() => handleDecision(req, 'deny')}
                           disabled={decidingId !== null}
                           style={{
                             background: 'var(--status-blocked-bg)',
