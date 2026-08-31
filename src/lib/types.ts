@@ -383,7 +383,7 @@ export interface Schedule {
   company_id: string
   week_start: string
   week_end: string
-  status: 'draft' | 'published' | 'approved' | 'distributed'
+  status: 'draft' | 'published' | 'distributed'
   generated_by: string
   generated_at: string
   approved_at: string | null

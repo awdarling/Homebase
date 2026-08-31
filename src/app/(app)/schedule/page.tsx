@@ -609,9 +609,10 @@ function HistoryCard({
       ? { cls: 'badge badge-review', label: 'Superseded' }
       : schedule.published_at
         ? { cls: 'badge badge-ready', label: 'Published' }
-        : schedule.status === 'approved'
-          ? { cls: 'badge badge-ready', label: 'Approved' }
-          : { cls: 'badge badge-review', label: 'Draft' }
+        // O10 (2026-08-30): schedule.status can never be 'approved' — the live
+        // schedules_status_check constraint only allows draft/published/distributed.
+        // published_at is (and always was) the real source of truth here.
+        : { cls: 'badge badge-review', label: 'Draft' }
 
   return (
     <div style={{
@@ -855,12 +856,12 @@ function UpcomingCard({
   const weekLabel = `${formatDateLong(schedule.week_start)} – ${formatDateLong(schedule.week_end)}`
 
   // published_at is the source of truth (item 9), not the status enum.
+  // O10 (2026-08-30): schedule.status can never be 'approved' — the live
+  // schedules_status_check constraint only allows draft/published/distributed.
   const statusBadge =
     schedule.published_at
       ? { cls: 'badge badge-ready', label: 'Published' }
-      : schedule.status === 'approved'
-        ? { cls: 'badge badge-ready', label: 'Approved' }
-        : { cls: 'badge badge-review', label: 'Draft' }
+      : { cls: 'badge badge-review', label: 'Draft' }
 
   const gaps = schedule.data?.gaps ?? []
 
