@@ -4,7 +4,6 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env.local') })
 
 import * as fs from 'fs'
 import * as os from 'os'
-import * as XLSX from 'xlsx'
 import ExcelJS from 'exceljs'
 import type { Schedule, ScheduleTemplate } from '../src/lib/types'
 import {
@@ -19,6 +18,17 @@ import { hexToArgb, blendOnWhite, resolveCellAppearance } from '../src/lib/sched
 function expect(cond: boolean, msg: string) {
   if (!cond) { console.error('✗ ' + msg); process.exit(1) }
   else console.log('✓ ' + msg)
+}
+
+// Reads a single cell's value out of an in-memory .xlsx buffer. Replaces the
+// old `XLSX.read(buf).Sheets['Schedule'][addr]?.v` one-liner — SheetJS (the
+// `xlsx` package) is gone from this repo (S-6: no fixed version on npm for
+// its two open HIGH advisories). exceljs is already the writer, so it reads
+// its own output back too.
+async function cellValue(buf: Buffer, sheet: string, addr: string): Promise<unknown> {
+  const wb = new ExcelJS.Workbook()
+  await wb.xlsx.load(buf as any) // same exceljs/@types-node Buffer nominal clash as spreadsheetToCsv.ts
+  return wb.getWorksheet(sheet)?.getCell(addr).value
 }
 
 // ── Synthetic fixture ────────────────────────────────────────────────────────
@@ -191,69 +201,73 @@ async function main() {
   const tmpXlsx = path.join(os.tmpdir(), `tmp-smoke-schedule-grid-${process.pid}.xlsx`)
   fs.writeFileSync(tmpXlsx, xlsxBuf)
 
-  // Read the exceljs-written workbook back with SheetJS to confirm the file is a
-  // valid, standard .xlsx and that the logical content (values + merges) survived.
-  const wb = XLSX.read(xlsxBuf, { type: 'buffer' })
-  expect(wb.SheetNames.includes('Schedule'), `workbook has 'Schedule' sheet`)
-  const ws = wb.Sheets['Schedule']
+  // Read the exceljs-written workbook back — with exceljs — to confirm the file
+  // is a valid, standard .xlsx and that the logical content (values + merges +
+  // styling) survived. (Previously this cross-checked with a second library,
+  // SheetJS's `xlsx`; that package is gone from this repo — S-6, two open HIGH
+  // advisories with no fixed version on npm — so exceljs now reads its own
+  // output back, and also carries the style checks that only it could do.)
+  const ewb = new ExcelJS.Workbook()
+  await ewb.xlsx.readFile(tmpXlsx)
+  expect(!!ewb.getWorksheet('Schedule'), `workbook has 'Schedule' sheet`)
+  const ews = ewb.getWorksheet('Schedule')! // existence just asserted above; expect() exits on failure
+  const wsCell = (addr: string) => ews.getCell(addr).value
 
   // Row 0 is the title row (merged).
   expect(
-    String(ws['A1']?.v ?? '').startsWith('Watermark Country Club — Week of'),
-    `A1 contains company-name + week-range header (got "${String(ws['A1']?.v ?? '')}")`,
+    String(wsCell('A1') ?? '').startsWith('Watermark Country Club — Week of'),
+    `A1 contains company-name + week-range header (got "${String(wsCell('A1') ?? '')}")`,
   )
 
   // Row 2 is the day-header row: A3='Shift', B3='Monday\nJun 1', ..., H3='Sunday\nJun 7'.
-  expect(String(ws['A3']?.v ?? '') === 'Shift', `A3='Shift' (got "${String(ws['A3']?.v ?? '')}")`)
+  expect(String(wsCell('A3') ?? '') === 'Shift', `A3='Shift' (got "${String(wsCell('A3') ?? '')}")`)
   expect(
-    String(ws['B3']?.v ?? '').startsWith('Monday'),
-    `B3 day-header is Monday (got "${String(ws['B3']?.v ?? '')}")`,
+    String(wsCell('B3') ?? '').startsWith('Monday'),
+    `B3 day-header is Monday (got "${String(wsCell('B3') ?? '')}")`,
   )
   expect(
-    String(ws['H3']?.v ?? '').startsWith('Sunday'),
-    `H3 day-header is Sunday (got "${String(ws['H3']?.v ?? '')}")`,
+    String(wsCell('H3') ?? '').startsWith('Sunday'),
+    `H3 day-header is Sunday (got "${String(wsCell('H3') ?? '')}")`,
   )
 
   // Row 3 is first shift (AM Weekday). A4 contains 'AM Weekday'.
-  expect(String(ws['A4']?.v ?? '').startsWith('AM Weekday'), `A4 shift label is 'AM Weekday'`)
+  expect(String(wsCell('A4') ?? '').startsWith('AM Weekday'), `A4 shift label is 'AM Weekday'`)
   // NAME+ROLE regression guard (Excel): B4 is Monday AM Weekday (Audrey Miller +
   // Karsten Brown, both Lifeguard). The download used to drop the LAST NAME and
   // the ROLE — assert both reach the cell text now.
-  const b4 = String(ws['B4']?.v ?? '')
+  const b4 = String(wsCell('B4') ?? '')
   expect(b4.includes('Audrey Miller'), `B4 contains FULL name 'Audrey Miller' incl. last name (got "${b4}")`)
   expect(b4.includes('Karsten Brown'), `B4 contains FULL name 'Karsten Brown' incl. last name (got "${b4}")`)
   expect(b4.includes('Lifeguard'), `B4 contains the assignment role 'Lifeguard' (got "${b4}")`)
   // E4 is Thursday cell for AM Weekday → should contain 'UNFILLED — Lifeguard'.
   expect(
-    String(ws['E4']?.v ?? '').includes('UNFILLED'),
-    `E4 (Thursday AM Weekday) contains 'UNFILLED' (got "${String(ws['E4']?.v ?? '')}")`,
+    String(wsCell('E4') ?? '').includes('UNFILLED'),
+    `E4 (Thursday AM Weekday) contains 'UNFILLED' (got "${String(wsCell('E4') ?? '')}")`,
   )
   expect(
-    String(ws['E4']?.v ?? '').includes('Lifeguard'),
+    String(wsCell('E4') ?? '').includes('Lifeguard'),
     `E4 (Thursday AM Weekday) contains role 'Lifeguard'`,
   )
 
   // H4 is Sunday closed-day cell for the first shift row — should contain CLOSED — Memorial Day.
   expect(
-    String(ws['H4']?.v ?? '').includes('CLOSED'),
-    `H4 (Sun, first row) contains 'CLOSED' (got "${String(ws['H4']?.v ?? '')}")`,
+    String(wsCell('H4') ?? '').includes('CLOSED'),
+    `H4 (Sun, first row) contains 'CLOSED' (got "${String(wsCell('H4') ?? '')}")`,
   )
   expect(
-    String(ws['H4']?.v ?? '').includes('Memorial Day'),
+    String(wsCell('H4') ?? '').includes('Memorial Day'),
     `H4 includes event title 'Memorial Day'`,
   )
 
-  // Closed-day vertical merge: rows 3..7 (0-indexed) of column 7 should be merged.
-  const merges = ws['!merges'] ?? []
-  const sundayClosureMerge = merges.find(m => m.s.c === 7 && m.e.c === 7 && m.s.r === 3 && m.e.r === 7)
-  expect(!!sundayClosureMerge, `Sunday closure column has a vertical merge across all 5 shift rows`)
+  // Closed-day vertical merge: H4..H8 (the 5 shift rows in the Sunday column)
+  // must all be merged into one block sharing the same master (top-left) cell.
+  const sundayCol = ['H4', 'H5', 'H6', 'H7', 'H8'].map(addr => ews.getCell(addr))
+  const sundayMerged = sundayCol.every(c => c.isMerged)
+  const sundaySameMaster = sundayCol.every(c => c.master.address === sundayCol[0].master.address)
+  expect(sundayMerged && sundaySameMaster, `Sunday closure column has a vertical merge across all 5 shift rows`)
 
-  // exceljs-specific: confirm real cell styling now reaches the file (the whole
-  // point of the swap — the SheetJS community build dropped these). Re-read with
-  // exceljs so we can inspect fills/fonts/freeze that SheetJS does not surface.
-  const ewb = new ExcelJS.Workbook()
-  await ewb.xlsx.readFile(tmpXlsx)
-  const ews = ewb.getWorksheet('Schedule')!
+  // exceljs-specific: confirm real cell styling reaches the file (the whole
+  // point of the swap away from SheetJS's community build — it dropped these).
   const titleFill = (ews.getCell('A1').fill as ExcelJS.FillPattern)
   expect(titleFill?.type === 'pattern' && !!titleFill.fgColor?.argb, `A1 has a real solid fill (got ${JSON.stringify(titleFill?.fgColor)})`)
   const gapCell = ews.getCell('E4')
@@ -326,11 +340,11 @@ async function main() {
   // Cross-formatter parity: the same grid drives both downloads, so the gap and
   // closure text that appears in the Excel cells must also appear in the PDF/HTML.
   expect(
-    String(ws['E4']?.v ?? '').includes('Lifeguard') && html.includes('UNFILLED — Lifeguard'),
+    String(wsCell('E4') ?? '').includes('Lifeguard') && html.includes('UNFILLED — Lifeguard'),
     `Excel + PDF/HTML agree on the Thursday Lifeguard gap`,
   )
   expect(
-    String(ws['H4']?.v ?? '').includes('Memorial Day') && html.includes('CLOSED — Memorial Day'),
+    String(wsCell('H4') ?? '').includes('Memorial Day') && html.includes('CLOSED — Memorial Day'),
     `Excel + PDF/HTML agree on the Sunday closure`,
   )
 
@@ -444,7 +458,7 @@ async function main() {
 
   // show_role = true (default TEMPLATE). B4 = Monday AM Weekday cell.
   const gShow = buildScheduleGrid({ schedule: nameRoleSched, template: TEMPLATE, companyName: COMPANY_NAME, shifts: SHIFTS, events: [] })
-  const b4Show = String(XLSX.read(await renderScheduleGridXlsx(gShow), { type: 'buffer' }).Sheets['Schedule']['B4']?.v ?? '')
+  const b4Show = String((await cellValue(await renderScheduleGridXlsx(gShow), 'Schedule', 'B4')) ?? '')
   const htmlShow = renderScheduleGridHtml(gShow)
   expect(b4Show.includes('Vasquez'), `Excel filled cell emits the LAST name 'Vasquez' (got "${b4Show.replace(/\n/g, '⏎')}")`)
   expect(b4Show.includes('Bartender'), `Excel filled cell emits the ROLE 'Bartender' (got "${b4Show.replace(/\n/g, '⏎')}")`)
@@ -454,7 +468,7 @@ async function main() {
   // show_role = false → role gated off on BOTH renderers; full name still present.
   const tmplNoRole: ScheduleTemplate = { ...TEMPLATE, display_options: { ...TEMPLATE.display_options, show_role: false } }
   const gHide = buildScheduleGrid({ schedule: nameRoleSched, template: tmplNoRole, companyName: COMPANY_NAME, shifts: SHIFTS, events: [] })
-  const b4Hide = String(XLSX.read(await renderScheduleGridXlsx(gHide), { type: 'buffer' }).Sheets['Schedule']['B4']?.v ?? '')
+  const b4Hide = String((await cellValue(await renderScheduleGridXlsx(gHide), 'Schedule', 'B4')) ?? '')
   const htmlHide = renderScheduleGridHtml(gHide)
   expect(gHide.rows[0].cells[0].employees[0].role === '', `show_role=false: grid gates the role to '' at the source`)
   expect(b4Hide.includes('Vasquez'), `show_role=false: Excel still shows the name (got "${b4Hide.replace(/\n/g, '⏎')}")`)
