@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
 import {
   postToAegisInternal,
@@ -11,11 +10,12 @@ import {
 // request against CURRENT approvals (see TO-REC-STALE). Read-only w.r.t. the
 // decision — Aegis only rewrites aegis_recommendation / aegis_reasoning. Auth is
 // the same cookie-session + company-scope gate as /api/time-off-decision.
-
-const service = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-)
+//
+// S-1 stage 1 (2026-09-01): the lookup below runs on the caller's own
+// session-authenticated client instead of the service-role key. The
+// hand-written company check is unchanged and still runs; a foreign-company
+// row is now also invisible to the query itself (RLS), so the request
+// simply won't be found — a second, independent backstop under the check.
 
 type RecomputeResponse = {
   ok?: boolean
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   const actor = userRow as { company_id: string }
 
   // ── Company-scope the request ────────────────────────────────────────────
-  const { data: reqRow, error: reqErr } = await service
+  const { data: reqRow, error: reqErr } = await ssr
     .from('time_off_requests')
     .select('id, company_id')
     .eq('id', timeOffRequestId)

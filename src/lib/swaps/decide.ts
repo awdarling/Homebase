@@ -9,7 +9,13 @@ import { swapNounFor } from '@/lib/aegis-actions/labels'
 export type SwapDecision = 'approved' | 'denied'
 
 export interface DecideSwapInput {
-  /** Service-role client — the activity_log write bypasses RLS. */
+  /**
+   * The client the activity_log write runs on. As of S-1 stage 1
+   * (2026-09-01), swap-decision's route passes its caller's own
+   * session-authenticated client here (not the service-role key) — the
+   * insert is company-scoped by RLS as well as by the caller-supplied
+   * `companyId`.
+   */
   supabase: SupabaseClient
   swapRequestId: string
   decision: SwapDecision

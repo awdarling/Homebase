@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
 
 // Records a manager's deliberate override of Soteria's blocking checks when
 // saving a schedule edit. The schedule save itself happens client-side; this
 // route exists purely to write an auditable activity_log entry with the reason,
-// the overridden issues, and who did it — server-side (service role) so the log
-// can't be skipped or spoofed by the client.
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-)
+// the overridden issues, and who did it.
+//
+// S-1 stage 1 (2026-09-01): the insert now runs on the caller's OWN
+// session-authenticated client (cookie-based, anon key) instead of the
+// service-role key. The hand-written company check below (unchanged) still
+// runs first; RLS's own company-scoped policy on activity_log is now a
+// second, independent backstop under it — not a replacement for it.
 
 interface OverrideIssue { severity: string; employee_name: string; description: string }
 
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     const issues = Array.isArray(body.issues) ? body.issues : []
     const count = issues.length
 
-    await supabase.from('activity_log').insert({
+    await ssr.from('activity_log').insert({
       company_id: body.company_id,
       actor: 'manager',
       actor_name: managerName,

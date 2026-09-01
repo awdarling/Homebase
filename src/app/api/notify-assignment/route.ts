@@ -1,14 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
 import { postToAegisInternal, AegisInternalError, AegisInternalConfigError } from '@/lib/aegis-internal'
-
-// Service-role client — only used for the delivery-failure audit entry below.
-// The send itself (and its consent decision) is delegated to Aegis.
-const adminSupabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-)
 
 /**
  * Notify an employee that a manager assigned them to a shift (GapResolverPanel).
@@ -27,6 +19,12 @@ const adminSupabase = createClient(
  * Body: { employee_id, shift_name, role, date, start_time, end_time, company_id }
  * Response: { success: boolean, message: string } — the contract
  * GapResolverPanel has always consumed.
+ *
+ * S-1 stage 1 (2026-09-01): the delivery-failure audit entry below now runs
+ * on the caller's own session-authenticated client instead of the
+ * service-role key. The hand-written company check above is unchanged and
+ * still runs first; RLS's own company-scoped policy is a second,
+ * independent backstop under it.
  */
 export async function POST(req: NextRequest) {
   const body = await req.json()
@@ -83,7 +81,7 @@ export async function POST(req: NextRequest) {
     const detail = err instanceof AegisInternalConfigError || err instanceof AegisInternalError
       ? err.message
       : err instanceof Error ? err.message : 'unknown error'
-    await adminSupabase.from('activity_log').insert({
+    await ssr.from('activity_log').insert({
       company_id,
       actor: 'manager',
       action: 'notification_delivery_failed',
