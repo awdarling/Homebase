@@ -1,14 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
 import { postToAegisInternal, AegisInternalError, AegisInternalConfigError } from '@/lib/aegis-internal'
-
-// Service-role client — only used for the tenancy/auth checks below. The
-// notification fan-out itself is delegated to Aegis (which owns the roster).
-const adminSupabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-)
 
 /**
  * Notify the staff scheduled on a day the manager just closed (Batch-1 F8).
@@ -21,6 +13,12 @@ const adminSupabase = createClient(
  * production by webhook signature verification, so "Close day" notified nobody.
  *
  * Body: { scheduleId: string, date: string (YYYY-MM-DD), companyId: string }
+ *
+ * S-1 stage 1 (2026-09-01): the activity_log write below now runs on the
+ * caller's own session-authenticated client instead of the service-role key.
+ * The hand-written company/role check above is unchanged and still runs
+ * first; RLS's own company-scoped policy is a second, independent backstop
+ * under it.
  */
 export async function POST(req: NextRequest) {
   const body = await req.json() as {
@@ -65,7 +63,7 @@ export async function POST(req: NextRequest) {
       date,
     })
 
-    await adminSupabase.from('activity_log').insert({
+    await ssr.from('activity_log').insert({
       company_id: companyId,
       actor: caller.role === 'quria' ? 'quria_admin' : 'manager',
       action: 'closure_notifications_triggered',

@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
 import { decideSwapRequest, type SwapDecision } from '@/lib/swaps/decide'
 
-// Service-role client — the activity_log write + swap load bypass RLS, exactly
-// as the time-off in-tab route does. Auth is enforced via the cookie session
-// below before anything happens.
-const service = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-)
+// S-1 stage 1 (2026-09-01): the swap load + the activity_log write inside
+// decideSwapRequest() now both run on the caller's own session-authenticated
+// client (cookie-based, anon key) instead of the service-role key. The
+// hand-written company check below is unchanged and still runs; RLS's own
+// company-scoped policies on swap_requests/employees/activity_log are now a
+// second, independent backstop under it. Aegis remains authoritative for the
+// swap_requests.status write itself — this route never touches it.
 
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as {
@@ -48,7 +47,7 @@ export async function POST(req: NextRequest) {
   // make this route throw 42703 (column does not exist) on any deploy that lands
   // before Alexander runs the SQL. With `*` the fields are simply absent until
   // then and the copy falls back to the neutral "swap" wording.
-  const { data: reqRow, error: reqErr } = await service
+  const { data: reqRow, error: reqErr } = await ssr
     .from('swap_requests')
     .select(`
       *,
@@ -82,7 +81,7 @@ export async function POST(req: NextRequest) {
   const receiver = Array.isArray(reqData.receiving_employee) ? reqData.receiving_employee[0] : reqData.receiving_employee
 
   const result = await decideSwapRequest({
-    supabase: service,
+    supabase: ssr,
     swapRequestId,
     decision: decision as SwapDecision,
     companyId: actor.company_id,
