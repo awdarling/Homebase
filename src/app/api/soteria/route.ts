@@ -2,8 +2,8 @@ import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
-import * as XLSX from 'xlsx'
 import mammoth from 'mammoth'
+import { spreadsheetToCsv } from '@/lib/soteria/spreadsheetToCsv'
 import { capabilitySection, capabilityRoleFor, soteriaScopeSection, type CapabilityRole } from '@/lib/soteria/capabilities'
 import {
   formatAvailabilitySection,
@@ -528,12 +528,10 @@ export async function POST(request: NextRequest) {
       } else if (fileType === 'spreadsheet') {
         try {
           const buf = Buffer.from(imageData.data, 'base64')
-          const wb = XLSX.read(buf, { type: 'buffer' })
-          const firstSheetName = wb.SheetNames[0]
-          const csv = firstSheetName ? XLSX.utils.sheet_to_csv(wb.Sheets[firstSheetName]) : ''
+          const csv = await spreadsheetToCsv(buf)
           extractedText = `[File: ${fileName ?? 'spreadsheet'}]\n${csv}`
         } catch (e) {
-          console.error('xlsx parse error:', e)
+          console.error('spreadsheet parse error:', e)
           extractedText = `[File: ${fileName ?? 'spreadsheet'}]\n(Could not parse spreadsheet contents.)`
         }
       } else if (fileType === 'document') {
