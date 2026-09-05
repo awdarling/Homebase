@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerSupabase } from '@/lib/supabase/server'
-
-const adminSupabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-)
 
 // Same privilege ladder as create-user. You can only act on someone strictly
 // BELOW you: owner (2) can revoke manager (1); quria (3) can revoke owner/manager.
 const ROLE_RANK: Record<string, number> = { quria: 3, owner: 2, manager: 1 }
 
-// Revoke a Homebase user's access. Mirrors the create-user authz pattern, runs
-// with the service role, and marks the account revoked (keeping it) rather than
-// deleting it — so sign-in can show a clear "access removed" message and the
-// middleware locks them out of every page immediately.
+// Revoke a Homebase user's access. Mirrors the create-user authz pattern, and
+// marks the account revoked (keeping it) rather than deleting it — so sign-in
+// can show a clear "access removed" message and the middleware locks them out
+// of every page immediately.
+//
+// S-1 stage 2 (2026-09-05): moved off the service-role key onto the caller's
+// own session client. The RLS policy "Owners and quria can update lower-
+// ranked users" (added the same day) now backstops every hand-written check
+// below at the database layer — this route's checks are unchanged, they just
+// stopped being the only thing enforcing this.
 export async function POST(req: NextRequest) {
   const { user_id } = (await req.json()) as { user_id: string }
 
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   if (user_id === user.id) {
     return NextResponse.json({ error: "You can't revoke your own access." }, { status: 400 })
   }
-  const { data: targetRow } = await adminSupabase
+  const { data: targetRow } = await ssr
     .from('users')
     .select('id, role, company_id')
     .eq('id', user_id)
@@ -69,17 +69,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  // 7. Mark revoked (service role). Keep the account so sign-in can recognize
-  //    them and show the friendly message; middleware enforces the lockout.
-  const { error: updErr } = await adminSupabase
+  // 7. Mark revoked, on the session client (ssr) — the "Owners and quria can
+  //    update lower-ranked users" RLS policy now backstops this write
+  //    independently of the checks above. Keep the account so sign-in can
+  //    recognize them and show the friendly message; middleware enforces the
+  //    lockout. `.select().single()` doubles as a matched-row-count check
+  //    (F7): if RLS or a race condition means zero rows matched, this errors
+  //    instead of silently reporting success.
+  const { data: updated, error: updErr } = await ssr
     .from('users')
     .update({ access_revoked_at: new Date().toISOString() })
     .eq('id', user_id)
-  if (updErr) {
-    return NextResponse.json({ error: updErr.message }, { status: 400 })
+    .select('id')
+    .single()
+  if (updErr || !updated) {
+    console.error(`[revoke-user] update did not match exactly one row for target ${user_id}:`, updErr?.message)
+    return NextResponse.json({ error: 'Could not revoke access. Please try again.' }, { status: 500 })
   }
 
-  await adminSupabase.from('activity_log').insert({
+  await ssr.from('activity_log').insert({
     company_id: target.company_id,
     actor: caller.role === 'quria' ? 'quria_admin' : 'manager',
     action: 'homebase_access_revoked',
