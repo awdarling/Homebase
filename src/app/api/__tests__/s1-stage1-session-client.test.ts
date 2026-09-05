@@ -30,6 +30,11 @@
 // update own profile") allows `id = auth.uid()` — a caller acting on their
 // OWN row — only. Moving either route to a session client would make it
 // fail outright (RLS denies the row), not add a backstop. Left in place.
+//
+// 2026-09-05 update: this disqualification was stage-specific, not
+// permanent. S-1 stage 2 added the RLS policy these two routes were
+// missing ("Owners and quria can update lower-ranked users") and moved both
+// onto the session client — see s1-stage2-session-client.test.ts.
 
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
@@ -108,18 +113,8 @@ for (const [name, src] of [
     'lib/swaps/decide.ts: the stale "service-role client" doc comment was updated to reflect the caller now supplies either client')
 }
 
-// ── Disqualified routes untouched: revoke-user and update-user-role still
-// use the service-role key for their cross-user writes (RLS's own UPDATE
-// policy on `users` only allows a caller to update their OWN row — moving
-// either of these would break them, not secure them).
-{
-  const revokeUser = read('src/app/api/revoke-user/route.ts')
-  const updateUserRole = read('src/app/api/update-user-role/route.ts')
-  expect(/SUPABASE_SERVICE_ROLE_KEY/.test(revokeUser),
-    'revoke-user: still on the service-role key (disqualified — RLS has no cross-user UPDATE policy on users)')
-  expect(/SUPABASE_SERVICE_ROLE_KEY/.test(updateUserRole),
-    'update-user-role: still on the service-role key (disqualified — same reason)')
-}
+// ── revoke-user and update-user-role: migrated in S-1 stage 2, see
+// s1-stage2-session-client.test.ts for the assertions covering them now.
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`)
