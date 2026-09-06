@@ -45,6 +45,17 @@ function BillingContent() {
   const [savingAdmin, setSavingAdmin] = useState(false)
   const [adminSaved, setAdminSaved] = useState(false)
 
+  // OPS-1 / BILL-1 — Quria-only company status controls. These call
+  // /api/quria/company-gate rather than writing companies directly: that
+  // route is the one place deactivated_at, service_through, and
+  // billing_model are ever written from the app (see migration 021 and
+  // the route's own header comment).
+  const [billingModelValue, setBillingModelValue] = useState<'subscription' | 'one_time' | 'trial'>('one_time')
+  const [serviceThroughValue, setServiceThroughValue] = useState('')
+  const [gateLoading, setGateLoading] = useState(false)
+  const [gateError, setGateError] = useState<string | null>(null)
+  const [gateSaved, setGateSaved] = useState<string | null>(null)
+
   const supabase = createClient()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -67,7 +78,7 @@ function BillingContent() {
 
     const { data: companyData } = await supabase
       .from('companies')
-      .select('name, stripe_customer_id, stripe_subscription_id, subscription_status, subscription_price, subscription_notes, billing_email, subscription_period_end, cancel_at_period_end, billing_model, stripe_price_id')
+      .select('name, stripe_customer_id, stripe_subscription_id, subscription_status, subscription_price, subscription_notes, billing_email, subscription_period_end, cancel_at_period_end, billing_model, stripe_price_id, deactivated_at, service_through')
       .eq('id', COMPANY_ID)
       .single()
 
@@ -76,9 +87,54 @@ function BillingContent() {
       setNotesValue(companyData.subscription_notes ?? '')
       setPriceValue(String(companyData.subscription_price ?? 0))
       setBillingEmailValue(companyData.billing_email ?? '')
+      setBillingModelValue((companyData.billing_model as 'subscription' | 'one_time' | 'trial' | null) ?? 'one_time')
+      setServiceThroughValue(companyData.service_through ?? '')
     }
 
     setLoading(false)
+  }
+
+  // OPS-1: the one Quria-only surface for the kill switch and the two
+  // Quria-set dates the gate reads (service_through covers both one_time
+  // and trial models — there's one date field, not two, per Rule 0b).
+  async function callCompanyGate(body: Record<string, unknown>, successMessage: string) {
+    setGateLoading(true)
+    setGateError(null)
+    setGateSaved(null)
+    try {
+      const res = await fetch('/api/quria/company-gate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: COMPANY_ID, ...body }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { error?: string }
+      if (!res.ok) {
+        setGateError(data.error ?? 'That action failed.')
+        return
+      }
+      setGateSaved(successMessage)
+      setTimeout(() => setGateSaved(null), 4000)
+      await fetchData()
+    } finally {
+      setGateLoading(false)
+    }
+  }
+
+  function handleDeactivate() {
+    if (!window.confirm(`Deactivate ${billing?.name}? This immediately blocks their Homebase logins and stops all Aegis texts/emails for this company. Fully reversible.`)) return
+    callCompanyGate({ action: 'deactivate' }, 'Deactivated — this company is now dark.')
+  }
+  function handleReactivate() {
+    callCompanyGate({ action: 'reactivate' }, 'Reactivated — this company is live again.')
+  }
+  function handleSaveServiceThrough() {
+    callCompanyGate(
+      { action: 'set_service_through', service_through: serviceThroughValue || null },
+      serviceThroughValue ? `Service-through date set to ${serviceThroughValue}.` : 'Service-through date cleared — no cap.',
+    )
+  }
+  function handleSaveBillingModel() {
+    callCompanyGate({ action: 'set_billing_model', billing_model: billingModelValue }, `Billing model set to ${billingModelValue}.`)
   }
 
   // Owner (or Quria) only — the server enforces it; the page just mirrors it.
@@ -364,6 +420,111 @@ function BillingContent() {
               <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
                 Subscription: {billing.stripe_subscription_id}
               </div>
+            )}
+          </div>
+        )}
+
+        {isQuria && (
+          <div style={{
+            background: 'var(--bg-surface-1)',
+            border: '1px solid var(--accent-border)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '24px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, fontWeight: 700, color: 'var(--accent)', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
+                Company Status
+              </div>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>— visible to you only</span>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.5 }}>
+              Controls whether {billing?.name ?? 'this company'} can use Homebase and Aegis at all.
+              An owner can never flip their own company back on — only Quria staff can.
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div className="form-group">
+                <label className="form-label">Billing Model</label>
+                <select
+                  className="form-input"
+                  value={billingModelValue}
+                  onChange={(e) => setBillingModelValue(e.target.value as 'subscription' | 'one_time' | 'trial')}
+                >
+                  <option value="subscription">Subscription (Stripe-managed)</option>
+                  <option value="one_time">One-time (Quria sets the paid-through date)</option>
+                  <option value="trial">Trial (no hard cap unless a date is set below)</option>
+                </select>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleSaveBillingModel}
+                  disabled={gateLoading || billingModelValue === billing?.billing_model}
+                  style={{ marginTop: 8 }}
+                >
+                  Save Billing Model
+                </button>
+              </div>
+
+              {billingModelValue !== 'subscription' && (
+                <div className="form-group">
+                  <label className="form-label">Service Through Date</label>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 6 }}>
+                    Last day of service, in {billing?.name ?? 'the company'}&rsquo;s own timezone. Leave blank for no cap
+                    (a trial with no date set never expires on its own).
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input
+                      className="form-input"
+                      type="date"
+                      value={serviceThroughValue}
+                      onChange={(e) => setServiceThroughValue(e.target.value)}
+                      style={{ maxWidth: 200 }}
+                    />
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={handleSaveServiceThrough}
+                      disabled={gateLoading || serviceThroughValue === (billing?.service_through ?? '')}
+                    >
+                      Save Date
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ borderTop: '1px solid var(--border-default)', paddingTop: 14, marginTop: 4 }}>
+                <label className="form-label">Kill Switch</label>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 10 }}>
+                  Overrides everything above immediately — no grace period. Fully reversible; nothing is deleted.
+                </div>
+                {billing?.deactivated_at ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{
+                      padding: '4px 12px',
+                      borderRadius: 'var(--radius-pill)',
+                      fontSize: 12,
+                      fontWeight: 500,
+                      background: 'var(--status-blocked-bg)',
+                      color: 'var(--status-blocked-text)',
+                      border: '1px solid var(--status-blocked-border)',
+                    }}>
+                      Deactivated {formatISODate(billing.deactivated_at)}
+                    </span>
+                    <button className="btn btn-primary btn-sm" onClick={handleReactivate} disabled={gateLoading}>
+                      Reactivate
+                    </button>
+                  </div>
+                ) : (
+                  <button className="btn btn-secondary btn-sm" onClick={handleDeactivate} disabled={gateLoading}>
+                    Deactivate This Company
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {gateError && (
+              <div style={{ fontSize: 11, color: 'var(--danger, #c0392b)', marginTop: 14 }}>{gateError}</div>
+            )}
+            {gateSaved && (
+              <div style={{ fontSize: 12, color: 'var(--status-ready-text)', marginTop: 14 }}>{gateSaved}</div>
             )}
           </div>
         )}

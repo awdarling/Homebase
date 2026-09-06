@@ -7,7 +7,7 @@ export interface Company {
   timezone: string
   created_at: string
   onboarding_complete: boolean
-  billing_model: 'subscription' | 'one_time' | null
+  billing_model: 'subscription' | 'one_time' | 'trial' | null
   stripe_price_id: string | null
 }
 
@@ -584,8 +584,10 @@ export interface BillingInfo {
   billing_email: string | null
   subscription_period_end: string | null
   cancel_at_period_end: boolean | null
-  billing_model: 'subscription' | 'one_time' | null
+  billing_model: 'subscription' | 'one_time' | 'trial' | null
   stripe_price_id: string | null
+  deactivated_at: string | null
+  service_through: string | null
 }
 
 export type ShiftExperienceRuleMode = 'all_veterans' | 'min_veterans'
