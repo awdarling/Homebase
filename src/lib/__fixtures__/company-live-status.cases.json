@@ -1,0 +1,95 @@
+{
+  "_comment": "Shared drift-test fixture for getCompanyLiveStatus(). Checked into BOTH repos (Aegis src/lib/__fixtures__ and Homebase src/lib/__fixtures__) with identical content. Both test suites assert their own implementation against every case here. Changing behavior in the gate means updating this file in both repos in the same delivery -- that visible, deliberate duplication is the point (see company-status.ts header comment).",
+  "cases": [
+    {
+      "name": "no billing info at all (every sandbox tenant today) stays live",
+      "now": "2026-09-05T12:00:00.000Z",
+      "input": { "billing_model": "subscription", "subscription_period_end": null, "service_through": null, "deactivated_at": null, "timezone": "America/Detroit" },
+      "expected": { "live": true, "state": "live", "inGrace": false, "serviceThrough": null }
+    },
+    {
+      "name": "Watermark's exact current row (one_time, no service_through, inactive subscription_status which the gate never reads) stays live",
+      "now": "2026-09-05T12:00:00.000Z",
+      "input": { "billing_model": "one_time", "subscription_period_end": null, "service_through": null, "deactivated_at": null, "timezone": "America/Detroit" },
+      "expected": { "live": true, "state": "live", "inGrace": false, "serviceThrough": null }
+    },
+    {
+      "name": "trial with no end date set (Alexander's explicit no-hard-cap decision) stays live",
+      "now": "2026-09-05T12:00:00.000Z",
+      "input": { "billing_model": "trial", "subscription_period_end": null, "service_through": null, "deactivated_at": null, "timezone": "America/Detroit" },
+      "expected": { "live": true, "state": "live", "inGrace": false, "serviceThrough": null }
+    },
+    {
+      "name": "one_time: still within the paid-through day, right at end-of-day-minus-1ms boundary -- live, not grace",
+      "now": "2026-09-20T03:59:59.999Z",
+      "input": { "billing_model": "one_time", "subscription_period_end": null, "service_through": "2026-09-19", "deactivated_at": null, "timezone": "America/Detroit" },
+      "expected": { "live": true, "state": "live", "inGrace": false, "serviceThrough": "2026-09-20T03:59:59.999Z" }
+    },
+    {
+      "name": "timezone boundary: 22:00 local on the paid-through day is already the next UTC calendar date, but must still read as live (proves tz evaluation, not UTC-date evaluation)",
+      "now": "2026-09-20T02:00:00.000Z",
+      "input": { "billing_model": "one_time", "subscription_period_end": null, "service_through": "2026-09-19", "deactivated_at": null, "timezone": "America/Detroit" },
+      "expected": { "live": true, "state": "live", "inGrace": false, "serviceThrough": "2026-09-20T03:59:59.999Z" }
+    },
+    {
+      "name": "one_time: 1ms past end-of-day local time enters grace, not dark",
+      "now": "2026-09-20T04:00:00.000Z",
+      "input": { "billing_model": "one_time", "subscription_period_end": null, "service_through": "2026-09-19", "deactivated_at": null, "timezone": "America/Detroit" },
+      "expected": { "live": true, "state": "grace", "inGrace": true, "serviceThrough": "2026-09-20T03:59:59.999Z", "graceEndsAt": "2026-09-27T03:59:59.999Z" }
+    },
+    {
+      "name": "one_time: last millisecond of the 7-day grace period is still live",
+      "now": "2026-09-27T03:59:59.999Z",
+      "input": { "billing_model": "one_time", "subscription_period_end": null, "service_through": "2026-09-19", "deactivated_at": null, "timezone": "America/Detroit" },
+      "expected": { "live": true, "state": "grace", "inGrace": true, "graceEndsAt": "2026-09-27T03:59:59.999Z" }
+    },
+    {
+      "name": "one_time: 1ms past grace goes dark",
+      "now": "2026-09-27T04:00:00.000Z",
+      "input": { "billing_model": "one_time", "subscription_period_end": null, "service_through": "2026-09-19", "deactivated_at": null, "timezone": "America/Detroit" },
+      "expected": { "live": false, "state": "dark_lapsed", "inGrace": false, "graceEndsAt": "2026-09-27T03:59:59.999Z" }
+    },
+    {
+      "name": "trial past service_through and past grace goes dark",
+      "now": "2026-10-01T12:00:00.000Z",
+      "input": { "billing_model": "trial", "subscription_period_end": null, "service_through": "2026-09-01", "deactivated_at": null, "timezone": "America/Detroit" },
+      "expected": { "live": false, "state": "dark_lapsed", "inGrace": false }
+    },
+    {
+      "name": "subscription: within the Stripe period_end stays live",
+      "now": "2026-09-05T12:00:00.000Z",
+      "input": { "billing_model": "subscription", "subscription_period_end": "2026-09-10T15:00:00.000Z", "service_through": null, "deactivated_at": null, "timezone": "America/Los_Angeles" },
+      "expected": { "live": true, "state": "live", "inGrace": false }
+    },
+    {
+      "name": "subscription: past period_end but within the 7-day grace duration added to the exact Stripe instant",
+      "now": "2026-09-13T12:00:00.000Z",
+      "input": { "billing_model": "subscription", "subscription_period_end": "2026-09-10T15:00:00.000Z", "service_through": null, "deactivated_at": null, "timezone": "America/Los_Angeles" },
+      "expected": { "live": true, "state": "grace", "inGrace": true, "graceEndsAt": "2026-09-17T15:00:00.000Z" }
+    },
+    {
+      "name": "subscription: past period_end and past grace goes dark, regardless of stale subscription_status text",
+      "now": "2026-09-20T00:00:00.000Z",
+      "input": { "billing_model": "subscription", "subscription_period_end": "2026-09-10T15:00:00.000Z", "service_through": null, "deactivated_at": null, "timezone": "America/Los_Angeles" },
+      "expected": { "live": false, "state": "dark_lapsed", "inGrace": false }
+    },
+    {
+      "name": "kill switch overrides a valid, current paid-through date -- dark immediately, no grace",
+      "now": "2026-09-05T12:00:00.000Z",
+      "input": { "billing_model": "one_time", "subscription_period_end": null, "service_through": "2026-12-31", "deactivated_at": "2026-09-05T11:00:00.000Z", "timezone": "America/Detroit" },
+      "expected": { "live": false, "state": "dark_kill_switch", "inGrace": false, "serviceThrough": null, "graceEndsAt": null }
+    },
+    {
+      "name": "un-flipping the kill switch on that same company restores the underlying (still-valid) paid-through state",
+      "now": "2026-09-05T12:00:00.000Z",
+      "input": { "billing_model": "one_time", "subscription_period_end": null, "service_through": "2026-12-31", "deactivated_at": null, "timezone": "America/Detroit" },
+      "expected": { "live": true, "state": "live", "inGrace": false }
+    },
+    {
+      "name": "unrecognized/corrupt billing_model fails open (live) rather than guessing a company dark",
+      "now": "2026-09-05T12:00:00.000Z",
+      "input": { "billing_model": "not_a_real_model", "subscription_period_end": null, "service_through": "2026-01-01", "deactivated_at": null, "timezone": "America/Detroit" },
+      "expected": { "live": true, "state": "live", "inGrace": false, "serviceThrough": null }
+    }
+  ]
+}
