@@ -7,3 +7,4 @@ out/
 .DS_Store
 tsconfig.tsbuildinfo
 .claude/settings.local.json
+PATH_TO_SELLABLE.md
